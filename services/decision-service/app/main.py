@@ -589,6 +589,16 @@ def readiness() -> dict:
         eepl_policy_registry_configured = True
     except PolicyRegistryError:
         eepl_policy_registry_configured = False
+    redemption_url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    redemption_parts = urlsplit(redemption_url)
+    age_evidence_redemption_configured = bool(
+        len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("AGE_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+        and redemption_parts.scheme == "https" and redemption_parts.hostname
+        and not redemption_parts.username and not redemption_parts.password
+        and not redemption_parts.query and not redemption_parts.fragment
+        and redemption_parts.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    )
     decision_receipt_store_ready = check_receipt_store()
     governance_store_ready = check_governance_store()
     governance_tokens = (
@@ -621,7 +631,8 @@ def readiness() -> dict:
     ready = (
         internal_configured and fit_key_configured and npl_key_configured
         and cultural_key_configured and cal_policy_registry_configured
-        and eepl_policy_registry_configured and decision_receipt_store_ready and governance_store_ready
+        and eepl_policy_registry_configured and age_evidence_redemption_configured
+        and decision_receipt_store_ready and governance_store_ready
         and governance_configuration_ready
     )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
@@ -630,6 +641,7 @@ def readiness() -> dict:
         "trusted_cultural_evidence_configured": cultural_key_configured,
         "catacaci_policy_registry_configured": cal_policy_registry_configured,
         "eepl_policy_registry_configured": eepl_policy_registry_configured,
+        "age_evidence_redemption_configured": age_evidence_redemption_configured,
         "decision_receipt_store_ready": decision_receipt_store_ready,
         "catacaci_governance_store_ready": governance_store_ready,
         "catacaci_governance_configuration_ready": bool(governance_configuration_ready),
