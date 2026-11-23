@@ -102,7 +102,7 @@ Set these only in the Render secret manager after provisioning a dedicated datab
 - Optional `AUTH_SESSION_TTL_SECONDS` (default 2592000; permitted 3600–7776000)
 - Optional `AUTH_POST_LOGIN_REDIRECT=/`
 
-Apply `supabase/migrations/202611230001_auth_private_sessions.sql`, then create a separate LOGIN role and grant it membership in `cirvanna_bff_auth`. Do not expose `auth_private` through the Supabase Data API. Do not enable the custom access-token hook until its live-issued JWT claims are confirmed.
+Apply `services/marketplace-bff/migrations/0001_auth_private_sessions.sql`, then create a separate LOGIN role and grant it membership in `cirvanna_bff_auth`. Do not expose `auth_private` through the Supabase Data API. Do not enable the custom access-token hook until its live-issued JWT claims are confirmed.
 
 ### Provider setup required outside the repository
 
