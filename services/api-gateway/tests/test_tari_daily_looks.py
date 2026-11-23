@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -12,6 +13,20 @@ from app import main
 
 GATEWAY_TOKEN = "integration-gateway-token"
 END_USER = "Bearer signed-user-session"
+
+
+@pytest.fixture(autouse=True)
+def active_server_eepl_policy(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
+        "adult-market": {
+            "policy_version": "adult-v4", "minimum_age": None, "maximum_age": None,
+            "allowed_locations": ["Nairobi", "Nairobi, Kenya"],
+            "allowed_occasions": ["work", "everyday"],
+            "allowed_climates": ["hot_dry", "warm"],
+            "required_context": ["location", "occasion", "climate"],
+        }
+    }))
 
 
 def request_body():
