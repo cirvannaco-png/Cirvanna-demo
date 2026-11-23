@@ -17,7 +17,7 @@ from pathlib import Path
 
 REQUIRED_COLUMNS = {
     "stratum", "ground_truth_face_count", "missed_face_count",
-    "unmasked_face_count", "mask_before_embedding", "uncertain",
+    "unmasked_face_count", "mask_before_embedding", "uncertain", "uncertain_output_rejected",
     "identity_feature_calls", "age_estimation_calls", "child_media",
     "child_processing_performed", "public_publication_allowed",
 }
@@ -90,6 +90,7 @@ def score(csv_path: Path, policy: dict) -> dict:
                 age_calls = int(row["age_estimation_calls"])
                 mask_before_embedding = truth(row["mask_before_embedding"])
                 uncertain = truth(row["uncertain"])
+                uncertain_rejected = truth(row["uncertain_output_rejected"])
                 child_media = truth(row["child_media"])
                 child_processed = truth(row["child_processing_performed"])
                 public_allowed = truth(row["public_publication_allowed"])
@@ -112,8 +113,10 @@ def score(csv_path: Path, policy: dict) -> dict:
                 violations.append(f"line {line}: detected face regions were not masked before embedding")
             if unmasked:
                 violations.append(f"line {line}: {unmasked} residual unmasked face(s)")
-            if policy["reject_uncertain_outputs"] and uncertain:
+            if policy["reject_uncertain_outputs"] and uncertain and not uncertain_rejected:
                 violations.append(f"line {line}: uncertain detector output was not rejected")
+            if uncertain and public_allowed:
+                violations.append(f"line {line}: uncertain detector output was allowed to publish")
             if identity_calls > 0:
                 violations.append(f"line {line}: identity feature call detected")
             if age_calls > 0:
