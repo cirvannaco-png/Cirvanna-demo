@@ -29,13 +29,13 @@ def valid_manifest():
             "id": scenario_id,
             "fixture": {},
             "exercise_surfaces": sorted(runner.REQUIRED_SURFACES),
-            "assertions": {name: {"status": [200, 403, 503], "json_present": ["decision.verdict"]} for name in runner.REQUIRED_SURFACES},
+            "assertions": {name: {"status": [200, 403, 503], "json_present": ["$.decision.verdict"]} for name in runner.REQUIRED_SURFACES},
         }
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             scenario["revoke"] = {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"}
             scenario["recheck_after_revoke"] = True
             scenario["post_revoke_assertions"] = {
-                name: {"status": [401, 403], "json_equals": {"decision.verdict": "BLOCK"}}
+                name: {"status": [401, 403], "json_equals": {"$.decision.verdict": "BLOCK"}}
                 for name in runner.REQUIRED_SURFACES
             }
         if scenario_id == "consent_session_revoked":
@@ -44,7 +44,7 @@ def valid_manifest():
                 "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
             }
             scenario["race_assertions"] = {
-                name: {"status": [401, 403], "json_equals": {"decision.verdict": "BLOCK"}}
+                name: {"status": [401, 403], "json_equals": {"$.decision.verdict": "BLOCK"}}
                 for name in scenario["race"]["surfaces"]
             }
         if scenario_id == "payment_revoked_race":
@@ -53,7 +53,7 @@ def valid_manifest():
                 "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
             }
             scenario["race_assertions"] = {
-                name: {"status": [401, 403], "json_equals": {"decision.verdict": "BLOCK"}}
+                name: {"status": [401, 403], "json_equals": {"$.decision.verdict": "BLOCK"}}
                 for name in scenario["race"]["surfaces"]
             }
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
