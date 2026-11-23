@@ -586,10 +586,38 @@ def readiness() -> dict:
         cal_policy_registry_configured = False
     decision_receipt_store_ready = check_receipt_store()
     governance_store_ready = check_governance_store()
+    governance_tokens = (
+        "CATACACI_CAM_SERVICE_TOKEN", "CATACACI_CIL_SERVICE_TOKEN",
+        "CATACACI_CIL_AGGREGATE_TOKEN", "CATACACI_VSL_PROPOSER_TOKEN",
+        "CATACACI_VSL_APPROVER_TOKEN",
+    )
+    governance_credentials_configured = all(
+        len(os.getenv(name, "").encode("utf-8")) >= 32 for name in governance_tokens
+    )
+    proposer_id = os.getenv("CATACACI_VSL_PROPOSER_ID", "").strip()
+    approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
+    cil_cohort_allowlist_configured = bool({
+        item.strip() for item in os.getenv("CATACACI_CIL_ALLOWED_COHORT_KEYS", "").split(",")
+        if item.strip()
+    })
+    try:
+        release_epsilon = float(os.getenv("CATACACI_CIL_RELEASE_EPSILON", "0.5"))
+        epsilon_budget = float(os.getenv("CATACACI_CIL_EPSILON_BUDGET", "1.0"))
+        privacy_budget_configured = (
+            0 < release_epsilon <= epsilon_budget <= 10
+        )
+    except ValueError:
+        privacy_budget_configured = False
+    governance_configuration_ready = (
+        governance_credentials_configured and proposer_id and approver_id
+        and proposer_id != approver_id and cil_cohort_allowlist_configured
+        and privacy_budget_configured
+    )
     ready = (
         internal_configured and fit_key_configured and npl_key_configured
         and cultural_key_configured and cal_policy_registry_configured
         and decision_receipt_store_ready and governance_store_ready
+        and governance_configuration_ready
     )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
@@ -598,6 +626,7 @@ def readiness() -> dict:
         "catacaci_policy_registry_configured": cal_policy_registry_configured,
         "decision_receipt_store_ready": decision_receipt_store_ready,
         "catacaci_governance_store_ready": governance_store_ready,
+        "catacaci_governance_configuration_ready": bool(governance_configuration_ready),
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -615,9 +644,9 @@ def capabilities() -> dict:
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
         "cil_feedback_review_enforcement_required": _cil_cal_review_enforcement_required(),
         "decision_audit_persistence": check_receipt_store(),
-        "catacaci_cam_durable_audit": check_governance_store(),
-        "catacaci_cil_differential_privacy_release": check_governance_store(),
-        "catacaci_vsl_two_person_approval": check_governance_store(),
+        "catacaci_cam_durable_audit": check_governance_store() and bool(os.getenv("CATACACI_CAM_SERVICE_TOKEN")),
+        "catacaci_cil_differential_privacy_release": check_governance_store() and bool(os.getenv("CATACACI_CIL_ALLOWED_COHORT_KEYS")),
+        "catacaci_vsl_two_person_approval": check_governance_store() and bool(os.getenv("CATACACI_VSL_PROPOSER_TOKEN") and os.getenv("CATACACI_VSL_APPROVER_TOKEN")) and os.getenv("CATACACI_VSL_PROPOSER_ID") != os.getenv("CATACACI_VSL_APPROVER_ID"),
         "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
