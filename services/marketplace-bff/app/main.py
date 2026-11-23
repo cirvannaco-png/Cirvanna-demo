@@ -729,7 +729,9 @@ class WardrobeTryOnIn(BaseModel):
 
     @field_validator("person_image_asset_id")
     @classmethod
-    def valid_person_asset_id(cls, value: str) -> str:
+    def valid_person_asset_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip().lower()
         if not UUID_RE.fullmatch(normalized):
             raise ValueError("person_image_asset_id must be an opaque UUID")
@@ -1280,9 +1282,10 @@ async def _authorized_twin_try_on_context(
         and twin.get("twin_id") == twin_id
         and twin.get("representation_type") == "full_body_mesh"
         and isinstance(consent_id, str) and len(consent_id.strip()) >= 8
-        and isinstance(source_ids, list) and source_ids
+        # The current VTON person-image contract accepts one source image only.
+        # Never pick an arbitrary member of a multi-image Twin source set.
+        and isinstance(source_ids, list) and len(source_ids) == 1
         and all(isinstance(asset_id, str) and UUID_RE.fullmatch(asset_id) for asset_id in source_ids)
-        and len(source_ids) == len(set(source_ids))
     ):
         raise HTTPException(403, detail={"code": "TWIN_NOT_AUTHORIZED_FOR_TRY_ON"})
     return sorted(source_ids)[0], consent_id
