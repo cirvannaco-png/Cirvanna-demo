@@ -1,3 +1,6 @@
+CREATE SCHEMA IF NOT EXISTS identity_private;
+SET search_path TO identity_private;
+
 -- Identity / USI / TAL namespace migration.
 -- Apply to the existing approved Cirvanna PostgreSQL instance, not a new database.
 CREATE TABLE IF NOT EXISTS identity_usi_profiles (
