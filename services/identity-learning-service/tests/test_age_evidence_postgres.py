@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 import sys
 from pathlib import Path
@@ -50,6 +51,23 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     )
     assert store.consume_attestation(**bindings) is True
     assert store.consume_attestation(**bindings) is False
+
+    sid_concurrent = verified_session()
+    jti_concurrent = str(uuid.uuid4())
+    store.issue_attestation(
+        session_id=sid_concurrent, jti=jti_concurrent, signature=signature,
+        issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
+    )
+    row_concurrent = store.get_session(sid_concurrent)
+    concurrent_bindings = dict(
+        jti=jti_concurrent, subject_id=row_concurrent["subject_id"],
+        request_id=row_concurrent["request_id"], purpose="shopper_eligibility",
+        policy_id="adult-market", policy_version="v1", threshold=18,
+        signature=signature,
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: store.consume_attestation(**concurrent_bindings), range(2)))
+    assert sorted(results) == [False, True]
 
     sid2 = verified_session()
     jti2 = str(uuid.uuid4())
