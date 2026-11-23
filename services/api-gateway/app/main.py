@@ -105,6 +105,9 @@ class DecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
     product_ids: list[str] = Field(min_length=1, max_length=25)
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    age_attestation: dict[str, Any] | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     context: ContextInput = Field(default_factory=ContextInput)
     use_wardrobe_context: bool = False
     style_preferences: list[StylePreferenceInput] = Field(default_factory=list, max_length=40)
@@ -560,6 +563,73 @@ def _policy() -> EEPLPolicy:
     )
 
 
+
+def _redeem_age_attestation(attestation: dict[str, Any], signature: str) -> None:
+    url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    token = os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").strip()
+    parts = urlsplit(url)
+    if (
+        len(token.encode("utf-8")) < 32 or parts.scheme != "https"
+        or not parts.hostname or parts.username or parts.password
+        or parts.query or parts.fragment
+        or not parts.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    ):
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_NOT_CONFIGURED"})
+    body = {
+        "jti": attestation["jti"], "subject_id": attestation["subject_id"],
+        "request_id": attestation["request_id"], "purpose": attestation["purpose"],
+        "policy_id": attestation["policy_id"], "policy_version": attestation["policy_version"],
+        "threshold": attestation["threshold"], "signature": signature,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                url, headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=body,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_UNAVAILABLE"}) from exc
+    if response.status_code == 409:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_ALREADY_REDEEMED_OR_REVOKED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_REJECTED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"}) from exc
+    if not isinstance(result, dict) or result.get("redeemed") is not True:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"})
+
+
+def _verified_age_threshold(
+    payload: DecisionRequest, request_id: str, policy: EEPLPolicy,
+) -> tuple[int, bool] | None:
+    attestation = payload.age_attestation
+    signature = payload.age_attestation_signature
+    if attestation is None and signature is None:
+        return None
+    if not isinstance(attestation, dict) or not isinstance(signature, str):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_SIGNATURE_MISSING"})
+    if policy.minimum_age is None or policy.maximum_age is not None:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
+    secret = os.getenv("AGE_EVIDENCE_HMAC_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SIGNING_KEY_NOT_CONFIGURED"})
+    try:
+        valid = verify_threshold_attestation(
+            attestation, signature, secret,
+            subject_id=payload.user_id, request_id=request_id,
+            purpose="shopper_eligibility", policy_id=policy.policy_id,
+            policy_version=policy.policy_version, threshold=policy.minimum_age,
+        )
+    except AgeEvidenceError as exc:
+        raise HTTPException(401, detail={"code": "INVALID_AGE_EVIDENCE"}) from exc
+    if not valid:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"})
+    _redeem_age_attestation(attestation, signature)
+    return attestation["threshold"], attestation["threshold_met"]
+
+
 def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
     """Fail closed until an independent, validated safety policy provider exists."""
     return DecisionSignal(
@@ -573,9 +643,16 @@ def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
     )
 
 
-def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSignal:
-    minimum_age = _optional_age("CIRVANNA_MINIMUM_AGE")
-    maximum_age = _optional_age("CIRVANNA_MAXIMUM_AGE")
+def _legal_signal(
+    context: ContextInput,
+    product: dict[str, Any],
+    *,
+    policy: EEPLPolicy,
+    verified_age: tuple[int, bool] | None = None,
+) -> DecisionSignal:
+    """Only request-bound, redeemed Yoti evidence can satisfy age restrictions."""
+    minimum_age = policy.minimum_age
+    maximum_age = policy.maximum_age
     raw_product_min = product.get("attributes", {}).get("minimum_age")
     raw_product_max = product.get("attributes", {}).get("maximum_age")
     if isinstance(raw_product_min, int) and not isinstance(raw_product_min, bool):
@@ -583,29 +660,37 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
     if isinstance(raw_product_max, int) and not isinstance(raw_product_max, bool):
         maximum_age = min(maximum_age, raw_product_max) if maximum_age is not None else raw_product_max
 
+    verified_threshold = verified_age[0] if verified_age else None
+    threshold_met = verified_age[1] if verified_age else False
     if minimum_age is None and maximum_age is None:
         state, code, explanation = (
-            SignalState.PASS,
-            "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
+            SignalState.PASS, "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
             "No additional age restriction is configured for this candidate.",
         )
-    elif context.age_years is None:
+    elif verified_age is None:
         state, code, explanation = (
-            SignalState.UNKNOWN,
-            "LEGAL_AGE_EVIDENCE_MISSING",
-            "An age-dependent eligibility rule applies, but age was not supplied.",
+            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_MISSING",
+            "An age-dependent rule applies, but no redeemed, request-bound Yoti evidence is available.",
         )
-    elif context.age_years < (minimum_age or 0) or (maximum_age is not None and context.age_years > maximum_age):
+    elif maximum_age is not None:
         state, code, explanation = (
-            SignalState.BLOCK,
-            "LEGAL_AGE_RESTRICTION_VIOLATION",
-            "The supplied age conflicts with the configured age restriction.",
+            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_INSUFFICIENT_FOR_MAXIMUM",
+            "The available Yoti threshold attestation proves only a minimum-age threshold and cannot establish a maximum-age rule.",
+        )
+    elif verified_threshold < (minimum_age or 0):
+        state, code, explanation = (
+            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_THRESHOLD_INSUFFICIENT",
+            "The verified Yoti threshold is lower than the candidate's required minimum age.",
+        )
+    elif not threshold_met:
+        state, code, explanation = (
+            SignalState.BLOCK, "LEGAL_AGE_RESTRICTION_VIOLATION",
+            "The verified Yoti age threshold was not met.",
         )
     else:
         state, code, explanation = (
-            SignalState.PASS,
-            "LEGAL_AGE_RESTRICTION_PASSED",
-            "The supplied age satisfies configured age restrictions.",
+            SignalState.PASS, "LEGAL_AGE_RESTRICTION_PASSED",
+            "The request-bound Yoti threshold attestation satisfies the configured minimum-age rule.",
         )
     return DecisionSignal(
         signal_id=f"legal-age:{product['product_id']}",
@@ -614,9 +699,8 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
         reason_code=code,
         explanation=explanation,
         required=True,
-        source_version=POLICY_VERSION,
+        source_version=f"{policy.policy_id}:{policy.policy_version}",
     )
-
 
 def _user_constraint_signals(
     user_id: str,
@@ -2878,7 +2962,9 @@ def evaluate_decisions(
     end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
 ) -> DecisionResponse:
     """Evaluate active catalog products; verified USI profile and CAL govern eligibility."""
-    request_id = str(uuid.uuid4())
+    if (payload.age_attestation is not None and payload.request_id is None):
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_REQUEST_ID_REQUIRED"})
+    request_id = payload.request_id or str(uuid.uuid4())
     if _verified_identity_required():
         verified_subject = _resolve_verified_subject(end_user_authorization)
         if not hmac.compare_digest(verified_subject, payload.user_id):
@@ -2902,9 +2988,14 @@ def evaluate_decisions(
                 for index, item in enumerate(payload.style_preferences)
             ),
         )
+    eepl_policy = _policy()
+    verified_age = _verified_age_threshold(payload, request_id, eepl_policy)
     context = EEPLContext(
         user_id=payload.user_id,
-        age_years=payload.context.age_years,
+        # Never trust ContextInput.age_years; Yoti proves only the configured threshold.
+        age_years=None,
+        minimum_age_threshold=verified_age[0] if verified_age else None,
+        minimum_age_threshold_met=verified_age[1] if verified_age else None,
         location=payload.context.location,
         occasion=payload.context.occasion,
         climate=payload.context.climate,
@@ -2931,7 +3022,6 @@ def evaluate_decisions(
         )
         for item in payload.cultural_requirements
     )
-    eepl_policy = _policy()
     candidates: list[CandidateDecisionOutput] = []
     # Bound parallelism so a batch does not serially pay the catalog timeout per item.
     with ThreadPoolExecutor(max_workers=min(5, len(payload.product_ids))) as executor:
@@ -2956,7 +3046,7 @@ def evaluate_decisions(
         cultural_requirements = tuple(requirement_by_id[key] for key in sorted(requirement_by_id))
         upstream_signals = (
             _load_safety_signal(product, user_id=payload.user_id, request_id=request_id),
-            _legal_signal(payload.context, product),
+            _legal_signal(payload.context, product, policy=eepl_policy, verified_age=verified_age),
         ) + _user_constraint_signals(
             payload.user_id, product_id, attributes, complete, payload.hard_constraints,
         )
