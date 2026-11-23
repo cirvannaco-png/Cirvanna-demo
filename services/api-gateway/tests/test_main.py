@@ -53,6 +53,11 @@ def request_body(**overrides):
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("CATACACI_POLICY_ID", "cal-test")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", '{"cal-test":{"policy_version":"cal-test-v1","minimum_fit_confidence":0.7,"maximum_fit_confidence_disagreement":0.1,"minimum_alignment_score":0.6}}')
+
     # Legacy request-scoped profile tests explicitly opt into local/demo mode.
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
     monkeypatch.setattr(main, "_assess_cil_product_serving", lambda _product, purpose="commercial_recommendation": {"product_id": PRODUCT_ID, "catalog_version": 3, "purpose": purpose, "decisions": [], "all_eligible": True})
