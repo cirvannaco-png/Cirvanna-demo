@@ -361,14 +361,14 @@ async def session(request: Request) -> JSONResponse:
     now = int(datetime.now(timezone.utc).timestamp())
     if tokens["expires_at"] - now < 90:
         profile, max_age = await _rotate(session_id)
-        response = JSONResponse({"authenticated": True, **profile})
+        response = JSONResponse({"authenticated": True, **profile}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
         _cookie(response, session_id, max_age=max_age)
         return response
     claims = await asyncio.to_thread(_verify_jwt, tokens["access_token"])
     if claims.get("sub") != user_id:
         await _revoke(session_id)
         raise HTTPException(401, detail={"code": "AUTH_SESSION_SUBJECT_MISMATCH"})
-    return JSONResponse({"authenticated": True, "user_id": user_id, "app_role": claims.get("app_role", "customer")})
+    return JSONResponse({"authenticated": True, "user_id": user_id, "app_role": claims.get("app_role", "customer")}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
 
 @router.post("/auth/refresh")
