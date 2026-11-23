@@ -130,7 +130,6 @@ class CILContributionIn(StrictModel):
     contributor_token: str = Field(min_length=76, max_length=76)
     cohort_key: str = Field(min_length=2, max_length=128)
     outcome_success: bool = Field(strict=True)
-    observed_at: datetime
 
 
 class CILAggregateIn(StrictModel):
@@ -760,7 +759,9 @@ def append_cam_governance_audit(payload: CAMAuditIn) -> dict:
 @app.post("/v1/governance/cil/contributions", dependencies=[Depends(require_cil_service)])
 def append_cil_contribution(payload: CILContributionIn) -> dict:
     try:
-        inserted = record_cil_contribution(**payload.model_dump())
+        inserted = record_cil_contribution(
+            **payload.model_dump(), observed_at=datetime.now(timezone.utc),
+        )
         return {"recorded": inserted}
     except GovernanceStoreError as exc:
         raise HTTPException(503, detail={"code": "CATACACI_CIL_CONTRIBUTION_REJECTED"}) from exc
