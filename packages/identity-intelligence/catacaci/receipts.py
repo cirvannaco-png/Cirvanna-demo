@@ -35,11 +35,16 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
     required = {
         "request_id", "candidate_id", "verdict", "may_display", "eepl_policy_id",
         "eepl_policy_version", "cal_policy_id", "cal_policy_version",
+        "minimum_fit_confidence", "maximum_fit_confidence_disagreement",
         "arbitration_contract_version", "pipeline_contract_version",
         "candidate_snapshot_sha256", "catalog_version", "evaluated_signals", "reasons",
     }
     if set(receipt) != required:
         raise DecisionReceiptStoreError("receipt fields do not match the canonical schema")
+    for field in ("minimum_fit_confidence", "maximum_fit_confidence_disagreement"):
+        value = receipt[field]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise DecisionReceiptStoreError(f"{field} must be numeric and within [0, 1]")
     if receipt["verdict"] not in {"SHOW", "BLOCK", "REVIEW"}:
         raise DecisionReceiptStoreError("invalid final verdict")
     if type(receipt["may_display"]) is not bool or receipt["may_display"] != (receipt["verdict"] == "SHOW"):
@@ -87,12 +92,13 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                     INSERT INTO catacaci_decision_receipts (
                         receipt_id, request_id, candidate_id, verdict, may_display,
                         eepl_policy_id, eepl_policy_version, cal_policy_id, cal_policy_version,
+                        minimum_fit_confidence, maximum_fit_confidence_disagreement,
                         arbitration_contract_version, pipeline_contract_version,
                         candidate_snapshot_sha256, catalog_version, evaluated_signals, reasons,
                         receipt_sha256, created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s::jsonb, %s::jsonb, %s, %s
+                        %s, %s, %s::jsonb, %s::jsonb, %s, %s
                     )
                     ON CONFLICT (request_id, candidate_id) DO NOTHING
                     """,
@@ -101,6 +107,7 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                         receipt["verdict"], receipt["may_display"],
                         receipt["eepl_policy_id"], receipt["eepl_policy_version"],
                         receipt["cal_policy_id"], receipt["cal_policy_version"],
+                        receipt["minimum_fit_confidence"], receipt["maximum_fit_confidence_disagreement"],
                         receipt["arbitration_contract_version"], receipt["pipeline_contract_version"],
                         receipt["candidate_snapshot_sha256"], receipt["catalog_version"],
                         json.dumps(receipt["evaluated_signals"], separators=(",", ":"), allow_nan=False),
@@ -132,3 +139,40 @@ def check_receipt_store() -> bool:
         return True
     except Exception:
         return False
+
+
+
+def load_decision_receipt(request_id: str, candidate_id: str) -> dict[str, Any]:
+    """Load the exact immutable baseline used for deterministic CAM replay."""
+    try:
+        import psycopg
+        with psycopg.connect(_database_url(), connect_timeout=3) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT verdict, eepl_policy_id, eepl_policy_version, cal_policy_id,
+                    cal_policy_version, minimum_fit_confidence, maximum_fit_confidence_disagreement,
+                    arbitration_contract_version, pipeline_contract_version,
+                    candidate_snapshot_sha256, catalog_version, evaluated_signals, reasons,
+                    receipt_sha256
+                    FROM catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s""",
+                    (request_id, candidate_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            raise DecisionReceiptStoreError("CAM baseline decision receipt was not found")
+        return {
+            "request_id": request_id, "candidate_id": candidate_id,
+            "verdict": row[0], "eepl_policy_id": row[1], "eepl_policy_version": row[2],
+            "cal_policy_id": row[3], "cal_policy_version": row[4],
+            "minimum_fit_confidence": float(row[5]),
+            "maximum_fit_confidence_disagreement": float(row[6]),
+            "arbitration_contract_version": row[7], "pipeline_contract_version": row[8],
+            "candidate_snapshot_sha256": row[9], "catalog_version": row[10],
+            "evaluated_signals": row[11] if isinstance(row[11], list) else json.loads(row[11]),
+            "reasons": row[12] if isinstance(row[12], list) else json.loads(row[12]),
+            "receipt_sha256": row[13],
+        }
+    except DecisionReceiptStoreError:
+        raise
+    except Exception as exc:
+        raise DecisionReceiptStoreError("CAM baseline receipt lookup failed") from exc
