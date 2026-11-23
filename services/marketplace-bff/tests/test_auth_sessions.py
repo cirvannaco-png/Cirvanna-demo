@@ -80,6 +80,7 @@ def test_microsoft_login_uses_supabase_azure_provider_and_pkce(monkeypatch):
     cookie = response.headers["set-cookie"].lower()
     assert "__host-cirvanna_oauth_state=" in cookie
     assert "httponly" in cookie and "secure" in cookie and "samesite=lax" in cookie
+    assert "max-age=0" not in cookie
 
 
 def test_jwt_verifier_accepts_only_valid_supabase_es256_claims(monkeypatch):
