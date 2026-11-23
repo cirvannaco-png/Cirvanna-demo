@@ -37,7 +37,7 @@ from catacaci.receipts import DecisionReceiptStoreError, check_receipt_store, pe
 from catacaci.governance_store import (
     GovernanceStoreError, append_cam_audit, record_cil_contribution,
     release_cil_aggregate, current_vsl_profile, create_vsl_proposal,
-    approve_vsl_proposal, check_governance_store,
+    approve_vsl_proposal, reject_vsl_proposal, check_governance_store,
 )  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
@@ -125,6 +125,10 @@ class CILContributionIn(StrictModel):
 class CILAggregateIn(StrictModel):
     cohort_key: str = Field(min_length=2, max_length=128)
     period_start: date
+
+
+class VSLApprovalIn(StrictModel):
+    approval_event_id: str = Field(min_length=8, max_length=128)
 
 
 class VSLProposalIn(StrictModel):
@@ -669,17 +673,31 @@ def propose_vsl_change(payload: VSLProposalIn) -> dict:
 
 
 @app.post("/v1/governance/vsl/proposals/{proposal_id}/approve", dependencies=[Depends(require_vsl_approver)])
-def approve_vsl_change(proposal_id: str, approval_event_id: str = Field(min_length=8, max_length=128)) -> dict:
+def approve_vsl_change(proposal_id: str, payload: VSLApprovalIn) -> dict:
     approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
     if not approver_id:
         raise HTTPException(503, detail={"code": "CATACACI_VSL_APPROVER_ID_NOT_CONFIGURED"})
     try:
         return approve_vsl_proposal(
             proposal_id=proposal_id, approver_id=approver_id,
-            approval_event_id=approval_event_id,
+            approval_event_id=payload.approval_event_id,
         )
     except GovernanceStoreError as exc:
         raise HTTPException(409, detail={"code": "CATACACI_VSL_APPROVAL_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/vsl/proposals/{proposal_id}/reject", dependencies=[Depends(require_vsl_approver)])
+def reject_vsl_change(proposal_id: str, payload: VSLApprovalIn) -> dict:
+    approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
+    if not approver_id:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_APPROVER_ID_NOT_CONFIGURED"})
+    try:
+        return reject_vsl_proposal(
+            proposal_id=proposal_id, approver_id=approver_id,
+            rejection_event_id=payload.approval_event_id,
+        )
+    except GovernanceStoreError as exc:
+        raise HTTPException(409, detail={"code": "CATACACI_VSL_REJECTION_REJECTED"}) from exc
 
 
 @app.get("/v1/cal/feedback-reviews", dependencies=[Depends(require_internal_token)])
