@@ -185,3 +185,42 @@ def test_duplicate_request_cannot_create_multiple_provider_sessions():
         pass
     else:
         raise AssertionError("duplicate request must not create another provider session")
+
+
+def test_attestation_issue_is_idempotent_for_same_payload():
+    store = make_store()
+    sid = verified_session(store)
+    jti, sig = str(uuid.uuid4()), "e" * 64
+    payload = attestation_payload_for(store, sid, jti)
+    args = dict(
+        session_id=sid, jti=jti, signature=sig, attestation_payload=payload,
+        issued_at=NOW + timedelta(seconds=2),
+        expires_at=NOW + timedelta(minutes=5), now=NOW + timedelta(seconds=2),
+    )
+    store.issue_attestation(**args)
+    store.issue_attestation(**args)
+    persisted = store.get_attestation(sid)
+    assert persisted["attestation"] == payload
+    assert persisted["signature"] == sig
+
+
+def test_attestation_issue_rejects_different_payload_for_same_session():
+    store = make_store()
+    sid = verified_session(store)
+    jti, sig = str(uuid.uuid4()), "f" * 64
+    args = dict(
+        session_id=sid, jti=jti, signature=sig,
+        issued_at=NOW + timedelta(seconds=2),
+        expires_at=NOW + timedelta(minutes=5), now=NOW + timedelta(seconds=2),
+    )
+    store.issue_attestation(**args, attestation_payload=attestation_payload_for(store, sid, jti))
+    different_jti = str(uuid.uuid4())
+    try:
+        store.issue_attestation(
+            **{**args, "jti": different_jti},
+            attestation_payload=attestation_payload_for(store, sid, different_jti),
+        )
+    except AgeEvidenceConflict:
+        pass
+    else:
+        raise AssertionError("a session must not issue a second different attestation")
