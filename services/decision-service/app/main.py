@@ -31,7 +31,7 @@ for package in (
 
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
-from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_cal_policy, validate_registry  # noqa: E402
+from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
 from age_evidence.policy import PolicyRegistryError, resolve_policy  # noqa: E402
@@ -172,8 +172,6 @@ class EligibilityRequest(StrictModel):
     # Request-body context.age_years is retained for compatibility but is never trusted.
     age_attestation: dict | None = None
     age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
-    cal_policy_id: str = Field(min_length=1, max_length=100)
-    policy_version: str = Field(min_length=1, max_length=100)
     context: ContextIn
     eepl_policy: PolicyIn
     usi_profile: USIProfileIn
@@ -498,7 +496,7 @@ def readiness() -> dict:
     npl_key_configured = len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
     cultural_key_configured = len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
     try:
-        validate_registry()
+        resolve_configured_cal_policy()
         cal_policy_registry_configured = True
     except CALPolicyRegistryError:
         cal_policy_registry_configured = False
@@ -580,7 +578,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
     verify_cultural_signature(payload)
     try:
         server_policy = _server_policy(payload)
-        cal_policy = resolve_cal_policy(payload.cal_policy_id, payload.policy_version)
+        cal_policy = resolve_configured_cal_policy()
         policy = EEPLPolicy(
             policy_id=server_policy.policy_id,
             policy_version=server_policy.policy_version,
