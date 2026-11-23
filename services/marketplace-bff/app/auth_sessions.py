@@ -220,7 +220,7 @@ async def _load_session(session_id: str) -> tuple[str, dict[str, Any]]:
         tokens = json.loads(_decrypt(row["token_ciphertext"]))
     except (ValueError, TypeError) as exc:
         raise HTTPException(503, detail={"code": "AUTH_SESSION_INVALID"}) from exc
-    return row["user_id"], tokens
+    return str(row["user_id"]), tokens
 
 
 async def _rotate(session_id: str) -> tuple[dict[str, Any], int]:
