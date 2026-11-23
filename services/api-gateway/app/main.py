@@ -3306,7 +3306,10 @@ def evaluate_decisions(
                     }
                     for signal in arbitration.evaluated_signals
                 ],
-                candidate_snapshot_sha256=hashlib.sha256(_canonical(product)).hexdigest(),
+                candidate_snapshot_sha256=hashlib.sha256(json.dumps(
+                    product, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=False, allow_nan=False,
+                ).encode("utf-8")).hexdigest(),
             )
         except RuntimeError as exc:
             raise HTTPException(
