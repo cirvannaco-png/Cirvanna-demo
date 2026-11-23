@@ -4150,8 +4150,8 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
             FakeResponse({"accepted": True}),
         ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
-    headers = {
-        "Authorization": "Bearer customer-token", "Content-Type": "application/json",
+    headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
+    age_headers = {
         "X-Cirvanna-Age-Attestation": json.dumps({
             "subject_id": "signed-user-42", "request_id": "checkout-age-001",
             "purpose": "shopper_eligibility", "jti": "opaque-jti",
@@ -4165,7 +4165,7 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         client.get("/api/commerce/cart", headers=headers),
         client.post("/api/commerce/cart/items", headers=headers, json={"variant_id": variant, "quantity": 1}),
         client.patch(f"/api/commerce/cart/items/{variant}", headers=headers, json={"quantity": 2}),
-        client.post("/api/commerce/checkout", headers={**headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
+        client.post("/api/commerce/checkout", headers={**headers, **age_headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
     ]
     assert [response.status_code for response in responses] == [200, 200, 200, 200]
     assert [call[0] for call in fake.calls] == [
@@ -4200,8 +4200,10 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         "https://commerce.example.test/checkout",
     }]
     assert all(call[2]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
-    assert all(call[2]["headers"]["X-Cirvanna-Age-Attestation-Signature"] == "a" * 64 for call in forwarded)
-    assert all(call[2]["headers"]["X-Cirvanna-Age-Evidence-Request-ID"] == "checkout-age-001" for call in forwarded)
+    checkout_forward = next(call for call in forwarded if call[1] == "https://commerce.example.test/checkout")
+    assert checkout_forward[2]["headers"]["X-Cirvanna-Age-Attestation-Signature"] == "a" * 64
+    assert checkout_forward[2]["headers"]["X-Cirvanna-Age-Evidence-Request-ID"] == "checkout-age-001"
+    assert all("X-Cirvanna-Age-Attestation-Signature" not in call[2]["headers"] for call in forwarded if call is not checkout_forward)
 
 
 def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(client, monkeypatch):
