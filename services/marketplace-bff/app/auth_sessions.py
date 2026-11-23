@@ -62,7 +62,7 @@ async def _db() -> asyncpg.Pool:
     if _pool is None:
         async with _pool_lock:
             if _pool is None:
-                _pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=5, command_timeout=5)
+                _pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=5, command_timeout=5, ssl="require")
     return _pool
 
 
@@ -115,6 +115,11 @@ def _cookie(response: Response, session_id: str, *, max_age: int) -> None:
 
 async def _create_pending(provider: str, verifier: str, state: str) -> None:
     pool = await _db()
+    await pool.execute("DELETE FROM auth_private.pending_auth WHERE expires_at <= now()")
+    await pool.execute(
+        """DELETE FROM auth_private.sessions
+           WHERE expires_at <= now() OR revoked_at < now() - interval '30 days'"""
+    )
     await pool.execute(
         """INSERT INTO auth_private.pending_auth(state_hash, provider, verifier_ciphertext, expires_at)
            VALUES($1, $2, $3, now() + interval '10 minutes')""",
@@ -276,6 +281,8 @@ async def _rotate(session_id: str) -> tuple[dict[str, Any], int]:
                     "app_role": claims.get("app_role", "customer"),
                 }, separators=(",", ":")))
                 session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
+                if session_ttl < 3600 or session_ttl > 7776000:
+                    raise HTTPException(503, detail={"code": "AUTH_SESSION_TTL_INVALID"})
                 await conn.execute(
                     """UPDATE auth_private.sessions SET token_ciphertext=$2,
                        expires_at=now()+($3 * interval '1 second'), updated_at=now()
