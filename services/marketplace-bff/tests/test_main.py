@@ -148,7 +148,9 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client, monkeypat
     monkeypatch.delenv("MARKETPLACE_ENVIRONMENT", raising=False)
     response = client.get("/")
     assert response.status_code == 200
-    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:false});' in response.text
+    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});' in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
     assert "bootstrap.publicOffersBase" in response.text
     assert 'window.dispatchEvent(new CustomEvent("cirvanna:session-ready"' in response.text
     assert "accessToken:token" in response.text
