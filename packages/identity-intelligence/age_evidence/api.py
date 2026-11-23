@@ -104,26 +104,42 @@ def start_session(payload: SessionStart) -> dict:
         raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
     except Exception as exc:
         raise HTTPException(502, detail={"code": "AGE_EVIDENCE_SESSION_START_FAILED"}) from exc
+    finally:
+        if service is not None:
+            service.close()
 
 
 @router.post("/sessions/{session_id}/poll", dependencies=[Depends(require_orchestrator)])
 def poll_session(session_id: str) -> dict:
+    service = None
     try:
-        return _service().poll(session_id)
+        service = _service()
+        return service.poll(session_id)
     except ValueError as exc:
         raise HTTPException(409, detail={"code": "AGE_EVIDENCE_SESSION_NOT_READY"}) from exc
     except Exception as exc:
         raise HTTPException(502, detail={"code": "AGE_EVIDENCE_PROVIDER_RESULT_UNAVAILABLE"}) from exc
+    finally:
+        if service is not None:
+            service.close()
 
 
 @router.post("/sessions/{session_id}/revoke", dependencies=[Depends(require_orchestrator)])
 def revoke_session(session_id: str) -> dict:
-    return {"revoked": _store().revoke_session(session_id)}
+    store = _store()
+    try:
+        return {"revoked": store.revoke_session(session_id)}
+    finally:
+        store.engine.dispose()
 
 
 @router.post("/attestations/redeem", dependencies=[Depends(require_redemption)])
 def redeem_attestation(payload: AttestationRedeem) -> dict:
-    redeemed = _store().consume_attestation(**payload.model_dump())
+    store = _store()
+    try:
+        redeemed = store.consume_attestation(**payload.model_dump())
+    finally:
+        store.engine.dispose()
     if not redeemed:
         raise HTTPException(409, detail={"code": "AGE_EVIDENCE_REPLAY_REVOKED_OR_EXPIRED"})
     return {"redeemed": True}
