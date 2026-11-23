@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "services/identity-learning-service/**"
+      - "packages/identity-intelligence/age_evidence/**"
       - ".github/workflows/identity-learning-service.yml"
   push:
     branches:
@@ -84,4 +85,4 @@ jobs:
           docker exec -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0006_consent_revocation_outbox.down.sql
           docker exec -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0006_consent_revocation_outbox.sql
       - name: Build service container
-        run: docker build -t cirvanna-identity-learning .
+        run: docker build -f services/identity-learning-service/Dockerfile -t cirvanna-identity-learning ../..
