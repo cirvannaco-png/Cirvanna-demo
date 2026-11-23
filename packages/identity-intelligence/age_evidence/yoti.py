@@ -128,7 +128,19 @@ class YotiAVSClient:
         # Explicitly reject any provider response that indicates an age-estimation fallback.
         if digital_id.get("age_estimation_allowed") is True or response.get("method") != "DIGITAL_ID":
             raise YotiProviderError("Yoti did not complete the approved Digital ID method")
-        state = response.get("status")
+        expires_at = response.get("expires_at")
+        if not isinstance(expires_at, str):
+            raise YotiProviderError("Yoti result expiry is missing")
+        try:
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise YotiProviderError("Yoti result expiry is invalid") from exc
+        if expiry.tzinfo is None:
+            raise YotiProviderError("Yoti result expiry must include a timezone")
+        if datetime.now(timezone.utc) >= expiry.astimezone(timezone.utc):
+            state = "EXPIRED"
+        else:
+            state = response.get("status")
         if state == "COMPLETE":
             threshold_met: bool | None = True
         elif state == "FAIL":
