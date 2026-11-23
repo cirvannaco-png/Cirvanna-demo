@@ -24,12 +24,30 @@ def config(monkeypatch):
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CAL_REVIEW_OPERATOR_TOKEN", "cal-review-operator-test-token-32-bytes")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
+        "standard-marketplace": {
+            "policy_version": "1.0.0", "minimum_age": None, "maximum_age": None,
+            "allowed_locations": ["Nairobi"], "allowed_occasions": ["everyday"],
+            "allowed_climates": ["warm"], "required_context": [],
+        }
+    }))
 
 
 @pytest.fixture
 def client():
     with TestClient(main.app) as value:
         yield value
+
+
+def configure_server_policy(monkeypatch, *, minimum_age=None, maximum_age=None):
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
+        "standard-marketplace": {
+            "policy_version": "1.0.0", "minimum_age": minimum_age,
+            "maximum_age": maximum_age, "allowed_locations": ["Nairobi"],
+            "allowed_occasions": ["everyday"], "allowed_climates": ["warm"],
+            "required_context": [],
+        }
+    }))
 
 
 def signed_fit(fit: dict) -> str:
@@ -132,9 +150,10 @@ def attach_age_attestation(body: dict, *, threshold_met: bool = True) -> None:
     )
 
 
-def test_unverified_client_age_is_ignored_and_age_policy_routes_to_review(client):
+def test_unverified_client_age_is_ignored_and_age_policy_routes_to_review(client, monkeypatch):
     body = request_body()
-    body["eepl_policy"]["minimum_age"] = 18
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
     body["context"]["age_years"] = 17
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 200, response.text
@@ -147,9 +166,10 @@ def test_unverified_client_age_is_ignored_and_age_policy_routes_to_review(client
     assert result["age_evidence"]["status"] == "unverified_client_value"
 
 
-def test_verified_yoti_threshold_attestation_is_used_by_eepl(client):
+def test_verified_yoti_threshold_attestation_is_used_by_eepl(client, monkeypatch):
     body = request_body()
-    body["eepl_policy"]["minimum_age"] = 18
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
     body["context"]["age_years"] = 16
     attach_age_attestation(body, threshold_met=True)
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
@@ -164,9 +184,10 @@ def test_verified_yoti_threshold_attestation_is_used_by_eepl(client):
     }
 
 
-def test_verified_under_threshold_attestation_blocks_eligibility(client):
+def test_verified_under_threshold_attestation_blocks_eligibility(client, monkeypatch):
     body = request_body()
-    body["eepl_policy"]["minimum_age"] = 18
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
     attach_age_attestation(body, threshold_met=False)
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 200, response.text
@@ -174,9 +195,10 @@ def test_verified_under_threshold_attestation_blocks_eligibility(client):
     assert response.json()["age_evidence"]["status"] == "verified_threshold_not_met"
 
 
-def test_age_attestation_subject_binding_mismatch_is_rejected(client):
+def test_age_attestation_subject_binding_mismatch_is_rejected(client, monkeypatch):
     body = request_body()
-    body["eepl_policy"]["minimum_age"] = 18
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
     attach_age_attestation(body)
     body["context"]["user_id"] = "different-user"
     # Other signed evidence is re-created for the altered request identity.
@@ -189,10 +211,11 @@ def test_age_attestation_subject_binding_mismatch_is_rejected(client):
     assert response.json()["detail"]["code"] == "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"
 
 
-def test_threshold_attestation_cannot_satisfy_maximum_age_policy(client):
+def test_threshold_attestation_cannot_satisfy_maximum_age_policy(client, monkeypatch):
     body = request_body()
-    body["eepl_policy"]["minimum_age"] = 18
-    body["eepl_policy"]["maximum_age"] = 65
+    configure_server_policy(monkeypatch, minimum_age=18, maximum_age=65)
+    body["eepl_policy"]["minimum_age"] = None
+    body["eepl_policy"]["maximum_age"] = None
     attach_age_attestation(body)
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 422
