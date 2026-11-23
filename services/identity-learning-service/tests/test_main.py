@@ -25,11 +25,24 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("IDENTITY_CRON_TOKEN", "identity-cron-token-that-is-at-least-32-bytes")
     monkeypatch.setenv("CIL_CONTRIBUTOR_TOKEN_HMAC_SECRET", "identity-cil-contributor-pseudonym-key-at-least-32-bytes")
     monkeypatch.setenv("CIL_SKIN_ANALYSIS_CONSENT_KEY", "shared-cil-skin-analysis-consent-key-at-least-32-bytes")
+    monkeypatch.setenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "age-evidence-orchestrator-token-at-least-32-bytes")
+    monkeypatch.setenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "age-evidence-redemption-token-at-least-32-bytes")
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-hmac-signing-secret-at-least-32-bytes")
+    monkeypatch.setenv("YOTI_AVS_API_KEY", "yoti-test-api-key")
+    monkeypatch.setenv("YOTI_AVS_SDK_ID", "yoti-test-sdk-id")
+    monkeypatch.setenv("YOTI_AVS_CALLBACK_URL", "https://identity.example.test/age/complete")
+    monkeypatch.setenv("YOTI_AVS_CANCEL_URL", "https://identity.example.test/age/cancel")
+    monkeypatch.setenv("YOTI_AVS_PRIVACY_POLICY_URL", "https://identity.example.test/privacy")
+    monkeypatch.setenv("YOTI_AVS_TERMS_URL", "https://identity.example.test/terms")
     monkeypatch.setenv("IDENTITY_CIL_CONSENT_ISSUER_TOKEN", "identity-cil-consent-issuer-token-at-least-32-bytes")
     monkeypatch.setenv("IDENTITY_CIL_CONSENT_VERIFIER_TOKEN", "identity-cil-consent-verifier-token-at-least-32-bytes")
     main._engine.cache_clear()
     main._session_factory.cache_clear()
     main.Base.metadata.create_all(bind=main._engine(url))
+    from age_evidence.store import metadata as age_evidence_metadata
+    age_evidence_metadata.create_all(
+        bind=main._engine(url).execution_options(schema_translate_map={"identity_private": None})
+    )
     with TestClient(main.app) as test_client:
         yield test_client
     main._session_factory.cache_clear()
