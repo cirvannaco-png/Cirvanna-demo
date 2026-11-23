@@ -32,7 +32,8 @@ CREATE INDEX IF NOT EXISTS ix_catacaci_receipts_verdict_created
     ON decision_private.catacaci_decision_receipts (verdict, created_at DESC);
 
 -- Keep the private schema inaccessible to browser-facing Supabase roles.
-DO $$
+REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM PUBLIC;
+DO $
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
         REVOKE ALL ON SCHEMA decision_private FROM anon;
@@ -44,7 +45,7 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cirvanna_decision_audit') THEN
         GRANT USAGE ON SCHEMA decision_private TO cirvanna_decision_audit;
-        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA decision_private TO cirvanna_decision_audit;
+        GRANT SELECT, INSERT ON decision_private.catacaci_decision_receipts TO cirvanna_decision_audit;
     END IF;
 END;
 $$;
