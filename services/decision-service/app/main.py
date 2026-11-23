@@ -776,7 +776,7 @@ def purge_cil_contributions() -> dict:
 
 
 @app.post("/v1/governance/cil/aggregates", dependencies=[Depends(require_cil_aggregator)])
-def publish_cil_aggregate(payload: CILAggregateIn) -> dict:
+def create_cil_aggregate(payload: CILAggregateIn) -> dict:
     try:
         epsilon = float(os.getenv("CATACACI_CIL_RELEASE_EPSILON", "0.5"))
         budget = float(os.getenv("CATACACI_CIL_EPSILON_BUDGET", "1.0"))
