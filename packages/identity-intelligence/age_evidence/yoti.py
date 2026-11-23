@@ -49,8 +49,19 @@ class YotiAVSClient:
         if not re.fullmatch(r"[A-Za-z0-9_-]{14,40}", sdk_id):
             raise ValueError("Yoti SDK ID is invalid")
         parsed = httpx.URL(base_url)
-        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("Yoti API base URL must be trusted HTTPS without credentials or query")
+        if (
+            parsed.scheme != "https"
+            or parsed.host != "age.yoti.com"
+            or parsed.port not in (None, 443)
+            or parsed.path not in ("", "/")
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Yoti API base URL must be the pinned official HTTPS origin")
+        if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+            raise ValueError("Yoti request timeout must be greater than zero and at most 60 seconds")
         self._api_key = api_key
         self._sdk_id = sdk_id
         self._base_url = str(parsed).rstrip("/")
