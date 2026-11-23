@@ -116,12 +116,13 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                     ),
                 )
                 cursor.execute(
-                    "SELECT receipt_sha256 FROM decision_private.catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s",
+                    "SELECT receipt_id, receipt_sha256 FROM decision_private.catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s",
                     (receipt["request_id"], receipt["candidate_id"]),
                 )
                 row = cursor.fetchone()
-                if row is None or row[0] != receipt_hash:
+                if row is None or row[1] != receipt_hash:
                     raise DecisionReceiptStoreError("decision receipt replay conflicts with the original evidence")
+                receipt_id = str(row[0])
     except DecisionReceiptStoreError:
         raise
     except Exception as exc:
