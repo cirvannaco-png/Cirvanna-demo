@@ -459,9 +459,10 @@ def check_governance_store() -> bool:
                 to_regclass('decision_private.catacaci_cil_privacy_budget'),
                 to_regclass('decision_private.catacaci_vsl_profiles'),
                 to_regclass('decision_private.catacaci_vsl_proposals'),
-                to_regclass('decision_private.catacaci_vsl_events')"""
+                to_regclass('decision_private.catacaci_vsl_events'),
+                (SELECT COUNT(*) FROM decision_private.catacaci_vsl_profiles WHERE singleton_id=1)"""
             )
             row = cur.fetchone()
-            return bool(row and all(row))
+            return bool(row and all(row[:-1]) and row[-1] == 1)
     except Exception:
         return False
