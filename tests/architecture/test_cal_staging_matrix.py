@@ -32,7 +32,7 @@ def valid_manifest():
             "assertions": {name: {"status": [200, 403, 503]} for name in runner.REQUIRED_SURFACES},
         }
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
-            scenario["revoke"] = {"url": "https://fixture.staging.example.test/revoke"}
+            scenario["revoke"] = {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"}
             scenario["recheck_after_revoke"] = True
         if scenario_id == "consent_session_revoked":
             scenario["race"] = {
