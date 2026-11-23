@@ -430,6 +430,7 @@ def capabilities() -> dict:
         "usi_explicit_preference_alignment": True, "fci_calibrated_evidence_contract": True,
         "catacaci_cal_arbitration": True, "decision_explanations": True,
         "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
+        "trusted_age_evidence_available": False, "client_age_assertions_accepted": False,
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
         "cil_feedback_review_enforcement_required": _cil_cal_review_enforcement_required(),
