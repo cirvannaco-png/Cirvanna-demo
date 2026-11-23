@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- Optional, explicit consent expiry on the canonical resource-bound receipt.
 -- Existing receipts remain readable with expires_at NULL for compatibility.
 ALTER TABLE identity_tal_consent_receipts
