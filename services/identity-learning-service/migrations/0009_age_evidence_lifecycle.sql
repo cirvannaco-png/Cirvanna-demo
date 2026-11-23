@@ -46,7 +46,37 @@ CREATE TABLE IF NOT EXISTS identity_private.identity_age_threshold_attestations 
   policy_version varchar(64) NOT NULL,
   threshold integer NOT NULL CHECK (threshold BETWEEN 13 AND 125),
   threshold_met boolean NOT NULL,
-  signature_sha256 varchar(64) NOT NULL CHECK (signature_sha256 ~ '^[0-9a-f]{64}$'),
+  signature_sha256 varchar(64) NOT NULL CHECK (signature_sha256 ~ '^[0-9a-f]{64}
+  issued_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+  revoked_at timestamptz,
+  CHECK (expires_at > issued_at),
+  CHECK (expires_at <= issued_at + interval '15 minutes')
+);
+CREATE INDEX IF NOT EXISTS ix_identity_age_attestations_subject_expiry
+  ON identity_private.identity_age_threshold_attestations(subject_id, expires_at);
+CREATE INDEX IF NOT EXISTS ix_identity_age_attestations_session
+  ON identity_private.identity_age_threshold_attestations(session_id);
+
+ALTER TABLE identity_private.identity_age_verification_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity_private.identity_age_threshold_attestations ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON identity_private.identity_age_verification_sessions FROM anon, authenticated;
+REVOKE ALL ON identity_private.identity_age_threshold_attestations FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON identity_private.identity_age_verification_sessions TO identity_learning_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON identity_private.identity_age_threshold_attestations TO identity_learning_service;
+
+DROP POLICY IF EXISTS identity_age_sessions_service_only ON identity_private.identity_age_verification_sessions;
+CREATE POLICY identity_age_sessions_service_only ON identity_private.identity_age_verification_sessions
+  FOR ALL TO identity_learning_service USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS identity_age_attestations_service_only ON identity_private.identity_age_threshold_attestations;
+CREATE POLICY identity_age_attestations_service_only ON identity_private.identity_age_threshold_attestations
+  FOR ALL TO identity_learning_service USING (true) WITH CHECK (true);
+
+COMMIT;
+),
+  attestation_payload jsonb NOT NULL,
+  signature varchar(128) NOT NULL,
   issued_at timestamptz NOT NULL,
   expires_at timestamptz NOT NULL,
   consumed_at timestamptz,
