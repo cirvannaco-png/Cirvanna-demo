@@ -3918,6 +3918,14 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     for key in ("content-type", "idempotency-key"):
         if request.headers.get(key):
             headers[key] = request.headers[key]
+    if is_purchase_path:
+        for key in (
+            "x-cirvanna-age-attestation",
+            "x-cirvanna-age-attestation-signature",
+            "x-cirvanna-age-evidence-request-id",
+        ):
+            if request.headers.get(key):
+                headers[key] = request.headers[key]
     body = await request.body()
 
     if is_purchase_path:
