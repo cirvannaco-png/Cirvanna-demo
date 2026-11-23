@@ -4648,3 +4648,38 @@ def test_cookie_authenticated_writes_accept_exact_application_origin(client, mon
     # intentionally has no production session database configured.
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "AUTH_SESSION_DATABASE_URL_NOT_CONFIGURED"
+
+def test_bff_readiness_fails_closed_until_auth_dependencies_are_ready(client, monkeypatch):
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setattr(main, "_upstream_ready", lambda base: True)
+
+    async def auth_blocked():
+        return {
+            "configured": True,
+            "database_ready": True,
+            "jwks_ready": False,
+            "providers": {"google": True, "apple": True, "microsoft": True},
+            "email_delivery_verified": True,
+            "ready": False,
+        }
+
+    async def auth_ready():
+        return {
+            "configured": True,
+            "database_ready": True,
+            "jwks_ready": True,
+            "providers": {"google": True, "apple": True, "microsoft": True},
+            "email_delivery_verified": True,
+            "ready": True,
+        }
+
+    monkeypatch.setattr(main, "auth_readiness", auth_blocked)
+    blocked = client.get("/ready")
+    assert blocked.status_code == 503
+    assert blocked.json()["detail"]["auth"]["jwks_ready"] is False
+
+    monkeypatch.setattr(main, "auth_readiness", auth_ready)
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json()["auth"]["ready"] is True
