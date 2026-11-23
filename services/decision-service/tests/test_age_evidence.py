@@ -174,6 +174,7 @@ class YotiAdapterTests(unittest.TestCase):
         session = client.create_over_session(
             threshold=18,
             reference_id="a" * 48,
+            redirect_url="https://cirvanna.example/age/complete",
             cancel_url="https://cirvanna.example/age/cancel",
             privacy_policy_url="https://cirvanna.example/privacy",
             terms_url="https://cirvanna.example/terms",
@@ -183,7 +184,8 @@ class YotiAdapterTests(unittest.TestCase):
         self.assertIn('"age_estimation_allowed":false', captured["body"])
         self.assertIn('"age_estimation":{"allowed":false}', captured["body"])
         self.assertIn('"doc_scan":{"allowed":false}', captured["body"])
-        self.assertNotIn('"callback"', captured["body"])
+        self.assertIn('"callback":{"url":"https://cirvanna.example/age/complete","auto":true}', captured["body"])
+        self.assertNotIn('"notification_url"', captured["body"])
         client.close()
 
     def test_result_requires_exact_session_sdk_reference_and_threshold(self):
