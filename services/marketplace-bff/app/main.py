@@ -715,8 +715,11 @@ class WardrobeTryOnIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     wardrobe_item_id: str = Field(min_length=3, max_length=128)
     twin_id: str = Field(min_length=8, max_length=128)
-    person_image_asset_id: str = Field(min_length=36, max_length=36)
-    consent_id: str = Field(min_length=8, max_length=160)
+    # Optional legacy hints are accepted for compatibility but never trusted;
+    # the canonical Twin Registry supplies the owner-authorized source asset
+    # and consent bundle for every render request.
+    person_image_asset_id: str | None = Field(default=None, min_length=36, max_length=36)
+    consent_id: str | None = Field(default=None, min_length=8, max_length=160)
     consent_image_processing: bool
     consent_virtual_try_on: bool
     request_id: str | None = Field(default=None, min_length=8, max_length=128)
@@ -1238,6 +1241,53 @@ async def my_virtual_twins(request: Request) -> Response:
     return _private_json_response({"twins": safe_records, "count": len(safe_records)})
 
 
+async def _authorized_twin_try_on_context(
+    client: httpx.AsyncClient, *, subject_id: str, twin_id: str,
+) -> tuple[str, str]:
+    """Resolve private person asset and consent only from the canonical registry."""
+    registry_base, registry_token = _internal_service(
+        "TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN"
+    )
+    try:
+        response = await client.post(
+            registry_base + "/internal/v1/twins/authorize",
+            headers={
+                "Authorization": "Bearer " + registry_token,
+                "Accept": "application/json",
+                "Cache-Control": "no-store",
+            },
+            json={"subject_id": subject_id, "twin_id": twin_id},
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "TWIN_REGISTRY_AUTHORIZE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+    try:
+        twin = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"}) from exc
+    source_ids = twin.get("source_image_asset_ids") if isinstance(twin, dict) else None
+    consent_id = twin.get("consent_id") if isinstance(twin, dict) else None
+    if not (
+        isinstance(twin, dict)
+        and twin.get("authorized") is True
+        and twin.get("active") is True
+        and twin.get("subject_id") == subject_id
+        and twin.get("twin_id") == twin_id
+        and twin.get("representation_type") == "full_body_mesh"
+        and isinstance(consent_id, str) and len(consent_id.strip()) >= 8
+        and isinstance(source_ids, list) and source_ids
+        and all(isinstance(asset_id, str) and UUID_RE.fullmatch(asset_id) for asset_id in source_ids)
+        and len(source_ids) == len(set(source_ids))
+    ):
+        raise HTTPException(403, detail={"code": "TWIN_NOT_AUTHORIZED_FOR_TRY_ON"})
+    return sorted(source_ids)[0], consent_id
+
+
 @app.post("/api/wardrobe/items/{item_id}/try-on")
 async def try_on_wardrobe_item(item_id: str, request: Request, payload: WardrobeTryOnIn) -> Response:
     """Start a private Twin render for an exact, active, user-owned wardrobe image."""
@@ -1250,6 +1300,13 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
         timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False
     ) as client:
         subject, _ = await _verified_commerce_subject(client, request)
+        person_asset_id, consent_id = await _authorized_twin_try_on_context(
+            client, subject_id=subject, twin_id=payload.twin_id.strip()
+        )
+        if payload.person_image_asset_id and payload.person_image_asset_id.lower() != person_asset_id:
+            raise HTTPException(403, detail={"code": "CLIENT_PERSON_ASSET_DOES_NOT_MATCH_TWIN"})
+        if payload.consent_id and payload.consent_id.strip() != consent_id:
+            raise HTTPException(403, detail={"code": "CLIENT_CONSENT_DOES_NOT_MATCH_TWIN"})
         wardrobe_base, wardrobe_token = _wardrobe_service()
         try:
             item_response = await client.get(
@@ -1305,7 +1362,7 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
             "subject_id": subject,
             "twin_id": payload.twin_id.strip(),
             "product_id": "wardrobe:" + item_id,
-            "person_image_asset_id": payload.person_image_asset_id,
+            "person_image_asset_id": person_asset_id,
             "garment_image_asset_id": garment_asset_id.lower(),
             "garment_asset_purpose": "wardrobe_garment_flat_lay",
             "garment_photo_type": "flat-lay",
@@ -1315,7 +1372,7 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
             "look_version": payload.look_version,
             "wardrobe_snapshot_version": payload.wardrobe_snapshot_version,
             "consent": {
-                "consent_id": payload.consent_id.strip(),
+                "consent_id": consent_id,
                 "image_processing": True,
                 "virtual_try_on": True,
                 "retention_policy": "ephemeral",
