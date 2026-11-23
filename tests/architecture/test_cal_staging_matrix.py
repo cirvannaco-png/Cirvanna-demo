@@ -210,6 +210,13 @@ class CALStagingMatrixContractTests(unittest.TestCase):
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
+    def test_race_and_post_race_revocation_must_target_same_operation(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "consent_session_revoked")
+        scenario["revoke"]["url"] = "https://other.staging.example.test/revoke"
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
     def test_revocation_race_requires_semantic_assertions(self):
         config = valid_manifest()
         scenario = next(item for item in config["scenarios"] if item["id"] == "payment_revoked_race")
