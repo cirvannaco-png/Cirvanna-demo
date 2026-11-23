@@ -58,7 +58,7 @@ class AgeEvidenceService:
         row = self.store.get_session(session_id)
         if row is None:
             raise ValueError("age verification session not found")
-        if row["state"] in {"revoked", "expired", "failed", "denied"}:
+        if row["state"] in {"revoked", "expired", "failed"}:
             return {"session_id": session_id, "state": row["state"]}
         if row["state"] in {"verified", "denied"}:
             persisted = self.store.get_attestation(session_id)
