@@ -39,6 +39,17 @@ def test_provider_contract_exposes_web_and_native_ios_paths():
     assert body["ios"]["apple_native"] is True
 
 
+def test_native_apple_endpoint_rejects_browser_origin():
+    with make_client() as client:
+        response = client.post(
+            "/auth/ios/apple",
+            headers={"Origin": "https://attacker.example"},
+            json={"id_token": "x" * 120, "nonce": "n" * 32},
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AUTH_NATIVE_ORIGIN_REJECTED"
+
+
 def test_unknown_provider_is_rejected():
     with make_client() as client:
         response = client.get("/auth/login/facebook", follow_redirects=False)
