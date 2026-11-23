@@ -1279,3 +1279,33 @@ def test_gateway_uses_server_owned_cal_thresholds(monkeypatch):
     assert resolved.policy_version == "cal-adult-v7"
     assert resolved.minimum_fit_confidence == 0.88
     assert resolved.minimum_alignment_score == 0.72
+
+
+def test_gateway_yoti_session_proxy_uses_commerce_verified_subject(monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "verified-user-1")
+    calls = []
+    monkeypatch.setattr(main, "_age_evidence_proxy", lambda path, subject, body: (
+        calls.append((path, subject, body)) or {
+            "session_id": str(uuid.uuid4()), "state": "pending",
+            "verification_url": "https://verify.yoti.com/session/opaque",
+            "expires_at": "2026-11-23T22:00:00Z",
+        }
+    ))
+    payload = main.AgeEvidenceSessionStartInput(request_id="shopper-age-request-001")
+    result = main.create_my_age_evidence_session(payload, "Bearer commerce-user-token")
+    assert result["provider"] == "yoti"
+    assert result["request_id"] == "shopper-age-request-001"
+    assert calls == [("sessions", "verified-user-1", {
+        "request_id": "shopper-age-request-001", "purpose": "shopper_eligibility",
+    })]
+
+
+def test_gateway_yoti_poll_rejects_attestation_for_another_subject(monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "verified-user-1")
+    monkeypatch.setattr(main, "_age_evidence_proxy", lambda *args: {
+        "session_id": str(uuid.uuid4()), "state": "verified",
+        "attestation": {"subject_id": "another-user"},
+        "signature": "a" * 64,
+    })
+    with pytest.raises(Exception):
+        main.poll_my_age_evidence_session(str(uuid.uuid4()), "Bearer commerce-user-token")
