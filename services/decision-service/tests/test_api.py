@@ -65,7 +65,7 @@ def request_body(**overrides):
         },
         "eepl_policy": {
             "policy_id": "standard-marketplace", "policy_version": "1.0.0",
-            "minimum_age": 18, "allowed_locations": ["Nairobi"],
+            "minimum_age": None, "allowed_locations": ["Nairobi"],
             "allowed_occasions": ["everyday"], "allowed_climates": ["warm"],
         },
         "usi_profile": {
@@ -147,6 +147,37 @@ def test_full_eligibility_pipeline_calls_real_cal_and_only_show_authorizes_displ
     assert result["policy"]["minimum_fit_confidence"] == 0.70
     assert any(signal.startswith("eepl:") for signal in result["arbitration"]["evaluated_signal_ids"])
 
+
+
+def test_unverified_client_age_is_ignored_and_age_policy_routes_to_review(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    body["context"]["age_years"] = 17
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "REVIEW"
+    assert result["may_display"] is False
+    assert result["gates"]["eepl"]["verdict"] == "review"
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_AGE" in result["gates"]["eepl"]["reason_codes"]
+    assert result["age_evidence"] == {
+        "contract_version": "age-evidence-unavailable-v1",
+        "status": "unverified_client_value",
+        "used_for_eligibility": False,
+    }
+
+
+def test_missing_age_with_age_dependent_policy_routes_to_review(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    body["context"]["age_years"] = None
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "REVIEW"
+    assert result["gates"]["eepl"]["verdict"] == "review"
+    assert result["age_evidence"]["status"] == "missing"
+    assert result["age_evidence"]["used_for_eligibility"] is False
 
 
 def test_cultural_requirement_is_evaluated_by_canonical_pipeline(client):
