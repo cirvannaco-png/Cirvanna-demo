@@ -98,7 +98,7 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                         receipt_sha256, created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s::jsonb, %s::jsonb, %s, %s
+                        %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s
                     )
                     ON CONFLICT (request_id, candidate_id) DO NOTHING
                     """,
