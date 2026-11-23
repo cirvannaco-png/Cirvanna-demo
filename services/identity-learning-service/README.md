@@ -17,7 +17,7 @@ The service owns a short-lived, subject-scoped store for normalized PNELLY disco
 
 Only structured discovery fields are retained (latest query, category, currency, declared location/occasion/climate, bounded constraints and owned-item exclusion choice). **Raw conversation messages and transcripts are not stored.** This table is not a language model, intent parser or conversation generator; the conversational orchestration/provider still has to interpret follow-up language and map it into this typed state before using CAL-protected discovery.
 
-Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`, then `0006_consent_revocation_outbox.sql`, `0007_dsi_capture_challenges.sql`, and `0008_cil_provider_consent_revocation.sql`. Apply `0009_foreign_key_indexes.sql` last. The identity workflow tests the migration chain and isolated PostgreSQL restore.
+Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`, then `0006_consent_revocation_outbox.sql`, `0007_dsi_capture_challenges.sql`, and `0008_cil_provider_consent_revocation.sql`. Apply `0009_foreign_key_indexes.sql` last. Apply `0010_runtime_role_grants.sql` after that; create a separate LOGIN role with a managed password at deployment and grant it membership in `identity_learning_service`. The identity workflow tests the migration chain and isolated PostgreSQL restore.
 
 ## Local setup
 
