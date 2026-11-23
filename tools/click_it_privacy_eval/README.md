@@ -6,7 +6,7 @@ Run:
 
     python tools/click_it_privacy_eval/score.py --csv /secure/evaluator/annotations.csv --policy /secure/evaluator/preregistered-policy.json --report /secure/evaluator/report.json
 
-The annotation CSV contains only evaluator measurements, never image bytes or identifiers. The scorer reports false-negative rates and 95% Wilson upper bounds by stratum. The policy must be preregistered and requires zero residual unmasked faces, zero identity-feature calls, zero age-estimation calls, rejection of uncertain outputs and child-media processing/publication. The evaluator must choose sample floors and FNR confidence thresholds before seeing the data. This tool is not a detector and cannot independently certify the model.
+The annotation CSV contains only evaluator measurements, never image bytes or identifiers. Required fields include per-stratum ground-truth/missed/residual face counts, masking-before-embedding, uncertainty state and whether uncertain output was actually rejected, identity/age-feature call counts, and child-processing/publication outcomes. The scorer reports false-negative rates and 95% Wilson upper bounds by stratum. The policy must be preregistered and requires zero residual unmasked faces, zero identity-feature calls, zero age-estimation calls, fail-closed rejection of uncertain outputs and child-media processing/publication. An uncertain result is safe only when it was rejected and not publicly published. The evaluator must choose sample floors and FNR confidence thresholds before seeing the data. This tool is not a detector and cannot independently certify the model.
 
 ## Photographed-person report/removal intake
 
