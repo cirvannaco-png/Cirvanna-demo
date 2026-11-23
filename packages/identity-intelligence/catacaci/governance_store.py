@@ -182,6 +182,20 @@ def release_cil_aggregate(
                 (cohort_key, period),
             )
             spent, limit_value = cur.fetchone()
+            # Serialize one release per cohort-month under the locked budget row.
+            cur.execute(
+                """SELECT suppressed, noisy_contributor_count, noisy_success_rate, epsilon
+                FROM catacaci_cil_aggregates WHERE cohort_key=%s AND period_start=%s""",
+                (cohort_key, period),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                return {
+                    "cohort_key": cohort_key, "period_start": period.isoformat(),
+                    "suppressed": existing[0], "contributor_count": existing[1],
+                    "success_rate": existing[2], "epsilon": float(existing[3]),
+                    "mechanism": "laplace-vector-count-and-successes-v1",
+                }
             if float(spent) + float(epsilon) > min(float(limit_value), float(epsilon_limit)) + 1e-12:
                 raise GovernanceStoreError("CIL cohort-period privacy budget is exhausted")
             cur.execute(
