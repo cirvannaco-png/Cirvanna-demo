@@ -33,6 +33,7 @@ from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  #
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
+from policy_registry import PolicyRegistryError, resolve_policy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
@@ -300,6 +301,17 @@ def _apply_cil_cal_feedback_veto(result_json: dict, review: dict | None) -> dict
     return result_json
 
 
+def _server_policy(payload: "EligibilityRequest") -> PolicyIn:
+    """Resolve only an identifier from the request; all policy rules stay server-side."""
+    try:
+        registered = resolve_policy(
+            payload.eepl_policy.policy_id, payload.eepl_policy.policy_version,
+        )
+        return PolicyIn.model_validate(registered)
+    except (PolicyRegistryError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
+
+
 def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] | None:
     attestation = payload.age_attestation
     signature = payload.age_attestation_signature
@@ -307,7 +319,7 @@ def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] |
         return None
     if not isinstance(attestation, dict) or not isinstance(signature, str):
         raise HTTPException(401, detail={"code": "AGE_EVIDENCE_SIGNATURE_MISSING"})
-    policy = payload.eepl_policy
+    policy = _server_policy(payload)
     # A threshold-only OVER proof cannot establish a maximum-age rule or a
     # different threshold. Such policies remain REVIEW until richer evidence exists.
     if policy.minimum_age is None or policy.maximum_age is not None:
@@ -517,15 +529,16 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
     verify_npl_signature(payload)
     verify_cultural_signature(payload)
     try:
+        server_policy = _server_policy(payload)
         policy = EEPLPolicy(
-            policy_id=payload.eepl_policy.policy_id,
-            policy_version=payload.eepl_policy.policy_version,
-            minimum_age=payload.eepl_policy.minimum_age,
-            maximum_age=payload.eepl_policy.maximum_age,
-            allowed_locations=tuple(payload.eepl_policy.allowed_locations),
-            allowed_occasions=tuple(payload.eepl_policy.allowed_occasions),
-            allowed_climates=tuple(payload.eepl_policy.allowed_climates),
-            required_context=tuple(ContextField(x) for x in payload.eepl_policy.required_context),
+            policy_id=server_policy.policy_id,
+            policy_version=server_policy.policy_version,
+            minimum_age=server_policy.minimum_age,
+            maximum_age=server_policy.maximum_age,
+            allowed_locations=tuple(server_policy.allowed_locations),
+            allowed_occasions=tuple(server_policy.allowed_occasions),
+            allowed_climates=tuple(server_policy.allowed_climates),
+            required_context=tuple(ContextField(x) for x in server_policy.required_context),
         )
         verified_age = _verified_age_threshold(payload)
         context = EEPLContext(
