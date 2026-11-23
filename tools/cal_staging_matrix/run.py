@@ -78,12 +78,14 @@ def _json_path(document: Any, path: str) -> Any:
     """Resolve $.a.b[0].c and wildcard collection paths such as $.items[*].image_url."""
     if not path.startswith("$."):
         raise MatrixError(f"JSON assertion path must start with '$.': {path}")
-    current: Any = document
+    parsed_parts = []
     for part in path[2:].split("."):
-        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\[(\d+|\*)\])?", part)
+        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\\[(\\d+|\\*)\\])?", part)
         if not match:
             raise MatrixError(f"unsupported JSON assertion path: {path}")
-        key, index = match.groups()
+        parsed_parts.append(match.groups())
+    current: Any = document
+    for key, index in parsed_parts:
         if isinstance(current, list):
             values = [item[key] for item in current if isinstance(item, dict) and key in item]
             if not values:
