@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.auth_sessions import router as auth_router, close_auth_pool
+from app.auth_sessions import router as auth_router, close_auth_pool, session_access_token
 from app.observability import install_observability
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
@@ -752,8 +752,12 @@ class WardrobeTryOnIn(BaseModel):
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not user_token.strip():
-        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if scheme.lower() == "bearer" and user_token.strip():
+        user_token = user_token.strip()
+    else:
+        # Production browser requests authenticate with the opaque HttpOnly session
+        # cookie. Bearer tokens remain accepted for native clients and test bridges.
+        user_token = await session_access_token(request)
     commerce_base = _upstream_base("COMMERCE_API_URL")
     try:
         identity = await client.get(
