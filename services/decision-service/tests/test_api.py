@@ -96,6 +96,7 @@ def request_body(**overrides):
     body = {
         "request_id": "req-eligibility-001",
         "candidate_id": "catalog-product-001",
+        "catalog_version": 7,
         "context": {
             "user_id": "user-001", "age_years": 21, "location": "Nairobi",
             "occasion": "everyday", "climate": "warm",
