@@ -495,3 +495,74 @@ class DecisionReceiptStoreContractTests(unittest.TestCase):
         }
         with self.assertRaises(DecisionReceiptStoreError):
             persist_decision_receipt(receipt)
+
+
+class CaTaCaCiGovernanceStoreBoundaryTests(unittest.TestCase):
+    def test_cam_rejects_invalid_verdict_before_database_access(self):
+        from catacaci.governance_store import GovernanceStoreError, append_cam_audit
+        with self.assertRaises(GovernanceStoreError):
+            append_cam_audit({
+                "audit_id": "cam-audit-0001", "request_id": "request-0001",
+                "candidate_id": "candidate-1", "observed_verdict": "allow",
+                "simulated_verdict": "show", "changed_signal_ids": [],
+                "policy_version": "cal-v1", "replay_version": "replay-v1",
+                "evaluated_at": NOW.isoformat(),
+                "interpretation": "counterfactual_scenario_not_observed_causality",
+            })
+
+    def test_cil_rejects_direct_identifiers_and_unallowlisted_cohorts(self):
+        import os
+        from unittest.mock import patch
+        from catacaci.governance_store import GovernanceStoreError, record_cil_contribution
+        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": "market:KE|category:tops"}, clear=False):
+            with self.assertRaises(GovernanceStoreError):
+                record_cil_contribution(
+                    event_id="cil-event-0001", contributor_token="raw-user-id",
+                    cohort_key="market:KE|category:tops", outcome_success=True, observed_at=NOW,
+                )
+        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": ""}, clear=False):
+            with self.assertRaises(GovernanceStoreError):
+                record_cil_contribution(
+                    event_id="cil-event-0002", contributor_token="hmac-sha256:" + "a" * 64,
+                    cohort_key="unbounded-user-specific-key", outcome_success=True, observed_at=NOW,
+                )
+
+    def test_cil_refuses_low_k_threshold_and_unallowlisted_release(self):
+        import os
+        from unittest.mock import patch
+        from catacaci.governance_store import GovernanceStoreError, release_cil_aggregate
+        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": "market:KE|category:tops"}, clear=False):
+            with self.assertRaises(GovernanceStoreError):
+                release_cil_aggregate(
+                    cohort_key="market:KE|category:tops", period_start="2026-11-01",
+                    minimum_contributors=10,
+                )
+        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": ""}, clear=False):
+            with self.assertRaises(GovernanceStoreError):
+                release_cil_aggregate(
+                    cohort_key="unapproved", period_start="2026-11-01",
+                )
+
+    def test_vsl_still_requires_distinct_approver_and_invariant_priorities(self):
+        from catacaci.vsl import (
+            ValueChangeProposal, ValueDimension, ValueProfile, approve_change,
+        )
+        current = ValueProfile(
+            version="v1",
+            priority_order=(
+                ValueDimension.SAFETY, ValueDimension.LEGAL_ELIGIBILITY,
+                ValueDimension.USER_HARD_CONSTRAINT, ValueDimension.NPL_HARD_NEGATIVE,
+                ValueDimension.CULTURAL_REQUIREMENT, ValueDimension.CONTEXT_ELIGIBILITY,
+                ValueDimension.IDENTITY_ALIGNMENT, ValueDimension.FIT_CONFIDENCE,
+                ValueDimension.OTHER,
+            ),
+        )
+        proposal = ValueChangeProposal(
+            proposal_id="proposal-0001", base_version="v1", proposed_version="v2",
+            proposed_order=current.priority_order, rationale="Keep the approved order stable.",
+            proposer_id="operator-a",
+        )
+        with self.assertRaises(PermissionError):
+            approve_change(
+                current, proposal, approver_id="operator-a", approval_event_id="approval-0001",
+            )
