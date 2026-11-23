@@ -6,6 +6,9 @@ EEPL evaluates explicitly supplied age, location, occasion, and climate context 
 
 ## Integration boundary
 
+Request-body `age_years` is not verified age evidence. The API gateway currently suppresses client-supplied age before constructing `EEPLContext` and records it as `unverified_client_value` in strict context evidence. Consequently, a configured age-dependent rule returns `REVIEW` until an authenticated, purpose-appropriate age-evidence provider is integrated. Do not infer age from a face, image, name, profile styling, or other proxy. A future provider must bind the evidence to the verified subject, include source and observation/expiry metadata, and enforce data minimization.
+
+
 `core.py` is a pure domain policy kernel. It does not fetch location, infer age, make medical/legal determinations, or authorize display. A consumer should map EEPL `BLOCK` to a hard eligibility veto and EEPL `REVIEW` to a fail-closed review state in CaTaCaCi CAL. Passing EEPL is not equivalent to CAL `SHOW`.
 
 ## Verification
