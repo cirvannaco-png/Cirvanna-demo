@@ -258,6 +258,8 @@ def validate_manifest(config: dict[str, Any]) -> None:
         raise MatrixError("scenarios must be a non-empty list")
     if any(not isinstance(item, dict) for item in scenarios):
         raise MatrixError("every scenario must be an object")
+    if any(not isinstance(item.get("id"), str) for item in scenarios):
+        raise MatrixError("every scenario must have a string ID")
     scenario_ids = {item.get("id") for item in scenarios}
     if len(scenario_ids) != len(scenarios):
         raise MatrixError("scenario IDs must be unique")
