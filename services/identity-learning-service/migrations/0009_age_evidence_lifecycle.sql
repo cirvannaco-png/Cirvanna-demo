@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS identity_private.identity_age_verification_sessions (
   threshold integer NOT NULL CHECK (threshold BETWEEN 13 AND 125),
   provider varchar(24) NOT NULL CHECK (provider = 'yoti'),
   provider_session_id uuid UNIQUE,
+  provider_reference varchar(96) NOT NULL UNIQUE,
   provider_reference_sha256 varchar(64) NOT NULL UNIQUE
     CHECK (provider_reference_sha256 ~ '^[0-9a-f]{64}$'),
   provider_evidence_id varchar(160),
