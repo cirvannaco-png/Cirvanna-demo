@@ -2235,18 +2235,22 @@ def readiness() -> dict[str, Any]:
             catalog_ready = response.status_code == 200 and response.json().get("ready") is True
         except (httpx.HTTPError, ValueError):
             catalog_ready = False
-    try:
-        path = _audit_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(path), timeout=2.0) as connection:
-            connection.execute("SELECT 1")
-        audit_ready = True
-    except (OSError, sqlite3.Error, RuntimeError):
-        audit_ready = False
+    if os.getenv("CIRVANNA_ENVIRONMENT", "").strip().lower() == "production":
+        audit_ready = check_receipt_store()
+    else:
+        try:
+            path = _audit_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(str(path), timeout=2.0) as connection:
+                connection.execute("SELECT 1")
+            audit_ready = True
+        except (OSError, sqlite3.Error, RuntimeError):
+            audit_ready = False
     try:
         _policy()
+        resolve_configured_cal_policy()
         policy_configured = True
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, CALPolicyRegistryError):
         policy_configured = False
     identity_required = _verified_identity_required()
     identity_ready = False
@@ -2263,6 +2267,10 @@ def readiness() -> dict[str, Any]:
     identity_binding_configured = bool(
         identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
     )
+    age_evidence_orchestrator_configured = bool(
+        identity_url and _trusted_internal_base_url(identity_url)
+        and len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
+    )
     feedback_review_required = _cil_cal_review_enforcement_required()
     feedback_review_configured = bool(
         os.getenv("CIL_SERVICE_URL", "").strip()
@@ -2272,6 +2280,7 @@ def readiness() -> dict[str, Any]:
     ready = (
         configured and catalog_ready and audit_ready and policy_configured
         and (not identity_required or identity_binding_configured)
+        and (os.getenv("CIRVANNA_ENVIRONMENT", "").strip().lower() != "production" or age_evidence_orchestrator_configured)
         and (not feedback_review_required or feedback_review_configured)
     )
     return {
@@ -2283,6 +2292,8 @@ def readiness() -> dict[str, Any]:
         "catalog_ready": catalog_ready,
         "audit_store_ready": audit_ready,
         "policy_configuration_valid": policy_configured,
+        "shared_eepl_and_cal_policy_configured": policy_configured,
+        "yoti_age_evidence_orchestrator_configured": age_evidence_orchestrator_configured,
         "identity_provider_binding": identity_binding_configured,
         "identity_learning_service_ready": identity_ready,
         "cil_cal_feedback_review_required": feedback_review_required,
