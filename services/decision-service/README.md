@@ -21,7 +21,7 @@ All endpoints require Authorization: Bearer with the internal shared token. Conf
 
 ## Server-owned CaTaCaCi/CAL policy
 
-The request supplies only a CAL policy ID and version. The service resolves all decision thresholds from `CATACACI_POLICY_REGISTRY_JSON`; request-body fit-confidence and alignment thresholds are rejected by the strict request schema. Each registry entry must contain exactly:
+The service selects the active CAL policy ID from the server-only `CATACACI_POLICY_ID` setting and resolves its active version and all decision thresholds from `CATACACI_POLICY_REGISTRY_JSON`. The request cannot select a policy ID/version or supply fit-confidence and alignment thresholds; those fields are rejected by the strict request schema. Each registry entry must contain exactly:
 
 ```json
 {
@@ -54,7 +54,8 @@ A verified age attestation must also be redeemed through the private Identity Le
 ## Configuration
 
 - DECISION_SERVICE_TOKEN: long random internal bearer token; protect service network access as well.
-- `CATACACI_POLICY_REGISTRY_JSON`: server-owned, version-pinned CAL thresholds; the request may select only a registered policy ID/version and cannot supply thresholds.
+- `CATACACI_POLICY_ID`: server-selected active CAL policy identifier.
+- `CATACACI_POLICY_REGISTRY_JSON`: server-owned, version-pinned CAL thresholds; callers cannot select policy identity/version or supply thresholds.
 - FCI_EVIDENCE_HMAC_SECRET: separate strong secret shared only with the approved fit provider.
 - `CIL_SERVICE_URL`: private HTTPS URL for the Intelligence Service (HTTP only for loopback development).
 - `CIL_SERVICE_TOKEN`: internal token for reading the CIL review queue.
