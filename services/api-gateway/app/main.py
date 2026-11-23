@@ -586,19 +586,19 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
         state, code, explanation = (
             SignalState.UNKNOWN,
             "LEGAL_AGE_EVIDENCE_MISSING",
-            "An age-dependent eligibility rule applies, but age was not supplied.",
+            "An age-dependent eligibility rule applies, but verified age evidence is unavailable.",
         )
     elif context.age_years < (minimum_age or 0) or (maximum_age is not None and context.age_years > maximum_age):
         state, code, explanation = (
             SignalState.BLOCK,
             "LEGAL_AGE_RESTRICTION_VIOLATION",
-            "The supplied age conflicts with the configured age restriction.",
+            "Verified age evidence conflicts with the configured age restriction.",
         )
     else:
         state, code, explanation = (
             SignalState.PASS,
             "LEGAL_AGE_RESTRICTION_PASSED",
-            "The supplied age satisfies configured age restrictions.",
+            "Verified age evidence satisfies configured age restrictions.",
         )
     return DecisionSignal(
         signal_id=f"legal-age:{product['product_id']}",
