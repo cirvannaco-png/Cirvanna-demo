@@ -67,8 +67,14 @@ class AgeEvidenceService:
             threshold=row["threshold"],
         )
         now = datetime.now(timezone.utc)
-        if result.state == "PENDING":
+        if result.state in {"PENDING", "IN_PROGRESS", "PROCESSING"}:
             return {"session_id": session_id, "state": "pending"}
+        if result.state in {"EXPIRED", "CANCELLED", "ERROR"}:
+            terminal = "expired" if result.state == "EXPIRED" else "failed"
+            self.store.mark_provider_terminal(
+                session_id, row["provider_session_id"], terminal, now=datetime.now(timezone.utc),
+            )
+            return {"session_id": session_id, "state": terminal}
         self.store.record_provider_result(
             session_id, state=result.state, threshold_met=result.threshold_met,
             evidence_id=result.evidence_id, provider_session_id=row["provider_session_id"],
