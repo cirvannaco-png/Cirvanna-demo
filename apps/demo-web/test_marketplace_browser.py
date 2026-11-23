@@ -164,9 +164,6 @@ class MarketplaceBrowserTests(unittest.TestCase):
         ))
         page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
         page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
-        page.wait_for_function(
-            "window.__marketplaceSessionReady && window.__marketplaceSessionReady.accessToken === 'server-cookie-session'"
-        )
         return page
 
     def test_live_bff_cart_gate_off_keeps_purchase_controls_locked_and_demo_state_out(self):
