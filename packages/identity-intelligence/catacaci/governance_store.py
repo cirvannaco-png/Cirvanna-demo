@@ -146,6 +146,10 @@ def record_cil_contribution(
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                (cohort_key, period.isoformat()),
+            )
+            cur.execute(
                 """SELECT 1 FROM decision_private.catacaci_cil_aggregates
                 WHERE cohort_key=%s AND period_start=%s""",
                 (cohort_key, period),
@@ -199,6 +203,10 @@ def release_cil_aggregate(
         raise GovernanceStoreError("CIL per-release epsilon exceeds the configured budget")
     try:
         with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                (cohort_key, period.isoformat()),
+            )
             cur.execute(
                 """SELECT suppressed, noisy_contributor_count, noisy_success_rate, epsilon
                 FROM decision_private.catacaci_cil_aggregates WHERE cohort_key=%s AND period_start=%s""",
