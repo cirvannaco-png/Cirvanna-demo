@@ -92,12 +92,14 @@ def _service() -> AgeEvidenceService:
 
 @router.post("/sessions", dependencies=[Depends(require_orchestrator)])
 def start_session(payload: SessionStart) -> dict:
+    service = None
     try:
         policy = resolve_policy(payload.policy_id, payload.policy_version)
         threshold = policy.get("minimum_age")
         if type(threshold) is not int or policy.get("maximum_age") is not None:
             raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
-        return _service().start(**payload.model_dump(), threshold=threshold)
+        service = _service()
+        return service.start(**payload.model_dump(), threshold=threshold)
     except HTTPException:
         raise
     except (PolicyRegistryError, ValueError) as exc:
