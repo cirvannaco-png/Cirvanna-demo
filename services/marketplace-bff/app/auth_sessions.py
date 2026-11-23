@@ -25,7 +25,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 router = APIRouter(tags=["authentication"])
 COOKIE_NAME = "__Host-cirvanna_session"
-PROVIDERS = {"google": "google", "apple": "apple", "microsoft": "azure"}
+PROVIDERS = {"google": "google", "apple": "apple", "microsoft": "azure", "email": "email"}
 ALLOWED_APP_ROLES = {"customer", "merchant", "admin"}
 _pool: asyncpg.Pool | None = None
 _pool_lock = asyncio.Lock()
@@ -195,12 +195,15 @@ async def _store_session(tokens: dict[str, Any]) -> tuple[str, int, dict[str, An
         "app_role": claims.get("app_role", "customer"),
     }, separators=(",", ":")))
     pool = await _db()
+    session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
+    if session_ttl < 3600 or session_ttl > 7776000:
+        raise HTTPException(503, detail={"code": "AUTH_SESSION_TTL_INVALID"})
     await pool.execute(
         """INSERT INTO auth_private.sessions(session_hash, user_id, token_ciphertext, expires_at, updated_at)
            VALUES($1, $2, $3, now() + ($4 * interval '1 second'), now())""",
-        _hash(session_id), user_id, encrypted, expires_in,
+        _hash(session_id), user_id, encrypted, session_ttl,
     )
-    return session_id, expires_in, {"user_id": user_id, "app_role": claims.get("app_role", "customer")}
+    return session_id, session_ttl, {"user_id": user_id, "app_role": claims.get("app_role", "customer")}
 
 
 async def _load_session(session_id: str) -> tuple[str, dict[str, Any]]:
@@ -260,7 +263,8 @@ async def _rotate(session_id: str) -> tuple[dict[str, Any], int]:
     )
     if result != "UPDATE 1":
         raise HTTPException(401, detail={"code": "AUTH_SESSION_REVOKED"})
-    return {"user_id": user_id, "app_role": claims.get("app_role", "customer")}, expires_in
+    session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
+    return {"user_id": user_id, "app_role": claims.get("app_role", "customer")}, session_ttl
 
 
 async def _revoke(session_id: str) -> None:
@@ -274,7 +278,7 @@ async def _revoke(session_id: str) -> None:
 @router.get("/auth/login/{provider}")
 async def login(provider: str) -> RedirectResponse:
     normalized = provider.casefold()
-    if normalized not in PROVIDERS:
+    if normalized not in {"google", "apple", "microsoft"}:
         raise HTTPException(404, detail={"code": "AUTH_PROVIDER_NOT_SUPPORTED"})
     supabase_url, _ = _supabase()
     verifier = secrets.token_urlsafe(48)
