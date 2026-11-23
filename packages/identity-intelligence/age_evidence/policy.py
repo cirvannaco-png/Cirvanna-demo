@@ -19,9 +19,16 @@ def _registry() -> dict[str, dict[str, Any]]:
     raw = os.getenv("EEPL_POLICY_REGISTRY_JSON", "").strip()
     if not raw:
         raise PolicyRegistryError("server policy registry is not configured")
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise PolicyRegistryError("server policy registry contains duplicate keys")
+            result[key] = value
+        return result
     try:
-        registry = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        registry = json.loads(raw, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, TypeError) as exc:
         raise PolicyRegistryError("server policy registry is invalid JSON") from exc
     if not isinstance(registry, dict) or not registry:
         raise PolicyRegistryError("server policy registry must be a non-empty object")
@@ -51,8 +58,20 @@ def resolve_policy(policy_id: str, policy_version: str) -> dict[str, Any]:
     if entry.get("minimum_age") is not None and entry.get("maximum_age") is not None and entry["maximum_age"] < entry["minimum_age"]:
         raise PolicyRegistryError("maximum_age cannot be below minimum_age")
     for key in ("allowed_locations", "allowed_occasions", "allowed_climates", "required_context"):
-        if not isinstance(entry.get(key), list) or any(not isinstance(x, str) for x in entry[key]):
-            raise PolicyRegistryError(f"{key} must be an array of strings")
+        values = entry.get(key)
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(x, str) or not x.strip() for x in values)
+            or len(values) != len(set(values))
+        ):
+            raise PolicyRegistryError(f"{key} must be a unique array of non-empty strings")
+    if not isinstance(entry.get("policy_version"), str) or not entry["policy_version"].strip():
+        raise PolicyRegistryError("policy_version must be a non-empty string")
+    if not isinstance(policy_id, str) or not policy_id.strip():
+        raise PolicyRegistryError("policy ID must be a non-empty string")
+    allowed_context = {"age", "location", "occasion", "climate"}
+    if not set(entry["required_context"]).issubset(allowed_context):
+        raise PolicyRegistryError("required_context contains an unsupported field")
     return {"policy_id": policy_id, **entry}
 
 
