@@ -146,6 +146,7 @@ BEGIN
             decision_private.catacaci_cil_contributions,
             decision_private.catacaci_cil_aggregates,
             decision_private.catacaci_vsl_events TO cirvanna_decision_audit;
+        GRANT DELETE ON decision_private.catacaci_cil_contributions TO cirvanna_decision_audit;
         GRANT SELECT, INSERT, UPDATE ON decision_private.catacaci_cil_privacy_budget,
             decision_private.catacaci_vsl_profiles,
             decision_private.catacaci_vsl_proposals TO cirvanna_decision_audit;
