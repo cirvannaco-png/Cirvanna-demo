@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from .core import build_threshold_attestation, sign_threshold_attestation
-from .store import AgeEvidenceStore
+from .store import AgeEvidenceConflict, AgeEvidenceStore
 from .yoti import YotiAVSClient
 
 
@@ -102,10 +102,17 @@ class AgeEvidenceService:
             expires_at=expires,
         )
         signature = sign_threshold_attestation(payload, self.signing_secret)
-        self.store.issue_attestation(
-            session_id=session_id, jti=payload["jti"], signature=signature,
-            attestation_payload=payload, issued_at=issued, expires_at=expires, now=issued,
-        )
+        try:
+            self.store.issue_attestation(
+                session_id=session_id, jti=payload["jti"], signature=signature,
+                attestation_payload=payload, issued_at=issued, expires_at=expires, now=issued,
+            )
+        except AgeEvidenceConflict:
+            # A concurrent poll may have committed the single allowed attestation first.
+            persisted = self.store.get_attestation(session_id)
+            if persisted is None:
+                raise
+            payload, signature = persisted["attestation"], persisted["signature"]
         return {
             "session_id": session_id, "state": ("verified" if result.state == "COMPLETE" else "denied"),
             "attestation": payload, "signature": signature,
