@@ -514,11 +514,11 @@ class CaTaCaCiGovernanceStoreBoundaryTests(unittest.TestCase):
         import os
         from unittest.mock import patch
         from catacaci.governance_store import GovernanceStoreError, record_cil_contribution
-        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": "market:KE|category:tops"}, clear=False):
+        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": "market:ke|category:tops"}, clear=False):
             with self.assertRaises(GovernanceStoreError):
                 record_cil_contribution(
                     event_id="cil-event-0001", contributor_token="raw-user-id",
-                    cohort_key="market:KE|category:tops", outcome_success=True, observed_at=NOW,
+                    cohort_key="market:ke|category:tops", outcome_success=True, observed_at=NOW,
                 )
         with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": ""}, clear=False):
             with self.assertRaises(GovernanceStoreError):
@@ -531,10 +531,10 @@ class CaTaCaCiGovernanceStoreBoundaryTests(unittest.TestCase):
         import os
         from unittest.mock import patch
         from catacaci.governance_store import GovernanceStoreError, release_cil_aggregate
-        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": "market:KE|category:tops"}, clear=False):
+        with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": "market:ke|category:tops"}, clear=False):
             with self.assertRaises(GovernanceStoreError):
                 release_cil_aggregate(
-                    cohort_key="market:KE|category:tops", period_start="2026-11-01",
+                    cohort_key="market:ke|category:tops", period_start="2026-11-01",
                     minimum_contributors=10,
                 )
         with patch.dict(os.environ, {"CATACACI_CIL_ALLOWED_COHORT_KEYS": ""}, clear=False):
