@@ -9,6 +9,7 @@ on:
       - "services/decision-service/tests/test_age_evidence.py"
       - "services/decision-service/tests/test_api.py"
       - "services/decision-service/requirements.txt"
+      - "services/identity-learning-service/**"
       - "tools/cal_staging_matrix/**"
       - "tools/click_it_privacy_eval/**"
       - "tests/architecture/test_cal_staging_matrix.py"
@@ -38,6 +39,13 @@ jobs:
 
       - name: Install service test dependencies
         run: python -m pip install -r services/decision-service/requirements.txt
+
+      - name: Install identity service test dependencies
+        run: python -m pip install -r services/identity-learning-service/requirements.txt
+
+      - name: Test durable age evidence lifecycle and redemption API
+        working-directory: services/identity-learning-service
+        run: python -m pytest -q tests/test_age_evidence_store.py tests/test_age_evidence_api.py
 
       - name: Test CAL staging matrix contract
         run: python -m unittest discover -s tests/architecture -p "test_cal_staging_matrix.py" -v
