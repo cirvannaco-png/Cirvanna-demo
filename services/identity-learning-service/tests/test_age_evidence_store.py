@@ -74,7 +74,7 @@ def test_attestation_rejects_wrong_subject_request_policy_and_signature():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "b" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
+        session_id=sid, jti=jti, signature=sig, attestation_payload=attestation_payload_for(store, sid, jti),
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(seconds=2),
     )
@@ -96,7 +96,7 @@ def test_revoked_session_invalidates_unredeemed_attestation():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "d" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
+        session_id=sid, jti=jti, signature=sig, attestation_payload=attestation_payload_for(store, sid, jti),
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(seconds=2),
     )
@@ -129,7 +129,7 @@ def test_expired_attestation_cannot_be_redeemed():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "e" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
+        session_id=sid, jti=jti, signature=sig, attestation_payload=attestation_payload_for(store, sid, jti),
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(seconds=5),
         now=NOW + timedelta(seconds=2),
     )
@@ -158,7 +158,7 @@ def test_provider_expiry_and_failure_are_terminal_and_cannot_issue_attestations(
     try:
         store.issue_attestation(
             session_id=sid, jti=str(uuid.uuid4()), signature="a" * 64,
-            issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=3),
+            attestation_payload={}, issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=3),
             now=NOW + timedelta(seconds=2),
         )
     except ValueError:
