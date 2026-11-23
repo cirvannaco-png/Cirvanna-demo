@@ -269,7 +269,7 @@ def test_client_cannot_select_cal_policy_or_version(client, caller_policy_field)
 
 
 def test_unregistered_server_cal_policy_fails_closed(client, monkeypatch):
-    monkeypatch.setenv("CATACACi_POLICY_ID", "unregistered-policy")
+    monkeypatch.setenv("CATACACI_POLICY_ID", "unregistered-policy")
     response = client.post(
         "/v1/eligibility/evaluate", json=request_body(), headers=headers()
     )
