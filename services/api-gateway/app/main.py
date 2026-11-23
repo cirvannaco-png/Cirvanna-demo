@@ -260,6 +260,12 @@ class USIProfileUpdateInput(BaseModel):
     preferences: list[USIProfilePreferenceInput] = Field(max_length=100)
 
 
+class AgeEvidenceSessionStartInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    purpose: Literal["shopper_eligibility"] = "shopper_eligibility"
+
+
 class ConsentReceiptInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     receipt_id: str = Field(min_length=8, max_length=128)
@@ -2403,6 +2409,100 @@ def compose_pnelly_daily_looks(
     result["eligibility"] = eligibility
     result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
     return result
+
+
+def _age_evidence_bridge() -> tuple[str, str]:
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_ORCHESTRATOR_NOT_CONFIGURED"})
+    return base, token
+
+
+def _age_evidence_proxy(path: str, subject_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    base, token = _age_evidence_bridge()
+    try:
+        with httpx.Client(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                f"{base}/internal/v1/age-evidence/{path.lstrip('/')}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={"subject_id": subject_id, **body},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404, 409, 422}:
+        raise HTTPException(response.status_code, detail={"code": "AGE_EVIDENCE_REQUEST_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "AGE_EVIDENCE_PROVIDER_RESPONSE_INVALID"}) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(502, detail={"code": "AGE_EVIDENCE_PROVIDER_RESPONSE_INVALID"})
+    return result
+
+
+@app.post("/v1/me/age-evidence/sessions", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def create_my_age_evidence_session(
+    payload: AgeEvidenceSessionStartInput,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    subject = _resolve_verified_subject(end_user_authorization)
+    result = _age_evidence_proxy(
+        "sessions", subject,
+        {"request_id": payload.request_id, "purpose": payload.purpose},
+    )
+    verification_url = result.get("verification_url")
+    parts = urlsplit(verification_url) if isinstance(verification_url, str) else None
+    if (
+        not isinstance(result.get("session_id"), str)
+        or result.get("state") != "pending"
+        or parts is None or parts.scheme != "https" or not parts.hostname
+        or parts.username or parts.password
+    ):
+        raise HTTPException(502, detail={"code": "AGE_EVIDENCE_SESSION_RESPONSE_INVALID"})
+    return {
+        "session_id": result["session_id"], "provider": "yoti",
+        "state": "pending", "verification_url": verification_url,
+        "expires_at": result.get("expires_at"), "request_id": payload.request_id,
+    }
+
+
+@app.post("/v1/me/age-evidence/sessions/{session_id}/poll", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def poll_my_age_evidence_session(
+    session_id: str,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    subject = _resolve_verified_subject(end_user_authorization)
+    try:
+        normalized_id = str(uuid.UUID(session_id))
+    except ValueError as exc:
+        raise HTTPException(404, detail={"code": "AGE_EVIDENCE_SESSION_NOT_FOUND"}) from exc
+    result = _age_evidence_proxy(f"sessions/{normalized_id}/poll", subject, {})
+    if result.get("state") in {"verified", "denied"}:
+        attestation = result.get("attestation")
+        signature = result.get("signature")
+        if (
+            not isinstance(attestation, dict)
+            or attestation.get("subject_id") != subject
+            or not isinstance(signature, str) or len(signature) < 64
+        ):
+            raise HTTPException(502, detail={"code": "AGE_EVIDENCE_ATTESTATION_RESPONSE_INVALID"})
+    return result
+
+
+@app.post("/v1/me/age-evidence/sessions/{session_id}/revoke", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def revoke_my_age_evidence_session(
+    session_id: str,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    subject = _resolve_verified_subject(end_user_authorization)
+    try:
+        normalized_id = str(uuid.UUID(session_id))
+    except ValueError as exc:
+        raise HTTPException(404, detail={"code": "AGE_EVIDENCE_SESSION_NOT_FOUND"}) from exc
+    return _age_evidence_proxy(f"sessions/{normalized_id}/revoke", subject, {})
 
 
 @app.get("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
