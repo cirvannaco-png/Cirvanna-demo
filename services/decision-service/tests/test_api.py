@@ -24,6 +24,7 @@ def config(monkeypatch):
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CAL_REVIEW_OPERATOR_TOKEN", "cal-review-operator-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_POLICY_ID", "standard-marketplace")
     monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", json.dumps({
         "standard-marketplace": {
             "policy_version": "marketplace-policy-1",
