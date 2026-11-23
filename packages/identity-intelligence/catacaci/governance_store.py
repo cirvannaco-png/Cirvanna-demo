@@ -146,6 +146,13 @@ def record_cil_contribution(
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
+                """SELECT 1 FROM decision_private.catacaci_cil_aggregates
+                WHERE cohort_key=%s AND period_start=%s""",
+                (cohort_key, period),
+            )
+            if cur.fetchone() is not None:
+                raise GovernanceStoreError("CIL contribution window is already closed by a privacy release")
+            cur.execute(
                 """INSERT INTO decision_private.catacaci_cil_contributions
                 (event_id, cohort_key, period_start, contributor_hash, outcome_success, observed_at)
                 VALUES (%s,%s,%s,%s,%s,%s)
@@ -260,6 +267,13 @@ def release_cil_aggregate(
                 """UPDATE decision_private.catacaci_cil_privacy_budget SET epsilon_spent=epsilon_spent+%s
                 WHERE cohort_key=%s AND period_start=%s""",
                 (float(epsilon), cohort_key, period),
+            )
+            # Individual pseudonymous contributions are not retained after the
+            # single monthly aggregate has been committed.
+            cur.execute(
+                """DELETE FROM decision_private.catacaci_cil_contributions
+                WHERE cohort_key=%s AND period_start=%s""",
+                (cohort_key, period),
             )
             return {
                 "aggregate_id": aggregate_id, "cohort_key": cohort_key,
