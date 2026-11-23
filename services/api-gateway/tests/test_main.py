@@ -1176,13 +1176,13 @@ def test_discovery_rejects_subject_mismatch_before_catalog_retrieval(client, mon
 
 
 
-def _eepl_registry():
+def _eepl_registry(minimum_age=None, allowed_climates=("warm",)):
     import json
     return json.dumps({
         "adult-market": {
-            "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
+            "policy_version": "adult-v4", "minimum_age": minimum_age, "maximum_age": None,
             "allowed_locations": ["Nairobi", "KE"], "allowed_occasions": ["everyday"],
-            "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
+            "allowed_climates": list(allowed_climates), "required_context": ["location", "occasion", "climate"],
         },
         "less-restrictive-market": {
             "policy_version": "youth-v1", "minimum_age": 13, "maximum_age": None,
@@ -1198,13 +1198,13 @@ def test_gateway_resolves_the_shared_active_eepl_policy(monkeypatch):
     policy = main._policy()
     assert policy.policy_id == "adult-market"
     assert policy.policy_version == "adult-v4"
-    assert policy.minimum_age == 18
+    assert policy.minimum_age is None
     assert policy.allowed_locations == ("Nairobi", "KE")
 
 
 def test_gateway_does_not_accept_self_declared_age_as_eligibility(monkeypatch):
     monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
-    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
     signal = main._legal_signal(
         main.ContextInput(age_years=42),
         product(attributes={"minimum_age": 18}),
@@ -1216,7 +1216,7 @@ def test_gateway_does_not_accept_self_declared_age_as_eligibility(monkeypatch):
 
 def test_gateway_yoti_attestation_is_bound_to_active_policy_and_redeemed(monkeypatch):
     monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
-    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
     monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "unit-test-age-evidence-key-with-32-bytes")
     request_id = "shopper-request-2026-11-23-001"
     attestation = {
@@ -1239,7 +1239,7 @@ def test_gateway_yoti_attestation_is_bound_to_active_policy_and_redeemed(monkeyp
 
 def test_gateway_rejects_yoti_attestation_for_non_active_policy(monkeypatch):
     monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
-    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
     monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "unit-test-age-evidence-key-with-32-bytes")
     payload = main.DecisionRequest(
         user_id="user-test-1", product_ids=[PRODUCT_ID],
