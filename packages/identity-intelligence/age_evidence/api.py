@@ -94,6 +94,19 @@ def _service() -> AgeEvidenceService:
         raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_CONFIGURATION_INVALID"}) from exc
 
 
+def provider_configuration_ready() -> bool:
+    """Validate Yoti adapter, signing, callback and private DB configuration without a provider call."""
+    service = None
+    try:
+        service = _service()
+        return True
+    except (HTTPException, ValueError, AgeEvidenceError):
+        return False
+    finally:
+        if service is not None:
+            service.close()
+
+
 @router.post("/sessions", dependencies=[Depends(require_orchestrator)])
 def start_session(payload: SessionStart) -> dict:
     service = None
