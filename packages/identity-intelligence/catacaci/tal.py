@@ -37,6 +37,8 @@ class TemporalEvent:
             field_value = getattr(self, name)
             if not isinstance(field_value, str) or not field_value.strip():
                 raise ValueError(f"{name} must not be empty")
+        if not isinstance(self.consent_granted, bool):
+            raise ValueError("consent_granted must be a boolean")
         _parse_time(self.observed_at)
         if self.expires_at is not None:
             if _parse_time(self.expires_at) <= _parse_time(self.observed_at):
@@ -60,7 +62,7 @@ class TemporalState:
 
 def append_event(state: TemporalState, event: TemporalEvent) -> TemporalState:
     """Append idempotently; duplicate IDs with changed payload are rejected."""
-    if not event.consent_granted:
+    if event.consent_granted is not True:
         raise PermissionError("TAL cannot record an observation without explicit consent")
     existing = next((item for item in state.events if item.event_id == event.event_id), None)
     if existing is not None:
