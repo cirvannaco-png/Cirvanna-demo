@@ -37,6 +37,8 @@ for package_path in (
 
 from catacaci import DecisionSignal, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
+from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
 from cultural_identity import (  # noqa: E402
     CulturalRequirement,
     RequirementKind,
@@ -536,19 +538,24 @@ def _catalog_attributes_complete(product: dict[str, Any]) -> bool:
 
 
 def _policy() -> EEPLPolicy:
-    required = _env_csv("CIRVANNA_REQUIRED_CONTEXT_FIELDS", "location,occasion,climate")
+    """Resolve the same server-selected EEPL policy used by Identity and Decision."""
+    try:
+        resolved = resolve_active_policy()
+    except PolicyRegistryError as exc:
+        raise RuntimeError("Server EEPL policy is unavailable; decisions fail closed.") from exc
     field_map = {field.value: field for field in ContextField}
+    required = resolved["required_context"]
     unknown = sorted(set(required) - set(field_map))
     if unknown:
-        raise RuntimeError(f"Unknown values in CIRVANNA_REQUIRED_CONTEXT_FIELDS: {', '.join(unknown)}")
+        raise RuntimeError(f"Server EEPL policy contains unsupported context fields: {', '.join(unknown)}")
     return EEPLPolicy(
-        policy_id=os.getenv("CIRVANNA_EEPL_POLICY_ID", "cirvanna-context-v1"),
-        policy_version=os.getenv("CIRVANNA_EEPL_POLICY_VERSION", "1.0.0"),
-        minimum_age=_optional_age("CIRVANNA_MINIMUM_AGE"),
-        maximum_age=_optional_age("CIRVANNA_MAXIMUM_AGE"),
-        allowed_locations=_env_csv("CIRVANNA_ALLOWED_LOCATIONS"),
-        allowed_occasions=_env_csv("CIRVANNA_ALLOWED_OCCASIONS"),
-        allowed_climates=_env_csv("CIRVANNA_ALLOWED_CLIMATES"),
+        policy_id=resolved["policy_id"],
+        policy_version=resolved["policy_version"],
+        minimum_age=resolved["minimum_age"],
+        maximum_age=resolved["maximum_age"],
+        allowed_locations=tuple(resolved["allowed_locations"]),
+        allowed_occasions=tuple(resolved["allowed_occasions"]),
+        allowed_climates=tuple(resolved["allowed_climates"]),
         required_context=tuple(field_map[name] for name in required),
     )
 
