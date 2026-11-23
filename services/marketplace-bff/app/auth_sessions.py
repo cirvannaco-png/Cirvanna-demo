@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import os
 import secrets
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["authentication"])
 COOKIE_NAME = "__Host-cirvanna_session"
+OAUTH_STATE_COOKIE = "__Host-cirvanna_oauth_state"
 PROVIDERS = {"google": "google", "apple": "apple", "microsoft": "azure", "email": "email"}
 ALLOWED_APP_ROLES = {"customer", "merchant", "admin"}
 _pool: asyncpg.Pool | None = None
@@ -367,7 +369,17 @@ async def login(provider: str) -> RedirectResponse:
         params["scopes"] = "email"
     if normalized in {"google", "microsoft"}:
         params["prompt"] = "select_account"
-    return RedirectResponse(supabase_url + "/auth/v1/authorize?" + urlencode(params), status_code=302)
+    response = RedirectResponse(supabase_url + "/auth/v1/authorize?" + urlencode(params), status_code=302)
+    # Bind the OAuth response to the browser that initiated the flow. This prevents
+    # a callback initiated in another browser from planting an attacker-selected account.
+    response.set_cookie(
+        OAUTH_STATE_COOKIE, state, max_age=600, httponly=True, secure=True,
+        samesite="lax", path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.delete_cookie(OAUTH_STATE_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+    return response
 
 
 @router.get("/auth/callback")
@@ -392,6 +404,13 @@ async def callback(request: Request) -> Response:
         state = parse_qs(supplied.query).get("state", [""])[0]
     if not state:
         raise HTTPException(400, detail={"code": "AUTH_CALLBACK_STATE_MISSING"})
+    # Email magic links are mailbox proofs and may legitimately be opened on
+    # another device. OAuth callbacks must also prove possession of the initiating
+    # browser's short-lived, HttpOnly state cookie.
+    if not request.query_params.get("next") and not hmac.compare_digest(
+        request.cookies.get(OAUTH_STATE_COOKIE, ""), state
+    ):
+        raise HTTPException(400, detail={"code": "AUTH_BROWSER_STATE_MISMATCH"})
     provider, verifier = await _consume_pending(state)
     if provider == "email":
         token_hash = request.query_params.get("token_hash", "")
