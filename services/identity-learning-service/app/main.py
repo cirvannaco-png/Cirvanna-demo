@@ -14,6 +14,8 @@ import json
 import os
 import re
 import secrets
+import sys
+from pathlib import Path
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -36,6 +38,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "identity-intelligence"))
+from age_evidence.api import router as age_evidence_router  # noqa: E402
+
 SCOPES = {
     "personalization", "style_learning", "profile_storage",
     "image_processing", "body_measurements", "virtual_twin_storage",
@@ -810,6 +815,8 @@ app = FastAPI(
     version="1.0.0",
     description="Internal-only persistent explicit preferences and consented temporal learning.",
 )
+
+app.include_router(age_evidence_router)
 
 
 @app.on_event("startup")
