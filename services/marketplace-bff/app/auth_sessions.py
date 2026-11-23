@@ -343,7 +343,26 @@ async def callback(request: Request) -> Response:
     if not state or not code:
         raise HTTPException(400, detail={"code": "AUTH_CALLBACK_PARAMETERS_MISSING"})
     provider, verifier = await _consume_pending(state)
-    tokens = await _exchange_code(code, verifier)
+    if provider == "email":
+        token_hash = request.query_params.get("token_hash", "")
+        if not token_hash:
+            raise HTTPException(400, detail={"code": "AUTH_EMAIL_TOKEN_MISSING"})
+        base, key = _supabase()
+        async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
+            verified = await client.post(
+                base + "/auth/v1/verify",
+                headers={"apikey": key, "Content-Type": "application/json"},
+                json={"token_hash": token_hash, "type": "email"},
+            )
+        if verified.status_code != 200:
+            raise HTTPException(401, detail={"code": "AUTH_EMAIL_TOKEN_REJECTED"})
+        tokens = verified.json()
+        if not isinstance(tokens, dict) or not tokens.get("access_token") or not tokens.get("refresh_token"):
+            raise HTTPException(502, detail={"code": "AUTH_TOKEN_RESPONSE_INVALID"})
+    else:
+        if not code:
+            raise HTTPException(400, detail={"code": "AUTH_CALLBACK_CODE_MISSING"})
+        tokens = await _exchange_code(code, verifier)
     session_id, max_age, profile = await _store_session(tokens)
     response = RedirectResponse(os.getenv("AUTH_POST_LOGIN_REDIRECT", "/"), status_code=303)
     _cookie(response, session_id, max_age=max_age)
