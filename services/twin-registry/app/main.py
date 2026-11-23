@@ -449,6 +449,10 @@ def _response(row: TwinRecord, *, status: str | None = None) -> dict:
         "authorized": row.state == "active",
         "version": row.version,
         "representation_type": row.representation_type,
+        # Internal owner-authorized consumers need the exact consent bundle ID
+        # to perform an additional purpose-specific check (e.g. virtual_try_on).
+        # Public BFF list responses deliberately strip this field.
+        "consent_id": row.consent_id,
         "mesh_asset_id": row.mesh_asset_id,
         "source_image_asset_ids": list(row.source_image_asset_ids),
         "model_id": row.model_id,
