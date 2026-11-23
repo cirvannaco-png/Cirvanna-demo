@@ -1,0 +1,32 @@
+name: CaTaCaCi CIL contribution retention
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  purge-expired-contributions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require the private HTTPS retention endpoint
+        env:
+          RETENTION_URL: ${{ secrets.CATACACI_CIL_RETENTION_URL }}
+          RETENTION_TOKEN: ${{ secrets.CATACACI_CIL_RETENTION_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$RETENTION_URL" in
+            https://*/v1/governance/cil/retention/purge) ;;
+            *) echo "CATACACI_CIL_RETENTION_URL must be an HTTPS retention endpoint" >&2; exit 1 ;;
+          esac
+          test "${#RETENTION_TOKEN}" -ge 32
+          curl --fail --silent --show-error --max-time 20 \
+            --proto '=https' --tlsv1.2 \
+            --request POST \
+            --header "Authorization: Bearer $RETENTION_TOKEN" \
+            --header "Accept: application/json" \
+            "$RETENTION_URL"
