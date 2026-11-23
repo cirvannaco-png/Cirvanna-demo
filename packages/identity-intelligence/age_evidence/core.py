@@ -95,7 +95,8 @@ def build_threshold_attestation(
         raise AgeEvidenceError("attestation timestamps must be timezone-aware")
     payload = {
         "contract_version": CONTRACT_VERSION,
-        "issuer": "yoti",
+        "issuer": "cirvanna-age-evidence-service",
+        "provider": "yoti",
         "subject_id": subject_id,
         "request_id": request_id,
         "purpose": purpose,
@@ -118,7 +119,7 @@ def build_threshold_attestation(
 
 def validate_threshold_attestation(payload: dict[str, Any]) -> None:
     required = {
-        "contract_version", "issuer", "subject_id", "request_id", "purpose",
+        "contract_version", "issuer", "provider", "subject_id", "request_id", "purpose",
         "policy_id", "policy_version", "threshold", "threshold_met",
         "provider_session_id", "provider_evidence_id", "issued_at", "expires_at",
     }
@@ -132,8 +133,8 @@ def validate_threshold_attestation(payload: dict[str, Any]) -> None:
     ):
         if not isinstance(payload[key], str) or not payload[key].strip():
             raise AgeEvidenceError(f"{key} must be a non-empty string")
-    if payload["issuer"] != "yoti":
-        raise AgeEvidenceError("unapproved age evidence issuer")
+    if payload["issuer"] != "cirvanna-age-evidence-service" or payload["provider"] != "yoti":
+        raise AgeEvidenceError("unapproved age evidence issuer or provider")
     if not isinstance(payload["threshold"], int) or isinstance(payload["threshold"], bool):
         raise AgeEvidenceError("threshold must be an integer")
     if payload["threshold"] < 0 or payload["threshold"] > 125:
