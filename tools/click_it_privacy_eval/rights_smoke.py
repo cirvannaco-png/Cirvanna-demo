@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -19,10 +20,19 @@ from urllib.parse import urlsplit
 
 URGENT_REASONS = {"unmasked_face", "possible_minor", "nonconsensual"}
 ALLOWED_RELATIONSHIPS = {"photographed_person", "parent_guardian", "authorized_representative", "other"}
+MAX_RESPONSE_BYTES = 1024 * 1024
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+STATUS_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{24,512}$")
 
 
 class RightsSmokeError(ValueError):
     pass
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Status tokens must never be forwarded to redirect targets.
+        return None
 
 
 def request(url: str, method: str, body: dict | None = None, headers: dict | None = None, timeout: int = 15):
@@ -32,11 +42,14 @@ def request(url: str, method: str, body: dict | None = None, headers: dict | Non
         request_headers.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
     started = time.monotonic()
+    opener = urllib.request.build_opener(_NoRedirect())
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw, status = response.read(), response.status
+        with opener.open(req, timeout=timeout) as response:
+            raw, status = response.read(MAX_RESPONSE_BYTES + 1), response.status
     except urllib.error.HTTPError as exc:
-        raw, status = exc.read(), exc.code
+        raw, status = exc.read(MAX_RESPONSE_BYTES + 1), exc.code
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise RightsSmokeError("staging response exceeded the safety size limit")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise RightsSmokeError(f"{method} {url} transport failed: {type(exc).__name__}") from exc
     try:
@@ -50,8 +63,8 @@ def validate(config: dict) -> None:
     if config.get("environment") != "staging":
         raise RightsSmokeError("only an explicitly configured staging environment is allowed")
     parsed = urlsplit(str(config.get("bff_base_url", "")))
-    if parsed.scheme != "https" or parsed.username or parsed.password:
-        raise RightsSmokeError("bff_base_url must be HTTPS without embedded credentials")
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RightsSmokeError("bff_base_url must be HTTPS without embedded credentials, query or fragment")
     asset = config.get("asset_reference")
     if not isinstance(asset, str) or not 8 <= len(asset) <= 160:
         raise RightsSmokeError("asset_reference must identify a pre-provisioned synthetic staging asset")
@@ -92,11 +105,11 @@ def run(config: dict, report_path: Path) -> int:
         request_id = receipt.get("request_id")
         status_token = receipt.get("status_token")
         quarantined = receipt.get("quarantined") is True
-        if not isinstance(request_id, str) or not request_id:
-            failures.append(f"{case['request_type']}/{case['reason_code']}: request ID missing")
+        if not isinstance(request_id, str) or not REQUEST_ID_PATTERN.fullmatch(request_id):
+            failures.append(f"{case['request_type']}/{case['reason_code']}: request ID missing or malformed")
             continue
-        if not isinstance(status_token, str) or not 24 <= len(status_token) <= 512:
-            failures.append(f"{case['request_type']}/{case['reason_code']}: private status token missing")
+        if not isinstance(status_token, str) or not STATUS_TOKEN_PATTERN.fullmatch(status_token):
+            failures.append(f"{case['request_type']}/{case['reason_code']}: private status token missing or malformed")
             continue
         if urgent and not quarantined:
             failures.append(f"{case['request_type']}/{case['reason_code']}: urgent intake acknowledged without confirmed quarantine")
