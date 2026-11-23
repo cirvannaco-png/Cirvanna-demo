@@ -152,8 +152,11 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client, monkeypat
     assert "allowDeveloperTokenInput" not in response.text
     assert 'id="commerceToken"' not in response.text
     assert "bootstrap.publicOffersBase" in response.text
-    assert 'window.dispatchEvent(new CustomEvent("cirvanna:session-ready"' in response.text
-    assert "accessToken:token" in response.text
+    assert 'data-auth-provider="google"' in response.text
+    assert 'data-auth-provider="apple"' in response.text
+    assert 'data-auth-provider="microsoft"' in response.text
+    assert 'id="emailOtpForm"' in response.text
+    assert 'id="commerceToken"' not in response.text
     assert "connect-src 'self'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "no-referrer"
