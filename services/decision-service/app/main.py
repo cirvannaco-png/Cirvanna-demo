@@ -608,7 +608,7 @@ def readiness() -> dict:
         )
     except ValueError:
         privacy_budget_configured = False
-    governance_configuration_ready = (
+    governance_configuration_ready = bool(
         governance_credentials_configured and proposer_id and approver_id
         and proposer_id != approver_id and cil_cohort_allowlist_configured
         and privacy_budget_configured
