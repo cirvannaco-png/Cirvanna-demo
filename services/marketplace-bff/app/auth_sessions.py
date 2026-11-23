@@ -174,7 +174,7 @@ def _verify_jwt(token: str) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(401, detail={"code": "AUTH_ACCESS_TOKEN_INVALID"}) from exc
     role = claims.get("app_role", "customer")
-    if role not in ALLOWED_APP_ROLES:
+    if not isinstance(role, str) or role not in ALLOWED_APP_ROLES:
         raise HTTPException(403, detail={"code": "AUTH_APP_ROLE_INVALID"})
     return claims
 
@@ -396,7 +396,7 @@ async def refresh(request: Request) -> JSONResponse:
     if not session_id:
         raise HTTPException(401, detail={"code": "AUTH_SESSION_REQUIRED"})
     profile, max_age = await _rotate(session_id)
-    response = JSONResponse({"authenticated": True, **profile})
+    response = JSONResponse({"authenticated": True, **profile}, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
     _cookie(response, session_id, max_age=max_age)
     return response
 
