@@ -204,6 +204,35 @@ def test_pnelly_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
     assert response.json()["detail"]["code"] == "PNELLY_NPL_PROVIDER_NOT_CONFIGURED"
 
 
+def test_pnelly_daily_looks_ignores_client_age_and_reviews_age_dependent_policy(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("CIRVANNA_MINIMUM_AGE", "18")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    observed = {"profile": False, "compose": False}
+    monkeypatch.setattr(
+        main, "_load_verified_usi_profile",
+        lambda *_args, **_kwargs: observed.__setitem__("profile", True),
+    )
+    monkeypatch.setattr(
+        main, "_pnelly_daily_looks",
+        lambda *_args, **_kwargs: observed.__setitem__("compose", True),
+    )
+    body = request_body()
+    body["context"]["age_years"] = 17
+    response = TestClient(main.app).post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["eligibility"]["verdict"] == "REVIEW"
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_AGE" in result["eligibility"]["reason_codes"]
+    assert result["eligibility"]["context_evidence"]["age"]["status"] == "unverified_client_value"
+    assert result["recommendation"] == {"look_count": 0, "ready_count": 0, "looks": []}
+    assert observed == {"profile": False, "compose": False}
+
+
 def test_pnelly_eepl_review_fails_closed_before_profile_or_look_composition(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
