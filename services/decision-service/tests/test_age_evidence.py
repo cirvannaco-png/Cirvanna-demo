@@ -368,39 +368,37 @@ class YotiAdapterTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-    def test_decision_service_uses_server_selected_eepl_policy_not_request_policy(self):
-        import json
-        import os
-        from types import SimpleNamespace
-        from unittest.mock import patch
-        from app.main import PolicyIn, _server_policy
+def test_decision_service_uses_server_selected_eepl_policy_not_request_policy():
+    import json
+    import os
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from app.main import PolicyIn, _server_policy
 
-        registry = {
-            "adult-market": {
-                "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
-                "allowed_locations": ["KE"], "allowed_occasions": ["everyday"],
-                "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
-            },
-            "less-restrictive-market": {
-                "policy_version": "youth-v1", "minimum_age": 13, "maximum_age": None,
-                "allowed_locations": [], "allowed_occasions": [],
-                "allowed_climates": [], "required_context": [],
-            },
-        }
-        request_selected = PolicyIn(
-            policy_id="less-restrictive-market", policy_version="youth-v1",
-            minimum_age=13, required_context=[],
-        )
-        with patch.dict(os.environ, {
-            "EEPL_POLICY_ID": "adult-market",
-            "EEPL_POLICY_REGISTRY_JSON": json.dumps(registry),
-        }, clear=False):
-            resolved = _server_policy(SimpleNamespace(eepl_policy=request_selected))
-        self.assertEqual(resolved.policy_id, "adult-market")
-        self.assertEqual(resolved.policy_version, "adult-v4")
-        self.assertEqual(resolved.minimum_age, 18)
-        self.assertEqual(resolved.allowed_locations, ["KE"])
-
+    registry = {
+        "adult-market": {
+            "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
+            "allowed_locations": ["KE"], "allowed_occasions": ["everyday"],
+            "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
+        },
+        "less-restrictive-market": {
+            "policy_version": "youth-v1", "minimum_age": 13, "maximum_age": None,
+            "allowed_locations": [], "allowed_occasions": [],
+            "allowed_climates": [], "required_context": [],
+        },
+    }
+    request_selected = PolicyIn(
+        policy_id="less-restrictive-market", policy_version="youth-v1",
+        minimum_age=13, required_context=[],
+    )
+    with patch.dict(os.environ, {
+        "EEPL_POLICY_ID": "adult-market",
+        "EEPL_POLICY_REGISTRY_JSON": json.dumps(registry),
+    }, clear=False):
+        resolved = _server_policy(SimpleNamespace(eepl_policy=request_selected))
+    assert resolved.policy_id == "adult-market"
+    assert resolved.policy_version == "adult-v4"
+    assert resolved.minimum_age == 18
 
 class ServerOwnedEEPLPolicyTests(unittest.TestCase):
     def test_active_policy_is_resolved_from_server_registry(self):
