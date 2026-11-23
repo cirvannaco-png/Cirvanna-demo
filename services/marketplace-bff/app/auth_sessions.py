@@ -601,7 +601,7 @@ async def auth_readiness() -> dict[str, Any]:
                 "apple": external.get("apple") is True,
                 "microsoft": external.get("azure") is True,
             }
-    except (HTTPException, httpx.HTTPError, asyncpg.PostgresError, ValueError, TypeError):
+    except Exception:
         pass
     providers_ready = all(result["providers"].values())
     result["ready"] = (
