@@ -101,6 +101,10 @@ class AgeEvidenceContractTests(unittest.TestCase):
             policy_version="v3", threshold=18, now=NOW,
         ))
 
+    def test_unapproved_attestation_provider_is_rejected(self):
+        with self.assertRaises(AgeEvidenceError):
+            sign_threshold_attestation(payload(provider="unapproved-provider"), SECRET)
+
     def test_raw_age_or_identity_fields_are_rejected(self):
         with self.assertRaises(AgeEvidenceError):
             sign_threshold_attestation(payload(age_years=21), SECRET)
