@@ -89,7 +89,7 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    INSERT INTO catacaci_decision_receipts (
+                    INSERT INTO decision_private.catacaci_decision_receipts (
                         receipt_id, request_id, candidate_id, verdict, may_display,
                         eepl_policy_id, eepl_policy_version, cal_policy_id, cal_policy_version,
                         minimum_fit_confidence, maximum_fit_confidence_disagreement,
@@ -116,7 +116,7 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                     ),
                 )
                 cursor.execute(
-                    "SELECT receipt_sha256 FROM catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s",
+                    "SELECT receipt_sha256 FROM decision_private.catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s",
                     (receipt["request_id"], receipt["candidate_id"]),
                 )
                 row = cursor.fetchone()
@@ -134,7 +134,7 @@ def check_receipt_store() -> bool:
         import psycopg
         with psycopg.connect(_database_url(), connect_timeout=3) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT 1 FROM catacaci_decision_receipts LIMIT 1")
+                cursor.execute("SELECT 1 FROM decision_private.catacaci_decision_receipts LIMIT 1")
                 cursor.fetchone()
         return True
     except Exception:
@@ -154,7 +154,7 @@ def load_decision_receipt(request_id: str, candidate_id: str) -> dict[str, Any]:
                     arbitration_contract_version, pipeline_contract_version,
                     candidate_snapshot_sha256, catalog_version, evaluated_signals, reasons,
                     receipt_sha256
-                    FROM catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s""",
+                    FROM decision_private.catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s""",
                     (request_id, candidate_id),
                 )
                 row = cursor.fetchone()
