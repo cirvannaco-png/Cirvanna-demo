@@ -93,6 +93,13 @@ def _cohort_period(value: str) -> date:
     return parsed
 
 
+def _require_allowed_cohort(cohort_key: str) -> None:
+    configured = os.getenv("CATACACI_CIL_ALLOWED_COHORT_KEYS", "")
+    allowed = {item.strip() for item in configured.split(",") if item.strip()}
+    if not allowed or cohort_key not in allowed:
+        raise GovernanceStoreError("CIL cohort key is not in the server-owned allowlist")
+
+
 def record_cil_contribution(
     *, event_id: str, contributor_token: str, cohort_key: str,
     outcome_success: bool, observed_at: datetime,
@@ -103,6 +110,7 @@ def record_cil_contribution(
         raise GovernanceStoreError("CIL requires an HMAC-pseudonymous contributor token")
     if not isinstance(cohort_key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._:=|/-]{1,127}", cohort_key):
         raise GovernanceStoreError("CIL cohort key is not an approved low-cardinality key")
+    _require_allowed_cohort(cohort_key)
     if type(outcome_success) is not bool:
         raise GovernanceStoreError("CIL outcome must be boolean")
     if not isinstance(observed_at, datetime) or observed_at.tzinfo is None or observed_at.utcoffset() is None:
@@ -148,6 +156,7 @@ def release_cil_aggregate(
     period = _cohort_period(period_start)
     if not isinstance(cohort_key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._:=|/-]{1,127}", cohort_key):
         raise GovernanceStoreError("CIL cohort key is invalid")
+    _require_allowed_cohort(cohort_key)
     for name, value in (("epsilon", epsilon), ("epsilon_limit", epsilon_limit)):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise GovernanceStoreError(f"{name} must be finite and positive")
