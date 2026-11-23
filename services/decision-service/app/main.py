@@ -31,6 +31,7 @@ for package in (
 
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_cal_policy, validate_registry  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
 from age_evidence.policy import PolicyRegistryError, resolve_policy  # noqa: E402
@@ -171,7 +172,8 @@ class EligibilityRequest(StrictModel):
     # Request-body context.age_years is retained for compatibility but is never trusted.
     age_attestation: dict | None = None
     age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
-    policy_version: str = Field(default="decision-pipeline-1.0.0", min_length=1, max_length=100)
+    cal_policy_id: str = Field(min_length=1, max_length=100)
+    policy_version: str = Field(min_length=1, max_length=100)
     context: ContextIn
     eepl_policy: PolicyIn
     usi_profile: USIProfileIn
@@ -184,8 +186,6 @@ class EligibilityRequest(StrictModel):
     fit_estimate_signature: str = Field(min_length=64, max_length=128)
     npl_evidence_signature: str = Field(min_length=64, max_length=128)
     upstream_signals: list[UpstreamSignalIn] = Field(default_factory=list, max_length=64)
-    minimum_fit_confidence: float = Field(default=0.70, ge=0, le=1)
-    minimum_alignment_score: float = Field(default=0.60, ge=0, le=1)
 
 
 def _cil_review_bridge() -> tuple[str, str, str]:
@@ -432,7 +432,7 @@ def verify_npl_signature(payload: "EligibilityRequest") -> None:
         raise HTTPException(401, detail={"code": "UNTRUSTED_NPL_EVIDENCE"})
 
 
-def _result_json(result, payload: "EligibilityRequest") -> dict:
+def _result_json(result, payload: "EligibilityRequest", cal_policy: CALPolicy) -> dict:
     arbitration = result.arbitration
     return {
         "service": SERVICE,
@@ -474,9 +474,10 @@ def _result_json(result, payload: "EligibilityRequest") -> dict:
                 "model_version": result.fit_estimate.model_version, "calibration_version": result.fit_estimate.calibration_version,
                 "evidence_ids": list(result.fit_estimate.evidence_ids)},
         },
-        "policy": {"version": result.arbitration.policy_version,
-            "minimum_fit_confidence": payload.minimum_fit_confidence,
-            "minimum_alignment_score": payload.minimum_alignment_score,
+        "policy": {"id": cal_policy.policy_id, "version": cal_policy.policy_version,
+            "minimum_fit_confidence": cal_policy.minimum_fit_confidence,
+            "maximum_fit_confidence_disagreement": cal_policy.maximum_fit_confidence_disagreement,
+            "minimum_alignment_score": cal_policy.minimum_alignment_score,
             "fci_model_version": result.fit_estimate.model_version,
             "fci_calibration_version": result.fit_estimate.calibration_version},
     }
@@ -496,11 +497,20 @@ def readiness() -> dict:
     fit_key_configured = len(os.getenv("FCI_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
     npl_key_configured = len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
     cultural_key_configured = len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
-    ready = internal_configured and fit_key_configured and npl_key_configured and cultural_key_configured
+    try:
+        validate_registry()
+        cal_policy_registry_configured = True
+    except CALPolicyRegistryError:
+        cal_policy_registry_configured = False
+    ready = (
+        internal_configured and fit_key_configured and npl_key_configured
+        and cultural_key_configured and cal_policy_registry_configured
+    )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
         "trusted_npl_evidence_configured": npl_key_configured,
         "trusted_cultural_evidence_configured": cultural_key_configured,
+        "catacaci_policy_registry_configured": cal_policy_registry_configured,
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -511,7 +521,8 @@ def readiness() -> dict:
 def capabilities() -> dict:
     return {"service": SERVICE, "eepl_policy_evaluation": True, "npl_hard_veto": True,
         "usi_explicit_preference_alignment": True, "fci_calibrated_evidence_contract": True,
-        "catacaci_cal_arbitration": True, "decision_explanations": True,
+        "catacaci_cal_arbitration": True, "catacaci_server_owned_policy": True,
+        "decision_explanations": True,
         "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
@@ -569,6 +580,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
     verify_cultural_signature(payload)
     try:
         server_policy = _server_policy(payload)
+        cal_policy = resolve_cal_policy(payload.cal_policy_id, payload.policy_version)
         policy = EEPLPolicy(
             policy_id=server_policy.policy_id,
             policy_version=server_policy.policy_version,
@@ -633,10 +645,12 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             cultural_requirements=cultural_requirements,
             fit_required_evidence=tuple(payload.fit_estimate.required_evidence_fields),
             fit_observed_evidence=tuple(payload.fit_estimate.observed_evidence_fields),
-            minimum_fit_confidence=payload.minimum_fit_confidence,
-            minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
+            minimum_fit_confidence=cal_policy.minimum_fit_confidence,
+            maximum_fit_confidence_disagreement=cal_policy.maximum_fit_confidence_disagreement,
+            minimum_alignment_score=cal_policy.minimum_alignment_score,
+            policy_version=cal_policy.policy_version,
         )
-        response_payload = _result_json(result, payload)
+        response_payload = _result_json(result, payload, cal_policy)
         response_payload["age_evidence"] = {
             "contract_version": "age-threshold-attestation-v1",
             "status": (
@@ -650,5 +664,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
         }
         feedback_review = _load_cil_cal_feedback_decision(payload)
         return _apply_cil_cal_feedback_veto(response_payload, feedback_review)
+    except CALPolicyRegistryError as exc:
+        raise HTTPException(503, detail={"code": "SERVER_CAL_POLICY_UNAVAILABLE"}) from exc
     except ValueError as exc:
         raise HTTPException(422, detail={"code": "INVALID_DECISION_EVIDENCE", "detail": str(exc)}) from exc
