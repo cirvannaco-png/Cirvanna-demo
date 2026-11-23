@@ -224,48 +224,86 @@ async def _load_session(session_id: str) -> tuple[str, dict[str, Any]]:
 
 
 async def _rotate(session_id: str) -> tuple[dict[str, Any], int]:
-    user_id, current = await _load_session(session_id)
-    base, key = _supabase()
-    async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
-        response = await client.post(
-            base + "/auth/v1/token?grant_type=refresh_token",
-            headers={"apikey": key, "Content-Type": "application/json"},
-            json={"refresh_token": current["refresh_token"]},
-        )
-    if response.status_code != 200:
-        await _revoke(session_id)
+    """Serialize refresh-token rotation per session to prevent concurrent reuse."""
+    pool = await _db()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """SELECT user_id, token_ciphertext FROM auth_private.sessions
+                   WHERE session_hash=$1 AND revoked_at IS NULL AND expires_at > now()
+                   FOR UPDATE""",
+                _hash(session_id),
+            )
+            if row is None:
+                raise HTTPException(401, detail={"code": "AUTH_SESSION_INVALID"})
+            import json
+            current = json.loads(_decrypt(row["token_ciphertext"]))
+            user_id = row["user_id"]
+            base, key = _supabase()
+            async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
+                response = await client.post(
+                    base + "/auth/v1/token?grant_type=refresh_token",
+                    headers={"apikey": key, "Content-Type": "application/json"},
+                    json={"refresh_token": current["refresh_token"]},
+                )
+            if response.status_code != 200:
+                await conn.execute(
+                    "UPDATE auth_private.sessions SET revoked_at=now(), updated_at=now() WHERE session_hash=$1",
+                    _hash(session_id),
+                )
+                rejected = True
+            else:
+                tokens = response.json()
+                new_access = tokens.get("access_token") if isinstance(tokens, dict) else None
+                new_refresh = tokens.get("refresh_token") if isinstance(tokens, dict) else None
+                if not new_access or not new_refresh:
+                    raise HTTPException(502, detail={"code": "AUTH_REFRESH_RESPONSE_INVALID"})
+                claims = await asyncio.to_thread(_verify_jwt, new_access)
+                if claims.get("sub") != str(user_id):
+                    await conn.execute(
+                        "UPDATE auth_private.sessions SET revoked_at=now(), updated_at=now() WHERE session_hash=$1",
+                        _hash(session_id),
+                    )
+                    raise HTTPException(401, detail={"code": "AUTH_REFRESH_SUBJECT_CHANGED"})
+                expires_in = tokens.get("expires_in")
+                if isinstance(expires_in, bool) or not isinstance(expires_in, int) or expires_in < 60:
+                    raise HTTPException(502, detail={"code": "AUTH_REFRESH_EXPIRY_INVALID"})
+                encrypted = _encrypt(json.dumps({
+                    "access_token": new_access,
+                    "refresh_token": new_refresh,
+                    "expires_at": int(datetime.now(timezone.utc).timestamp()) + expires_in,
+                    "user_id": str(user_id),
+                    "app_role": claims.get("app_role", "customer"),
+                }, separators=(",", ":")))
+                session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
+                await conn.execute(
+                    """UPDATE auth_private.sessions SET token_ciphertext=$2,
+                       expires_at=now()+($3 * interval '1 second'), updated_at=now()
+                       WHERE session_hash=$1 AND revoked_at IS NULL""",
+                    _hash(session_id), encrypted, session_ttl,
+                )
+                profile = {"user_id": str(user_id), "app_role": claims.get("app_role", "customer")}
+                rejected = False
+    if rejected:
         raise HTTPException(401, detail={"code": "AUTH_REFRESH_REJECTED"})
-    tokens = response.json()
-    new_access = tokens.get("access_token")
-    if not new_access or not tokens.get("refresh_token"):
-        raise HTTPException(502, detail={"code": "AUTH_REFRESH_RESPONSE_INVALID"})
-    claims = await asyncio.to_thread(_verify_jwt, new_access)
+    return profile, session_ttl
+
+
+async def session_access_token(request: Request) -> str:
+    """Resolve the opaque browser cookie to a verified, refreshed Supabase access token."""
+    session_id = request.cookies.get(COOKIE_NAME)
+    if not session_id:
+        raise HTTPException(401, detail={"code": "AUTH_SESSION_REQUIRED"})
+    user_id, tokens = await _load_session(session_id)
+    now = int(datetime.now(timezone.utc).timestamp())
+    if tokens["expires_at"] - now < 90:
+        await _rotate(session_id)
+        user_id, tokens = await _load_session(session_id)
+    claims = await asyncio.to_thread(_verify_jwt, tokens["access_token"])
     if claims.get("sub") != user_id:
         await _revoke(session_id)
-        raise HTTPException(401, detail={"code": "AUTH_REFRESH_SUBJECT_CHANGED"})
-    expires_in = tokens.get("expires_in")
-    if isinstance(expires_in, bool) or not isinstance(expires_in, int) or expires_in < 60:
-        raise HTTPException(502, detail={"code": "AUTH_REFRESH_EXPIRY_INVALID"})
-    import json
-    encrypted = _encrypt(json.dumps({
-        "access_token": new_access,
-        "refresh_token": tokens["refresh_token"],
-        "expires_at": int(datetime.now(timezone.utc).timestamp()) + expires_in,
-        "user_id": user_id,
-        "app_role": claims.get("app_role", "customer"),
-    }, separators=(",", ":")))
-    pool = await _db()
-    result = await pool.execute(
-        """UPDATE auth_private.sessions SET token_ciphertext=$2,
-           expires_at=now()+($3 * interval '1 second'), updated_at=now()
-           WHERE session_hash=$1 AND revoked_at IS NULL""",
-        _hash(session_id), encrypted, expires_in,
-    )
-    if result != "UPDATE 1":
-        raise HTTPException(401, detail={"code": "AUTH_SESSION_REVOKED"})
-    session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
-    return {"user_id": user_id, "app_role": claims.get("app_role", "customer")}, session_ttl
-
+        raise HTTPException(401, detail={"code": "AUTH_SESSION_SUBJECT_MISMATCH"})
+    return tokens["access_token"]
 
 async def _revoke(session_id: str) -> None:
     pool = await _db()
