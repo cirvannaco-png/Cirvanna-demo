@@ -40,7 +40,7 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     sid = verified_session()
     jti = str(uuid.uuid4())
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=signature,
+        session_id=sid, jti=jti, signature=signature, attestation_payload={"jti": jti},
         issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
     )
     row = store.get_session(sid)
@@ -55,7 +55,7 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     sid_concurrent = verified_session()
     jti_concurrent = str(uuid.uuid4())
     store.issue_attestation(
-        session_id=sid_concurrent, jti=jti_concurrent, signature=signature,
+        session_id=sid_concurrent, jti=jti_concurrent, signature=signature, attestation_payload={"jti": jti_concurrent},
         issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
     )
     row_concurrent = store.get_session(sid_concurrent)
@@ -72,7 +72,7 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     sid2 = verified_session()
     jti2 = str(uuid.uuid4())
     store.issue_attestation(
-        session_id=sid2, jti=jti2, signature=signature,
+        session_id=sid2, jti=jti2, signature=signature, attestation_payload={"jti": jti2},
         issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
     )
     row2 = store.get_session(sid2)
