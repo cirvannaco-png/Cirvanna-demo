@@ -134,6 +134,21 @@ class CALStagingMatrixContractTests(unittest.TestCase):
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
+    def test_extra_shopper_surface_is_rejected(self):
+        config = valid_manifest()
+        config["surfaces"]["unregistered_surface"] = {
+            "url": "https://extra.staging.example.test",
+            "method": "GET",
+        }
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_duplicate_scenario_ids_are_rejected(self):
+        config = valid_manifest()
+        config["scenarios"][1]["id"] = config["scenarios"][0]["id"]
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
     def test_missing_shopper_surface_is_rejected(self):
         config = valid_manifest()
         del config["surfaces"]["checkout"]
