@@ -584,6 +584,11 @@ def readiness() -> dict:
         cal_policy_registry_configured = True
     except CALPolicyRegistryError:
         cal_policy_registry_configured = False
+    try:
+        resolve_active_policy()
+        eepl_policy_registry_configured = True
+    except PolicyRegistryError:
+        eepl_policy_registry_configured = False
     decision_receipt_store_ready = check_receipt_store()
     governance_store_ready = check_governance_store()
     governance_tokens = (
@@ -616,7 +621,7 @@ def readiness() -> dict:
     ready = (
         internal_configured and fit_key_configured and npl_key_configured
         and cultural_key_configured and cal_policy_registry_configured
-        and decision_receipt_store_ready and governance_store_ready
+        and eepl_policy_registry_configured and decision_receipt_store_ready and governance_store_ready
         and governance_configuration_ready
     )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
@@ -624,6 +629,7 @@ def readiness() -> dict:
         "trusted_npl_evidence_configured": npl_key_configured,
         "trusted_cultural_evidence_configured": cultural_key_configured,
         "catacaci_policy_registry_configured": cal_policy_registry_configured,
+        "eepl_policy_registry_configured": eepl_policy_registry_configured,
         "decision_receipt_store_ready": decision_receipt_store_ready,
         "catacaci_governance_store_ready": governance_store_ready,
         "catacaci_governance_configuration_ready": bool(governance_configuration_ready),
