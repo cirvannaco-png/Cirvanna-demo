@@ -443,6 +443,16 @@ def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] |
     # different threshold. Such policies remain REVIEW until richer evidence exists.
     if policy.minimum_age is None or policy.maximum_age is not None:
         raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
+    if (
+        attestation.get("subject_id") != payload.context.user_id
+        or attestation.get("request_id") != payload.request_id
+        or attestation.get("purpose") != "shopper_eligibility"
+        or attestation.get("policy_id") != policy.policy_id
+        or attestation.get("policy_version") != policy.policy_version
+        or attestation.get("threshold") != policy.minimum_age
+        or type(attestation.get("threshold_met")) is not bool
+    ):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_POLICY_BINDING_INVALID"})
     secret = _required_env("AGE_EVIDENCE_HMAC_SECRET")
     try:
         valid = verify_threshold_attestation(
