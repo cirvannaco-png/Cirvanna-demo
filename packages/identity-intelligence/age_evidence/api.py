@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .core import AgeEvidenceError
+from .policy import PolicyRegistryError, resolve_policy
 from .service import AgeEvidenceService
 from .store import AgeEvidenceStore
 from .yoti import YotiAVSClient
@@ -22,10 +23,9 @@ class StrictModel(BaseModel):
 class SessionStart(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     request_id: str = Field(min_length=1, max_length=128)
-    purpose: str = Field(min_length=1, max_length=80)
+    purpose: str = Field(default="shopper_eligibility", pattern=r"^shopper_eligibility$")
     policy_id: str = Field(min_length=1, max_length=100)
     policy_version: str = Field(min_length=1, max_length=64)
-    threshold: int = Field(ge=13, le=125)
 
 
 class AttestationRedeem(StrictModel):
@@ -93,7 +93,13 @@ def _service() -> AgeEvidenceService:
 @router.post("/sessions", dependencies=[Depends(require_orchestrator)])
 def start_session(payload: SessionStart) -> dict:
     try:
-        return _service().start(**payload.model_dump())
+        policy = resolve_policy(payload.policy_id, payload.policy_version)
+        threshold = policy.get("minimum_age")
+        if type(threshold) is not int or policy.get("maximum_age") is not None:
+            raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
+        return _service().start(**payload.model_dump(), threshold=threshold)
+    except (PolicyRegistryError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
     except Exception as exc:
         raise HTTPException(502, detail={"code": "AGE_EVIDENCE_SESSION_START_FAILED"}) from exc
 
