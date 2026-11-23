@@ -56,6 +56,7 @@ bearer = HTTPBearer(auto_error=False)
 
 class ContextInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Retained for compatibility only. Self-declared age is never eligibility evidence.
     age_years: int | None = Field(default=None, ge=0, le=120)
     location: str | None = Field(default=None, max_length=120)
     occasion: str | None = Field(default=None, max_length=120)
@@ -566,7 +567,21 @@ def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
     )
 
 
-def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSignal:
+def _legal_signal(
+    context: ContextInput,
+    product: dict[str, Any],
+    *,
+    verified_age_years: int | None = None,
+) -> DecisionSignal:
+    """Apply age restrictions only to independently verified age evidence.
+
+    ContextInput.age_years is user-declared and deliberately ignored. Until a
+    verified attestation is supplied, age-dependent rules remain UNKNOWN.
+    """
+    if verified_age_years is not None and (
+        type(verified_age_years) is not int or not 0 <= verified_age_years <= 120
+    ):
+        raise ValueError("verified_age_years must be a verified integer in [0, 120]")
     minimum_age = _optional_age("CIRVANNA_MINIMUM_AGE")
     maximum_age = _optional_age("CIRVANNA_MAXIMUM_AGE")
     raw_product_min = product.get("attributes", {}).get("minimum_age")
@@ -582,13 +597,13 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
             "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
             "No additional age restriction is configured for this candidate.",
         )
-    elif context.age_years is None:
+    elif verified_age_years is None:
         state, code, explanation = (
             SignalState.UNKNOWN,
             "LEGAL_AGE_EVIDENCE_MISSING",
             "An age-dependent eligibility rule applies, but age was not supplied.",
         )
-    elif context.age_years < (minimum_age or 0) or (maximum_age is not None and context.age_years > maximum_age):
+    elif verified_age_years < (minimum_age or 0) or (maximum_age is not None and verified_age_years > maximum_age):
         state, code, explanation = (
             SignalState.BLOCK,
             "LEGAL_AGE_RESTRICTION_VIOLATION",
@@ -1433,7 +1448,7 @@ def _offer_comparison_max_age_seconds() -> int:
 
 
 def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[ContextInput, dict[str, Any]]:
-    """Drop context that lacks explicit provenance, timezone or freshness."""
+    """Drop untrusted age and context that lacks provenance, timezone or freshness."""
     now = datetime.now(timezone.utc)
     specs = (
         ("location", "location_source", "location_observed_at", 24 * 3600),
@@ -1476,8 +1491,14 @@ def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[Con
             "observed_at": observed_raw if status == "current" else None,
             "max_age_seconds": max_age,
         }
+    evidence["age"] = {
+        "status": "unverified_user_supplied" if context.age_years is not None else "missing",
+        "source": None,
+        "observed_at": None,
+        "max_age_seconds": None,
+    }
     normalized = ContextInput(
-        age_years=context.age_years,
+        age_years=None,
         location=values["location"],
         occasion=values["occasion"],
         climate=values["climate"],
@@ -2897,7 +2918,8 @@ def evaluate_decisions(
         )
     context = EEPLContext(
         user_id=payload.user_id,
-        age_years=payload.context.age_years,
+        # Client-supplied age is not proof and cannot satisfy an age-dependent gate.
+        age_years=None,
         location=payload.context.location,
         occasion=payload.context.occasion,
         climate=payload.context.climate,
