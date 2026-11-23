@@ -9,7 +9,7 @@ import os
 import re
 import secrets
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from .vsl import ValueChangeProposal, ValueDimension, ValueProfile, approve_change
@@ -158,10 +158,12 @@ def record_cil_contribution(
                 raise GovernanceStoreError("CIL contribution window is already closed by a privacy release")
             cur.execute(
                 """INSERT INTO decision_private.catacaci_cil_contributions
-                (event_id, cohort_key, period_start, contributor_hash, outcome_success, observed_at)
-                VALUES (%s,%s,%s,%s,%s,%s)
+                (event_id, cohort_key, period_start, contributor_hash, outcome_success, observed_at, expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT DO NOTHING RETURNING event_id""",
-                (event_id, cohort_key, period, contributor_hash, outcome_success, observed_at.astimezone(timezone.utc)),
+                (event_id, cohort_key, period, contributor_hash, outcome_success,
+                 observed_at.astimezone(timezone.utc),
+                 observed_at.astimezone(timezone.utc) + timedelta(days=90)),
             )
             inserted = cur.fetchone() is not None
             if not inserted:
@@ -178,6 +180,18 @@ def record_cil_contribution(
         raise
     except Exception as exc:
         raise GovernanceStoreError("CIL contribution persistence failed") from exc
+
+
+def purge_expired_cil_contributions() -> int:
+    """Delete pseudonymous raw CIL rows after the fixed 90-day retention window."""
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM decision_private.catacaci_cil_contributions WHERE expires_at <= now()"
+            )
+            return int(cur.rowcount or 0)
+    except Exception as exc:
+        raise GovernanceStoreError("CIL contribution retention purge failed") from exc
 
 
 def _laplace(scale: float) -> float:
