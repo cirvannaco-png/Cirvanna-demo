@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import uuid
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "identity-intelligence"))
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
@@ -23,7 +27,7 @@ def verified_session(store):
         provider_reference="opaque-reference-" + uuid.uuid4().hex, now=NOW,
     )
     store.attach_provider_session(
-        sid, "provider-session-" + uuid.uuid4().hex,
+        sid, str(uuid.uuid4()),
         NOW + timedelta(minutes=15), now=NOW,
     )
     row = store.get_session(sid)
