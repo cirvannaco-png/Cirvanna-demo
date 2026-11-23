@@ -143,3 +143,71 @@ def test_auth_cookie_is_httponly_secure_host_only_and_lax():
     assert "samesite=lax" in cookie
     assert "path=/" in cookie
     assert "domain=" not in cookie
+
+def test_email_magic_link_callback_validates_nested_redirect_and_sets_opaque_cookie(monkeypatch):
+    calls = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"access_token": "verified-access", "refresh_token": "rotated-refresh"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls["url"] = url
+            calls["json"] = kwargs["json"]
+            return FakeResponse()
+
+    async def consume(state):
+        assert state == "state-123"
+        return "email", ""
+
+    async def store(tokens):
+        assert tokens["access_token"] == "verified-access"
+        return "opaque-handle", 3600, {"user_id": "3f44c3f7-9b9d-44d8-8a56-ef25ab86d5b4", "app_role": "customer"}
+
+    monkeypatch.setattr(auth_sessions, "_callback_url", lambda: "https://bff.example.com/auth/callback")
+    monkeypatch.setattr(auth_sessions, "_consume_pending", consume)
+    monkeypatch.setattr(auth_sessions, "_supabase", lambda: ("https://project.supabase.co", "sb_publishable_test"))
+    monkeypatch.setattr(auth_sessions, "_store_session", store)
+    monkeypatch.setattr(auth_sessions.httpx, "AsyncClient", FakeClient)
+
+    with make_client() as client:
+        response = client.get(
+            "/auth/callback",
+            params={
+                "next": "https://bff.example.com/auth/callback?state=state-123",
+                "token_hash": "one-time-token-hash",
+                "type": "email",
+            },
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert calls["url"] == "https://project.supabase.co/auth/v1/verify"
+    assert calls["json"] == {"token_hash": "one-time-token-hash", "type": "email"}
+    cookie = response.headers["set-cookie"].lower()
+    assert "__host-cirvanna_session=opaque-handle" in cookie
+    assert "httponly" in cookie and "secure" in cookie
+
+
+def test_email_magic_link_callback_rejects_external_next_url(monkeypatch):
+    monkeypatch.setattr(auth_sessions, "_callback_url", lambda: "https://bff.example.com/auth/callback")
+    with make_client() as client:
+        response = client.get(
+            "/auth/callback",
+            params={
+                "next": "https://attacker.example/auth/callback?state=state-123",
+                "token_hash": "one-time-token-hash",
+                "type": "email",
+            },
+            follow_redirects=False,
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AUTH_CALLBACK_STATE_MISSING"
