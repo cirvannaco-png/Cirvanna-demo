@@ -38,12 +38,24 @@ def verified_session(store):
     return sid
 
 
+def attestation_payload_for(store, session_id, jti):
+    row = store.get_session(session_id)
+    return {
+        "jti": jti, "subject_id": row["subject_id"], "request_id": row["request_id"],
+        "purpose": row["purpose"], "policy_id": row["policy_id"],
+        "policy_version": row["policy_version"], "threshold": row["threshold"],
+        "threshold_met": row["threshold_met"],
+        "provider_session_id": str(row["provider_session_id"]),
+        "provider_evidence_id": row["provider_evidence_id"],
+    }
+
+
 def test_attestation_is_single_use_and_bound_to_every_claim():
     store = make_store()
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "a" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
+        session_id=sid, jti=jti, signature=sig, attestation_payload=attestation_payload_for(store, sid, jti),
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(seconds=2),
     )
