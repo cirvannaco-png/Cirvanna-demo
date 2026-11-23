@@ -112,3 +112,21 @@ psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_cataca
 ```
 
 The append-only `catacaci_decision_receipts` table records the request/candidate, final SHOW/BLOCK/REVIEW, EEPL and CAL policy IDs/versions, contract versions, candidate snapshot digest, typed evaluated signal states/reason codes/source versions, reason references and a canonical receipt SHA-256. It deliberately excludes user IDs, raw measurements, images and free-text explanations. Replays are idempotent only when the canonical receipt hash matches; changed evidence under the same request/candidate is rejected. Readiness remains 503 until the PostgreSQL table is reachable. SQLite is not an accepted production receipt store.
+
+
+## Durable CAM, privacy-budgeted CIL and VSL approval
+
+Apply migrations in order using the dedicated audit database login:
+
+```bash
+psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_catacaci_decision_receipts.sql
+psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0002_catacaci_governance_store.sql
+```
+
+- **CAM:** `POST /v1/governance/cam/audits` appends version-bound observed-versus-simulated verdict comparisons. The record explicitly labels the scenario as non-causal. The database rejects mutation/deletion.
+- **CIL:** `POST /v1/governance/cil/contributions` accepts only HMAC-pseudonymous contributor tokens and server-allowlisted low-cardinality cohort keys. `POST /v1/governance/cil/aggregates` releases one monthly aggregate per cohort using independent Laplace noise on the contributor-count/success-count vector. The mechanism assumes one binary contribution per contributor per cohort-month; its L1 sensitivity is 2.0. The minimum release threshold is 30, output is suppressed when the noisy count is below that threshold, and a persistent cohort-month epsilon ledger prevents repeated releases from exceeding the configured budget. This is a technical DP mechanism, not an independent privacy certification; its composition, cohort taxonomy, retention and implementation require privacy review before production use.
+- **VSL:** `POST /v1/governance/vsl/proposals` records a versioned proposal; `POST /v1/governance/vsl/proposals/{id}/approve` or `/reject` requires a separate approver credential and actor identity. The proposer cannot approve their own change. Safety and legal eligibility remain fixed as the first two priority dimensions. Events are append-only; approved changes update the current version only after the compare-and-swap check succeeds.
+
+Separate secrets and operator identities are mandatory: `CATACACI_CAM_SERVICE_TOKEN`, `CATACACI_CIL_SERVICE_TOKEN`, `CATACACI_CIL_AGGREGATE_TOKEN`, `CATACACI_VSL_PROPOSER_TOKEN`, `CATACACI_VSL_APPROVER_TOKEN`, `CATACACI_VSL_PROPOSER_ID`, and `CATACACI_VSL_APPROVER_ID`. The two VSL actor IDs must be different. Configure `CATACACI_CIL_ALLOWED_COHORT_KEYS` as a comma-separated exact allowlist; never accept browser-supplied cohort keys as policy. Set `CATACACI_CIL_RELEASE_EPSILON` and `CATACACI_CIL_EPSILON_BUDGET` only after privacy-owner approval.
+
+The Decision Service remains not-ready until both the decision receipt and governance migrations are applied and the database is reachable. A successful schema migration does not replace operational backup/restore evidence, least-privilege grants, independent privacy review or human approval-owner assignment.
