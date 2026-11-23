@@ -40,8 +40,9 @@ from catacaci.receipts import (
 )  # noqa: E402
 from catacaci.governance_store import (
     GovernanceStoreError, append_cam_audit, record_cil_contribution,
-    release_cil_aggregate, current_vsl_profile, create_vsl_proposal,
-    approve_vsl_proposal, reject_vsl_proposal, check_governance_store,
+    release_cil_aggregate, purge_expired_cil_contributions, current_vsl_profile,
+    create_vsl_proposal, approve_vsl_proposal, reject_vsl_proposal,
+    check_governance_store,
 )  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
@@ -85,6 +86,10 @@ def require_cil_service(credentials: Annotated[HTTPAuthorizationCredentials | No
 
 def require_cil_aggregator(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
     _require_named_token(credentials, "CATACACI_CIL_AGGREGATE_TOKEN")
+
+
+def require_cil_retention(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CIL_RETENTION_TOKEN")
 
 
 def require_vsl_proposer(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
@@ -613,7 +618,8 @@ def readiness() -> dict:
     governance_store_ready = check_governance_store()
     governance_tokens = (
         "CATACACI_CAM_SERVICE_TOKEN", "CATACACI_CIL_SERVICE_TOKEN",
-        "CATACACI_CIL_AGGREGATE_TOKEN", "CATACACI_VSL_PROPOSER_TOKEN",
+        "CATACACI_CIL_AGGREGATE_TOKEN", "CATACACI_CIL_RETENTION_TOKEN",
+        "CATACACI_VSL_PROPOSER_TOKEN",
         "CATACACI_VSL_APPROVER_TOKEN",
     )
     governance_credentials_configured = all(
@@ -757,6 +763,14 @@ def append_cil_contribution(payload: CILContributionIn) -> dict:
         return {"recorded": inserted}
     except GovernanceStoreError as exc:
         raise HTTPException(503, detail={"code": "CATACACI_CIL_CONTRIBUTION_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/cil/retention/purge", dependencies=[Depends(require_cil_retention)])
+def purge_cil_contributions() -> dict:
+    try:
+        return {"purged_contributions": purge_expired_cil_contributions()}
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CIL_RETENTION_PURGE_FAILED"}) from exc
 
 
 @app.post("/v1/governance/cil/aggregates", dependencies=[Depends(require_cil_aggregator)])
