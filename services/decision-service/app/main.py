@@ -254,6 +254,7 @@ class UpstreamSignalIn(StrictModel):
 class EligibilityRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
+    catalog_version: int = Field(ge=1)
     # Only a separately signed, purpose-bound provider attestation can influence EEPL.
     # Request-body context.age_years is retained for compatibility but is never trusted.
     age_attestation: dict | None = None
@@ -993,7 +994,13 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
                 "source_version": str(feedback_review["decision_reference"]),
             })
         snapshot = json.dumps(
-            payload.candidate_attributes, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+            {
+                "candidate_id": payload.candidate_id,
+                "catalog_version": payload.catalog_version,
+                "candidate_attributes": payload.candidate_attributes,
+                "candidate_attributes_complete": payload.candidate_attributes_complete,
+            },
+            sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")
         receipt = {
             "request_id": payload.request_id,
@@ -1009,7 +1016,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             "arbitration_contract_version": result.arbitration.contract_version,
             "pipeline_contract_version": result.contract_version,
             "candidate_snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
-            "catalog_version": None,
+            "catalog_version": payload.catalog_version,
             "evaluated_signals": evaluated_signals,
             "reasons": [
                 {"code": item.get("code"), "signal_id": item.get("signal_id")}
