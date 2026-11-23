@@ -12,8 +12,9 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table,
-    and_, create_engine, exists, insert, select, update, UniqueConstraint, IntegrityError,
+    and_, create_engine, exists, insert, select, update, UniqueConstraint,
 )
+from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
 sessions = Table(
