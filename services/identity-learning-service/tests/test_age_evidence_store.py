@@ -43,7 +43,7 @@ def test_attestation_is_single_use_and_bound_to_every_claim():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "a" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig,
+        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(seconds=2),
     )
