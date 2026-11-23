@@ -29,7 +29,7 @@ def valid_manifest():
             "id": scenario_id,
             "fixture": {},
             "exercise_surfaces": sorted(runner.REQUIRED_SURFACES),
-            "assertions": {name: {"status": [200, 403, 503]} for name in runner.REQUIRED_SURFACES},
+            "assertions": {name: {"status": [200, 403, 503], "json_present": ["decision.verdict"]} for name in runner.REQUIRED_SURFACES},
         }
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             scenario["revoke"] = {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"}
@@ -101,6 +101,13 @@ class CALStagingMatrixContractTests(unittest.TestCase):
     def test_missing_surface_assertion_is_rejected(self):
         config = valid_manifest()
         del config["scenarios"][0]["assertions"]["marketplace"]
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_surface_assertions_cannot_be_status_only(self):
+        config = valid_manifest()
+        scenario = config["scenarios"][0]
+        scenario["assertions"]["marketplace"] = {"status": [403]}
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
