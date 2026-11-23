@@ -105,6 +105,8 @@ def test_complete_yoti_result_issues_one_signed_single_use_attestation(tmp_path)
     ) is False
     again = service.poll(session["session_id"])
     assert again["attestation_issued"] is True
+    assert again["attestation"] == attestation
+    assert again["signature"] == result["signature"]
     assert fake.calls == 1
     service.close()
 
