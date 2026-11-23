@@ -1,5 +1,8 @@
+CREATE SCHEMA IF NOT EXISTS decision_private;
+REVOKE ALL ON SCHEMA decision_private FROM PUBLIC;
+
 -- Durable CaTaCaCi governance state: CAM replay audit, privacy-budgeted CIL, and VSL approvals.
-CREATE TABLE IF NOT EXISTS catacaci_cam_audits (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_cam_audits (
     audit_id TEXT PRIMARY KEY,
     request_id TEXT NOT NULL,
     candidate_id TEXT NOT NULL,
@@ -15,9 +18,9 @@ CREATE TABLE IF NOT EXISTS catacaci_cam_audits (
     audit_sha256 CHAR(64) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS ix_catacaci_cam_candidate ON catacaci_cam_audits(candidate_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_catacaci_cam_candidate ON decision_private.catacaci_cam_audits(candidate_id, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS catacaci_cil_contributions (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_cil_contributions (
     event_id TEXT PRIMARY KEY,
     cohort_key TEXT NOT NULL,
     period_start DATE NOT NULL,
@@ -28,7 +31,7 @@ CREATE TABLE IF NOT EXISTS catacaci_cil_contributions (
 );
 CREATE INDEX IF NOT EXISTS ix_catacaci_cil_cohort_period ON catacaci_cil_contributions(cohort_key, period_start);
 
-CREATE TABLE IF NOT EXISTS catacaci_cil_privacy_budget (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_cil_privacy_budget (
     cohort_key TEXT NOT NULL,
     period_start DATE NOT NULL,
     epsilon_spent DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (epsilon_spent >= 0),
@@ -37,7 +40,7 @@ CREATE TABLE IF NOT EXISTS catacaci_cil_privacy_budget (
     CHECK (epsilon_spent <= epsilon_limit + 0.000000001)
 );
 
-CREATE TABLE IF NOT EXISTS catacaci_cil_aggregates (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_cil_aggregates (
     aggregate_id UUID PRIMARY KEY,
     cohort_key TEXT NOT NULL,
     period_start DATE NOT NULL,
@@ -55,7 +58,7 @@ CREATE TABLE IF NOT EXISTS catacaci_cil_aggregates (
     )
 );
 
-CREATE TABLE IF NOT EXISTS catacaci_vsl_profiles (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_vsl_profiles (
     singleton_id SMALLINT PRIMARY KEY CHECK (singleton_id=1),
     version TEXT NOT NULL,
     priority_order JSONB NOT NULL,
@@ -63,7 +66,7 @@ CREATE TABLE IF NOT EXISTS catacaci_vsl_profiles (
     approval_event_id TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
-INSERT INTO catacaci_vsl_profiles
+INSERT INTO decision_private.catacaci_vsl_profiles
 (singleton_id, version, priority_order, approved_by, approval_event_id, updated_at)
 VALUES (
   1, 'bootstrap-v1',
@@ -71,7 +74,7 @@ VALUES (
   'bootstrap', 'bootstrap-v1', now()
 ) ON CONFLICT (singleton_id) DO NOTHING;
 
-CREATE TABLE IF NOT EXISTS catacaci_vsl_proposals (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_vsl_proposals (
     proposal_id TEXT PRIMARY KEY,
     base_version TEXT NOT NULL,
     proposed_version TEXT NOT NULL UNIQUE,
@@ -87,7 +90,7 @@ CREATE TABLE IF NOT EXISTS catacaci_vsl_proposals (
     CHECK (approver_id IS NULL OR approver_id <> proposer_id)
 );
 
-CREATE TABLE IF NOT EXISTS catacaci_vsl_events (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_vsl_events (
     event_id TEXT PRIMARY KEY,
     proposal_id TEXT NOT NULL REFERENCES catacaci_vsl_proposals(proposal_id),
     event_type TEXT NOT NULL CHECK (event_type IN ('proposed','approved','rejected','stale')),
@@ -97,29 +100,48 @@ CREATE TABLE IF NOT EXISTS catacaci_vsl_events (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE OR REPLACE FUNCTION catacaci_reject_append_only_mutation()
+CREATE OR REPLACE FUNCTION decision_private.catacaci_reject_append_only_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'CaTaCaCi append-only governance record cannot be changed';
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_catacaci_receipts_append_only ON catacaci_decision_receipts;
+DROP TRIGGER IF EXISTS trg_catacaci_receipts_append_only ON decision_private.catacaci_decision_receipts;
 CREATE TRIGGER trg_catacaci_receipts_append_only
-BEFORE UPDATE OR DELETE ON catacaci_decision_receipts
-FOR EACH ROW EXECUTE FUNCTION catacaci_reject_append_only_mutation();
+BEFORE UPDATE OR DELETE ON decision_private.catacaci_decision_receipts
+FOR EACH ROW EXECUTE FUNCTION decision_private.catacaci_reject_append_only_mutation();
 
-DROP TRIGGER IF EXISTS trg_catacaci_cam_append_only ON catacaci_cam_audits;
+DROP TRIGGER IF EXISTS trg_catacaci_cam_append_only ON decision_private.catacaci_cam_audits;
 CREATE TRIGGER trg_catacaci_cam_append_only
-BEFORE UPDATE OR DELETE ON catacaci_cam_audits
-FOR EACH ROW EXECUTE FUNCTION catacaci_reject_append_only_mutation();
+BEFORE UPDATE OR DELETE ON decision_private.catacaci_cam_audits
+FOR EACH ROW EXECUTE FUNCTION decision_private.catacaci_reject_append_only_mutation();
 
-DROP TRIGGER IF EXISTS trg_catacaci_cil_aggregates_append_only ON catacaci_cil_aggregates;
+DROP TRIGGER IF EXISTS trg_catacaci_cil_aggregates_append_only ON decision_private.catacaci_cil_aggregates;
 CREATE TRIGGER trg_catacaci_cil_aggregates_append_only
-BEFORE UPDATE OR DELETE ON catacaci_cil_aggregates
-FOR EACH ROW EXECUTE FUNCTION catacaci_reject_append_only_mutation();
+BEFORE UPDATE OR DELETE ON decision_private.catacaci_cil_aggregates
+FOR EACH ROW EXECUTE FUNCTION decision_private.catacaci_reject_append_only_mutation();
 
-DROP TRIGGER IF EXISTS trg_catacaci_vsl_events_append_only ON catacaci_vsl_events;
+DROP TRIGGER IF EXISTS trg_catacaci_vsl_events_append_only ON decision_private.catacaci_vsl_events;
 CREATE TRIGGER trg_catacaci_vsl_events_append_only
-BEFORE UPDATE OR DELETE ON catacaci_vsl_events
-FOR EACH ROW EXECUTE FUNCTION catacaci_reject_append_only_mutation();
+BEFORE UPDATE OR DELETE ON decision_private.catacaci_vsl_events
+FOR EACH ROW EXECUTE FUNCTION decision_private.catacaci_reject_append_only_mutation();
+
+-- Keep the private schema inaccessible to browser-facing Supabase roles.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+        REVOKE ALL ON SCHEMA decision_private FROM anon;
+        REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+        REVOKE ALL ON SCHEMA decision_private FROM authenticated;
+        REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cirvanna_decision_audit') THEN
+        GRANT USAGE ON SCHEMA decision_private TO cirvanna_decision_audit;
+        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA decision_private TO cirvanna_decision_audit;
+    END IF;
+END;
+$$;
+ALTER DEFAULT PRIVILEGES IN SCHEMA decision_private REVOKE ALL ON TABLES FROM PUBLIC;
