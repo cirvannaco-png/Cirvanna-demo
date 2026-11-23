@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import time
@@ -211,3 +212,28 @@ def test_email_magic_link_callback_rejects_external_next_url(monkeypatch):
         )
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "AUTH_CALLBACK_STATE_MISSING"
+
+def test_auth_readiness_fails_closed_when_runtime_secrets_are_missing(monkeypatch):
+    for name in [
+        "SUPABASE_URL",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_JWKS_URL",
+        "SUPABASE_JWT_ISSUER",
+        "AUTH_CALLBACK_URL",
+        "AUTH_SESSION_DATABASE_URL",
+        "AUTH_SESSION_ENCRYPTION_KEY",
+        "AUTH_EMAIL_DELIVERY_VERIFIED",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    result = asyncio.run(auth_sessions.auth_readiness())
+    assert result["ready"] is False
+    assert "AUTH_SESSION_DATABASE_URL" in result["missing_configuration"]
+    assert result["database_ready"] is False
+    assert result["jwks_ready"] is False
+
+
+def test_post_login_redirect_rejects_external_redirects(monkeypatch):
+    monkeypatch.setenv("AUTH_POST_LOGIN_REDIRECT", "https://attacker.example")
+    with pytest.raises(HTTPException) as exc:
+        auth_sessions._post_login_redirect()
+    assert exc.value.status_code == 503
