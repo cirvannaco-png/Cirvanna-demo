@@ -38,11 +38,23 @@ def seed_attestation(url: str) -> tuple[str, str]:
     )
     jti, signature = str(uuid.uuid4()), "f" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=signature, attestation_payload={"jti": jti},
+        session_id=sid, jti=jti, signature=signature, attestation_payload=attestation_payload_for(store, sid, jti),
         issued_at=NOW - timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
     return jti, signature
+
+
+def attestation_payload_for(store, session_id, jti):
+    row = store.get_session(session_id)
+    return {
+        "jti": jti, "subject_id": row["subject_id"], "request_id": row["request_id"],
+        "purpose": row["purpose"], "policy_id": row["policy_id"],
+        "policy_version": row["policy_version"], "threshold": row["threshold"],
+        "threshold_met": row["threshold_met"],
+        "provider_session_id": str(row["provider_session_id"]),
+        "provider_evidence_id": row["provider_evidence_id"],
+    }
 
 
 def test_redemption_endpoint_consumes_attestation_once(tmp_path, monkeypatch):
