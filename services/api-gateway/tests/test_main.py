@@ -351,6 +351,40 @@ def test_untrusted_cultural_provider_signature_fails_closed(monkeypatch):
     assert error.value.status_code==502
     assert error.value.detail["code"]=="CULTURAL_IDENTITY_EVIDENCE_UNTRUSTED"
 
+
+def test_user_declared_age_cannot_satisfy_legal_age_gate(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_MINIMUM_AGE", "18")
+    monkeypatch.delenv("CIRVANNA_MAXIMUM_AGE", raising=False)
+    signal = main._legal_signal(
+        main.ContextInput(age_years=25),
+        product(),
+    )
+    assert signal.state is main.SignalState.UNKNOWN
+    assert signal.reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
+
+
+def test_user_declared_age_cannot_trigger_or_bypass_age_restrictions(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_MINIMUM_AGE", "18")
+    monkeypatch.setenv("CIRVANNA_MAXIMUM_AGE", "65")
+    for declared_age in (17, 25, 120):
+        signal = main._legal_signal(
+            main.ContextInput(age_years=declared_age),
+            product(),
+        )
+        assert signal.state is main.SignalState.UNKNOWN
+        assert signal.reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
+
+
+def test_fresh_context_always_drops_unverified_age():
+    normalized, evidence = main._fresh_context_for_eepl(
+        main.ContextInput(age_years=25, location="Nairobi"),
+        strict=False,
+    )
+    assert normalized.age_years is None
+    assert evidence["age"]["status"] == "unverified_user_supplied"
+    assert evidence["age"]["source"] is None
+
+
 def test_missing_safety_and_fit_providers_fail_closed_to_review(client, monkeypatch):
     monkeypatch.setattr(main, "fetch_product", lambda _: product())
     response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
