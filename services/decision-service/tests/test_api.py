@@ -222,7 +222,7 @@ def test_age_attestation_subject_binding_mismatch_is_rejected(client, monkeypatc
     body["cultural_evidence_signature"] = signed_cultural(body)
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 401
-    assert response.json()["detail"]["code"] == "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"
+    assert response.json()["detail"]["code"] == "AGE_EVIDENCE_POLICY_BINDING_INVALID"
 
 
 def test_threshold_attestation_cannot_satisfy_maximum_age_policy(client, monkeypatch):
