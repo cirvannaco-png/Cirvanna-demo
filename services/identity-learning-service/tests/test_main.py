@@ -28,7 +28,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "age-evidence-orchestrator-token-at-least-32-bytes")
     monkeypatch.setenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "age-evidence-redemption-token-at-least-32-bytes")
     monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-hmac-signing-secret-at-least-32-bytes")
-    monkeypatch.setenv("YOTI_AVS_API_KEY", "yoti-test-api-key")
+    monkeypatch.setenv("YOTI_AVS_API_KEY", "yoti-test-api-key-with-at-least-32-bytes")
     monkeypatch.setenv("YOTI_AVS_SDK_ID", "yoti-test-sdk-id")
     monkeypatch.setenv("YOTI_AVS_CALLBACK_URL", "https://identity.example.test/age/complete")
     monkeypatch.setenv("YOTI_AVS_CANCEL_URL", "https://identity.example.test/age/cancel")
