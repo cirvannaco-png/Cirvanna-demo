@@ -340,8 +340,8 @@ async def login(provider: str) -> RedirectResponse:
 async def callback(request: Request) -> Response:
     state = request.query_params.get("state", "")
     code = request.query_params.get("code", "")
-    if not state or not code:
-        raise HTTPException(400, detail={"code": "AUTH_CALLBACK_PARAMETERS_MISSING"})
+    if not state:
+        raise HTTPException(400, detail={"code": "AUTH_CALLBACK_STATE_MISSING"})
     provider, verifier = await _consume_pending(state)
     if provider == "email":
         token_hash = request.query_params.get("token_hash", "")
@@ -439,9 +439,8 @@ async def email_otp_start(payload: EmailOtpIn) -> JSONResponse:
     email = payload.email.strip().lower()
     if "@" not in email or email.startswith("@") or email.endswith("@") or any(ch.isspace() for ch in email):
         raise HTTPException(422, detail={"code": "AUTH_EMAIL_INVALID"})
-    verifier = secrets.token_urlsafe(48)
     state = secrets.token_urlsafe(32)
-    await _create_pending("email", verifier, state)
+    await _create_pending("email", "", state)
     callback = _callback_url() + "?" + urlencode({"state": state})
     base, key = _supabase()
     async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False) as client:
@@ -451,8 +450,6 @@ async def email_otp_start(payload: EmailOtpIn) -> JSONResponse:
             json={
                 "email": email,
                 "create_user": payload.create_user,
-                "code_challenge": _challenge(verifier),
-                "code_challenge_method": "s256",
             },
         )
     if response.status_code not in {200, 201}:
