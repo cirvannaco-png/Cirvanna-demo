@@ -212,6 +212,21 @@ class AgeEvidenceStore:
             result = conn.execute(update(attestations).where(predicate).values(consumed_at=now))
             return result.rowcount == 1
 
+    def mark_provider_terminal(
+        self, session_id: str, provider_session_id: str, state: str,
+        *, now: datetime | None = None,
+    ) -> bool:
+        if state not in {"expired", "failed"}:
+            raise ValueError("provider terminal state must be expired or failed")
+        now = _aware(now or utcnow())
+        with self.engine.begin() as conn:
+            result = conn.execute(update(sessions).where(
+                and_(sessions.c.session_id == session_id,
+                     sessions.c.provider_session_id == provider_session_id,
+                     sessions.c.state == "pending", sessions.c.revoked_at.is_(None))
+            ).values(state=state, updated_at=now))
+            return result.rowcount == 1
+
     def fail_session(self, session_id: str, *, now: datetime | None = None) -> bool:
         now = _aware(now or utcnow())
         with self.engine.begin() as conn:
