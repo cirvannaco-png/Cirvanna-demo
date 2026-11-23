@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- Short-lived, consent-bound PNELLY discovery context.
 -- The store contains structured search state only; raw conversation transcripts are not retained.
 CREATE TABLE IF NOT EXISTS identity_pnelly_conversations (
