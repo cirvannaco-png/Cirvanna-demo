@@ -168,7 +168,7 @@ class AgeEvidenceStore:
             conn.execute(update(sessions).where(sessions.c.session_id == _uuid_text(session_id)).values(
                 state=next_state, threshold_met=threshold_met,
                 provider_evidence_id=evidence_id, updated_at=now,
-                verified_at=now if next_state == "verified" else None,
+                verified_at=now if next_state in {"verified", "denied"} else None,
             ))
 
     def issue_attestation(
