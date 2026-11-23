@@ -99,6 +99,7 @@ Set these only in the Render secret manager after provisioning a dedicated datab
 - `AUTH_CALLBACK_URL=https://<approved-bff-host>/auth/callback`
 - `AUTH_SESSION_DATABASE_URL` (dedicated BFF LOGIN user, member of `cirvanna_bff_auth`; never use the Supabase postgres owner credential)
 - `AUTH_SESSION_ENCRYPTION_KEY` (Fernet key generated out-of-band; keep identical across BFF instances)
+- `AUTH_EMAIL_DELIVERY_VERIFIED=true` only after a real staging email-link delivery and callback test has been completed.
 - Optional `AUTH_SESSION_TTL_SECONDS` (default 2592000; permitted 3600–7776000)
 - Optional `AUTH_POST_LOGIN_REDIRECT=/`
 
@@ -112,4 +113,4 @@ Apply `services/marketplace-bff/migrations/0001_auth_private_sessions.sql`, then
 - Email: verify SMTP delivery, configure the BFF Site URL and callback redirect allowlist `https://<bff-host>/auth/callback?state=*`, and set the magic-link template to `<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email&next={{ .RedirectTo }}">Sign in</a>`. The BFF validates the nested `next` origin/path and consumes the associated one-time state before verifying the token hash.
 - iOS app: use AuthenticationServices for native Apple sign-in, generate a per-request nonce, and use the bundle ID configured above. The repository currently contains the BFF integration contract; a native iOS app target, bundle identifier, Apple Developer credentials and device QA still need to be supplied before claiming a shipped iOS client.
 
-Do not set provider-enabled flags or deploy the public BFF until real provider credentials, callback allowlists, the auth database login, encryption key, live JWKS/signing configuration, upstream services and independent security review are all in place.
+The BFF `/ready` endpoint now fails closed unless the auth database role can access both private tables, the exact staging JWKS returns an ES256/RS256 signing key, Supabase Auth `/settings` reports Google, Apple and Azure enabled, and email delivery has been explicitly smoke-tested. It also requires healthy Commerce and Catalog upstreams. Do not deploy the public BFF until real provider credentials, callback allowlists, the auth database login, encryption key, live JWT verification, upstream services and independent security review are all in place.
