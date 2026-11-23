@@ -468,6 +468,7 @@ class DecisionReceiptStoreContractTests(unittest.TestCase):
             "verdict": "REVIEW", "may_display": False,
             "eepl_policy_id": "adult-market", "eepl_policy_version": "v2",
             "cal_policy_id": "standard", "cal_policy_version": "cal-v1",
+            "minimum_fit_confidence": 0.7, "maximum_fit_confidence_disagreement": 0.1,
             "arbitration_contract_version": "1.1.0", "pipeline_contract_version": "1.0.0",
             "candidate_snapshot_sha256": "a" * 64, "catalog_version": None,
             "evaluated_signals": [{
