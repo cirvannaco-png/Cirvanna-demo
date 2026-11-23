@@ -19,6 +19,23 @@ The service also exposes `GET /v1/cal/feedback-reviews` and `POST /v1/cal/feedba
 
 All endpoints require Authorization: Bearer with the internal shared token. Configure `CIL_SERVICE_URL`, `CIL_SERVICE_TOKEN`, and `CIL_CAL_SERVICE_TOKEN` to connect the bridge. The Decision Service uses its own internal token for callers, a service token to read the CIL queue, and the CAL-specific token to submit final decisions. Requests fail closed if the bridge is not configured or CIL is unavailable.
 
+## Server-owned CaTaCaCi/CAL policy
+
+The request supplies only a CAL policy ID and version. The service resolves all decision thresholds from `CATACACI_POLICY_REGISTRY_JSON`; request-body fit-confidence and alignment thresholds are rejected by the strict request schema. Each registry entry must contain exactly:
+
+```json
+{
+  "standard-marketplace": {
+    "policy_version": "marketplace-policy-1",
+    "minimum_fit_confidence": 0.70,
+    "maximum_fit_confidence_disagreement": 0.10,
+    "minimum_alignment_score": 0.60
+  }
+}
+```
+
+These are illustrative engineering values, not empirically calibrated product-fit claims. A missing, malformed, unregistered or stale policy causes readiness/evaluation to fail closed. Policy changes must be reviewed, versioned and tested before deployment. Do not copy the example JSON into a production secret manager without policy-owner approval and validation.
+
 ## Trusted fit evidence
 
 The service does not contain or claim to train/run an FCI predictor. A separately trusted fit provider must send a FitEvidenceIn object and compute a lowercase hex HMAC-SHA256 signature over its normalized JSON:
