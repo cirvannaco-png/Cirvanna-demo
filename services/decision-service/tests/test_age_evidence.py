@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "packages" / "identity-intelligence"))
 from age_evidence.core import (
     AgeEvidenceError,
     CONTRACT_VERSION,
+    build_threshold_attestation,
     sign_threshold_attestation,
     verify_threshold_attestation,
 )
@@ -104,6 +105,33 @@ class AgeEvidenceContractTests(unittest.TestCase):
             sign_threshold_attestation(payload(age_years=21), SECRET)
         with self.assertRaises(AgeEvidenceError):
             sign_threshold_attestation(payload(date_of_birth="2000-01-01"), SECRET)
+
+    def test_pending_provider_result_cannot_become_an_attestation(self):
+        with self.assertRaises(AgeEvidenceError):
+            build_threshold_attestation(
+                subject_id="subject-opaque-1", request_id="request-opaque-1",
+                purpose="age_dependent_eligibility", policy_id="marketplace-adult",
+                policy_version="v3", threshold=18, threshold_met=None,
+                provider_session_id="session-opaque-1", provider_evidence_id="evidence-opaque-1",
+                issued_at=NOW, expires_at=NOW + timedelta(minutes=5),
+            )
+
+    def test_attestation_builder_contains_no_raw_age(self):
+        attestation = build_threshold_attestation(
+            subject_id="subject-opaque-1", request_id="request-opaque-1",
+            purpose="age_dependent_eligibility", policy_id="marketplace-adult",
+            policy_version="v3", threshold=18, threshold_met=True,
+            provider_session_id="session-opaque-1", provider_evidence_id="evidence-opaque-1",
+            issued_at=NOW, expires_at=NOW + timedelta(minutes=5),
+        )
+        self.assertNotIn("age_years", attestation)
+        self.assertNotIn("date_of_birth", attestation)
+        self.assertTrue(verify_threshold_attestation(
+            attestation, sign_threshold_attestation(attestation, SECRET), SECRET,
+            subject_id="subject-opaque-1", request_id="request-opaque-1",
+            purpose="age_dependent_eligibility", policy_id="marketplace-adult",
+            policy_version="v3", threshold=18, now=NOW,
+        ))
 
     def test_signature_tampering_is_rejected(self):
         attestation = payload()
