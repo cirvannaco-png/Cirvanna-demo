@@ -18,13 +18,27 @@ if [ ! -d "$SERVICE_DIR" ]; then
   exit 2
 fi
 
+PYTHON="$ROOT/.venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+  python -m venv "$ROOT/.venv"
+fi
+PYTHON="$ROOT/.venv/bin/python"
+
+"$PYTHON" - <<'PY'
+import sys
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit(
+        f"Cirvanna tests require Python 3.12; found {sys.version.split()[0]}"
+    )
+PY
+
 cd "$SERVICE_DIR"
 
 if [ -f requirements.txt ]; then
-  python -m pip install -r requirements.txt
+  "$PYTHON" -m pip install -r requirements.txt
 fi
 if [ -f requirements-dev.txt ]; then
-  python -m pip install -r requirements-dev.txt
+  "$PYTHON" -m pip install -r requirements-dev.txt
 fi
 
 if [ ! -d tests ]; then
@@ -32,4 +46,4 @@ if [ ! -d tests ]; then
   exit 2
 fi
 
-python -m pytest -q
+"$PYTHON" -m pytest -q
