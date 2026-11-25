@@ -18,10 +18,10 @@ services:
       - key: CATALOG_DATABASE_URL
         sync: false
       - key: CATALOG_READ_TOKEN
-        sync: false
+        generateValue: true
       - key: CATALOG_WRITE_TOKEN
-        sync: false
+        generateValue: true
       - key: CIL_GATEWAY_URL
         value: ""
       - key: CIL_CATALOG_SERVICE_TOKEN
-        value: ""
+        generateValue: true
