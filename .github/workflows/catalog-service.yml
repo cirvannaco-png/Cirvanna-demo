@@ -19,7 +19,21 @@ permissions:
 jobs:
   catalog-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: catalog
+          POSTGRES_PASSWORD: catalog
+          POSTGRES_DB: catalog_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U catalog -d catalog_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,12 +45,23 @@ jobs:
           cache-dependency-path: services/catalog-service/requirements.txt
       - name: Install service dependencies
         run: python -m pip install -r services/catalog-service/requirements.txt
-      - name: Apply versioned schema migration
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply versioned schema migration on PostgreSQL
         working-directory: services/catalog-service
         env:
-          CATALOG_DATABASE_URL: sqlite:///./migration-ci.db
+          CATALOG_DATABASE_URL: postgresql+psycopg://catalog:catalog@localhost:5432/catalog_ci
           CATALOG_AUTO_CREATE_SCHEMA: "false"
-        run: alembic upgrade head
+          PGPASSWORD: catalog
+        run: |
+          alembic upgrade head
+          psql -h localhost -U catalog -d catalog_ci -v ON_ERROR_STOP=1 -c "SELECT version_num FROM alembic_version"
+      - name: Verify catalog PostgreSQL dump and isolated restore
+        env:
+          PGPASSWORD: catalog
+        run: |
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=catalog postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U catalog -d catalog_ci --format=custom -f /backup/cirvanna-catalog.dump && createdb -h 127.0.0.1 -U catalog catalog_restore && pg_restore -h 127.0.0.1 -U catalog -d catalog_restore --exit-on-error /backup/cirvanna-catalog.dump'
+          psql -h localhost -U catalog -d catalog_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261104_0002') THEN RAISE EXCEPTION 'catalog migration head was not restored'; END IF; IF to_regclass('public.catalog_products') IS NULL THEN RAISE EXCEPTION 'catalog_products table missing after restore'; END IF; IF to_regclass('public.catalog_product_variants') IS NULL THEN RAISE EXCEPTION 'catalog_variants table missing after restore'; END IF; END \$\$;"
       - name: Run catalog API tests
         working-directory: services/catalog-service
         env:
