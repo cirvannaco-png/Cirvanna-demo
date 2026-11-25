@@ -88,7 +88,7 @@ jobs:
         env:
           PGPASSWORD: test-secret-privacy
         run: |
-          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=privacy postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U privacy -d privacy_governance --format=custom -f /backup/cirvanna-privacy.dump && createdb -h 127.0.0.1 -U privacy privacy_restore && pg_restore -h 127.0.0.1 -U privacy -d privacy_restore --exit-on-error /backup/cirvanna-privacy.dump'
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=test-secret-privacy postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U privacy -d privacy_governance --format=custom -f /backup/cirvanna-privacy.dump && createdb -h 127.0.0.1 -U privacy privacy_restore && pg_restore -h 127.0.0.1 -U privacy -d privacy_restore --exit-on-error /backup/cirvanna-privacy.dump'
           psql -h localhost -U privacy -d privacy_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM privacy_consent_records WHERE consent_id='restore-consent-ci-0001' AND subject_id='restore-subject-ci-0001' AND resource_id='restore-click-it-ci-0001' AND active=true) THEN RAISE EXCEPTION 'privacy consent record missing after restore'; END IF; IF to_regclass('public.privacy_image_rights_cases') IS NULL THEN RAISE EXCEPTION 'image-rights table missing after restore'; END IF; IF to_regclass('public.privacy_governance_audit_events') IS NULL THEN RAISE EXCEPTION 'privacy audit table missing after restore'; END IF; END \$\$;"
       - name: Compile service and tests
         run: python -m compileall -q app tests
