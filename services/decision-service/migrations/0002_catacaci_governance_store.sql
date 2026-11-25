@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS decision_private.catacaci_vsl_events (
 CREATE OR REPLACE FUNCTION decision_private.catacaci_reject_append_only_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'CaTaCaCi append-only governance record cannot be changed';
+    RAISE EXCEPTION 'CaTaCaCi append-only governance record cannot be changed' USING ERRCODE = '55000';
 END;
 $$;
 
