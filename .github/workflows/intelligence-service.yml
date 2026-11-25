@@ -2,7 +2,6 @@ name: Intelligence service checks
 
 on:
   push:
-    branches: [main, "architecture/**", "integration/**"]
     paths:
       - "services/intelligence-service/**"
       - ".github/workflows/intelligence-service.yml"
