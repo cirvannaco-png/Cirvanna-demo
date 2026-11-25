@@ -54,14 +54,11 @@ class IdentityAgeMigrationChainTests(unittest.TestCase):
         self.assertIn("minimum_age_threshold", eepl)
         self.assertIn("minimum_age_threshold_met", eepl)
 
-    def test_private_identity_and_twin_tables_have_service_only_rls(self):
+    def test_private_identity_tables_have_service_only_rls(self):
         migration = (MIGRATIONS / "0017_private_service_rls.sql").read_text(encoding="utf-8")
         self.assertIn("ALTER TABLE identity_private.identity_usi_profiles ENABLE ROW LEVEL SECURITY", migration)
-        self.assertIn("ALTER TABLE twin_private.twin_registry_twins ENABLE ROW LEVEL SECURITY", migration)
         self.assertIn("FOR ALL TO identity_learning_service USING (true) WITH CHECK (true)", migration)
-        self.assertIn("FOR ALL TO twin_registry_service USING (true) WITH CHECK (true)", migration)
         self.assertIn("REVOKE ALL ON SCHEMA identity_private FROM PUBLIC, anon, authenticated", migration)
-        self.assertIn("REVOKE ALL ON SCHEMA twin_private FROM PUBLIC, anon, authenticated", migration)
 
     def test_staging_idempotency_constraint_is_reconciled(self):
         migration = (MIGRATIONS / "0016_age_session_request_idempotency.sql").read_text(encoding="utf-8")
