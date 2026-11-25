@@ -151,6 +151,7 @@ class ArbitrationResult:
     reasons: tuple[ArbitrationReason, ...]
     evaluated_signal_ids: tuple[str, ...]
     policy_version: str
+    evaluated_signals: tuple[DecisionSignal, ...] = ()
 
     @property
     def may_display(self) -> bool:
@@ -318,4 +319,5 @@ def _result(
         reasons=tuple(reasons),
         evaluated_signal_ids=tuple(signal.signal_id for signal in signals),
         policy_version=request.policy_version,
+        evaluated_signals=tuple(signals),
     )
