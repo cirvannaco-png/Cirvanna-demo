@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.main import Base
 
 config = context.config
-url = os.getenv("CIL_DATABASE_URL", "sqlite:///./cil.db")
+url = os.getenv("CIL_MIGRATION_DATABASE_URL") or os.getenv("CIL_DATABASE_URL", "sqlite:///./cil.db")
 config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
 target_metadata = Base.metadata
 
