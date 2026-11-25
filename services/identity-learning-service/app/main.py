@@ -14,6 +14,8 @@ import json
 import os
 import re
 import secrets
+import sys
+from pathlib import Path
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -36,6 +38,21 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
+source_path = Path(__file__).resolve()
+package_roots = []
+if len(source_path.parents) > 3:
+    package_roots.append(source_path.parents[3] / "packages" / "identity-intelligence")
+package_roots.append(Path("/app"))
+for package_root in package_roots:
+    if (package_root / "age_evidence" / "__init__.py").is_file():
+        sys.path.insert(0, str(package_root))
+        break
+else:
+    raise RuntimeError("shared age_evidence package is missing from the service image")
+from age_evidence.api import (
+    router as age_evidence_router, provider_configuration_ready, schema_ready as age_evidence_schema_ready,
+)  # noqa: E402
+
 SCOPES = {
     "personalization", "style_learning", "profile_storage",
     "image_processing", "body_measurements", "virtual_twin_storage",
@@ -78,7 +95,8 @@ def engine_for_url(url: str):
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        # Keep service-owned tables out of Supabase exposed schemas and public.
+        # All unqualified Identity ORM tables resolve only inside the private schema.
+        # Never fall back to public or a Supabase API-exposed schema.
         kwargs["connect_args"] = {"options": "-csearch_path=identity_private"}
     return create_engine(url, **kwargs)
 
@@ -814,6 +832,8 @@ app = FastAPI(
     description="Internal-only persistent explicit preferences and consented temporal learning.",
 )
 
+app.include_router(age_evidence_router)
+
 
 @app.on_event("startup")
 def startup() -> None:
@@ -841,8 +861,15 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(CILProviderConsentRevocationOutbox.command_id).limit(1))
         db.execute(select(DSICaptureChallengeRow.challenge_id).limit(1))
         db.execute(select(DSICaptureVerificationReceiptRow.receipt_id).limit(1))
-        return {
-            "status": "ready",
+        age_schema_ready = age_evidence_schema_ready()
+        age_provider_configured = provider_configuration_ready()
+        age_orchestrator_auth_configured = (
+            len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
+            and len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
+        )
+        ready = age_schema_ready and age_provider_configured and age_orchestrator_auth_configured
+        response = {
+            "status": "ready" if ready else "not_ready",
             "service": SERVICE,
             "database": "reachable",
             "durable_usi": True,
@@ -852,8 +879,14 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             "cil_provider_consent_cleanup_outbox": True,
             "dsi_capture_challenge_state": True,
             "dsi_capture_verification_receipts": True,
-            "ready": True,
+            "age_evidence_schema_ready": age_schema_ready,
+            "yoti_provider_configured": age_provider_configured,
+            "age_evidence_internal_auth_configured": age_orchestrator_auth_configured,
+            "ready": ready,
         }
+        if not ready:
+            raise HTTPException(503, detail=response)
+        return response
     except SQLAlchemyError:
         raise HTTPException(503, detail={"code": "IDENTITY_SCHEMA_NOT_READY"})
 
