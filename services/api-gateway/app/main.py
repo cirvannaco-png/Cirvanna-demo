@@ -3297,7 +3297,12 @@ def evaluate_decisions(
         cultural_requirements = tuple(requirement_by_id[key] for key in sorted(requirement_by_id))
         upstream_signals = (
             _load_safety_signal(product, user_id=payload.user_id, request_id=request_id),
-            _legal_signal(payload.context, product, policy=eepl_policy, verified_age=verified_age),
+            _legal_signal(
+                payload.context.model_copy(update={"age_years": None}),
+                product,
+                policy=eepl_policy,
+                verified_age=verified_age,
+            ),
         ) + _user_constraint_signals(
             payload.user_id, product_id, attributes, complete, payload.hard_constraints,
         )
