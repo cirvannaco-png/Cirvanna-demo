@@ -424,3 +424,42 @@ def test_pnelly_gateway_rejects_malformed_rotation_request_state(monkeypatch):
         "/v1/pnelly/daily-looks", headers=headers, json=body,
     )
     assert response.status_code == 422
+
+
+def test_pnelly_theme_education_remains_available_when_eepl_requires_review(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    monkeypatch.setattr(
+        main,
+        "evaluate_eepl",
+        lambda *args, **kwargs: SimpleNamespace(
+            verdict=SimpleNamespace(value="review"),
+            policy_id="context-policy",
+            policy_version="1.0",
+            candidate_id="pnelly-daily-001",
+            reason_codes=("CLIMATE_CONTEXT_MISSING",),
+            explanations=("Declare the climate before outfit composition.",),
+        ),
+    )
+    seen = {}
+
+    def theme_only_guide(occasion):
+        seen["occasion"] = occasion
+        return {"status": "recognized", "label": "Old Money"}
+
+    monkeypatch.setattr(main, "_pnelly_occasion_guide", theme_only_guide)
+    body = request_body()
+    body["occasion"] = "old money themed party"
+    client = TestClient(main.app)
+    response = client.post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["eligibility"]["verdict"] == "REVIEW"
+    assert result["recommendation"]["look_count"] == 0
+    assert result["recommendation"]["looks"] == []
+    assert result["recommendation"]["theme_guide"]["label"] == "Old Money"
+    assert seen == {"occasion": "old money themed party"}
