@@ -25,8 +25,57 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{20,}\b")),
     ("stripe-live-secret", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b")),
     ("embedded-url-credentials", re.compile(r"\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s]+")),
-    ("database-uri-credentials", re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@[^\s]+", re.IGNORECASE)),
+    ("database-uri-credentials", re.compile(r"\b(?P<scheme>postgres(?:ql)?(?:\+[A-Za-z0-9._-]+)?|mysql(?:\+[A-Za-z0-9._-]+)?|mongodb(?:\+srv)?|rediss?|amqps?|nats(?:\+tls)?|mqtts?|kafka)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@(?P<host>[^/\s]+)", re.IGNORECASE)),
 )
+
+# These exact guest:guest AMQP values are preserved in the immutable, non-runtime
+# Wardrobe intake snapshot and its extracted/candidate copies. They are local
+# development defaults, not production credentials. Keep this allowlist path-,
+# line-, scheme- and host-bound: any other use of a default broker credential
+# must remain a failing finding. Never copy these fixtures into a runtime service.
+HISTORICAL_LOCAL_DEFAULT_URI_FIXTURES = {
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/docker-compose.yml", 6):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/services/common/config.py", 66):
+        ("amqp", "guest", "guest", "localhost"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 170):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 236):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 572):
+        ("amqp", "guest", "guest", "localhost"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50498):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50564):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50900):
+        ("amqp", "guest", "guest", "localhost"),
+    # Exact local-only PostgreSQL defaults in the same immutable, non-runtime source intake.
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/docker-compose.yml", 4):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/services/common/config.py", 50):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 152):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 234):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 556):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50480):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50562):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50884):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"),
+}
+
+
+def is_historical_local_default_uri_fixture(
+    relative_path: str, line: int, scheme: str, user: str, password: str, host: str
+) -> bool:
+    expected = HISTORICAL_LOCAL_DEFAULT_URI_FIXTURES.get((relative_path, line))
+    return expected == (scheme.lower(), user, password, host)
+
 
 ASSIGNMENT = re.compile(
     r"""(?ix)
@@ -130,8 +179,22 @@ def scan_file(path: Path):
     for category, pattern in PATTERNS:
         for match in pattern.finditer(content):
             token = match.group(0)
-            if category == "database-uri-credentials" and looks_like_placeholder(match.group("password")):
-                continue
+            if category == "database-uri-credentials":
+                if looks_like_placeholder(match.group("password")):
+                    continue
+                try:
+                    relative_path = path.relative_to(ROOT).as_posix()
+                except ValueError:
+                    relative_path = ""
+                if is_historical_local_default_uri_fixture(
+                    relative_path,
+                    line_number(content, match.start()),
+                    match.group("scheme"),
+                    match.group("user"),
+                    match.group("password"),
+                    match.group("host"),
+                ):
+                    continue
             if category in {"embedded-url-credentials", "database-uri-credentials"}:
                 # Never include the matched URL or credential value in output.
                 pass
@@ -188,8 +251,8 @@ def main() -> int:
         print(f"Found {len(findings)} potential secret(s); inspect privately and rotate any exposed credential.")
         return 1
     print("Secret-pattern scan passed: no configured high-confidence credential patterns found.")
-    print("LIMITATION: database/cache/broker connection URIs with embedded credentials in legacy source snapshots are not checked by the HTTP(S)-userinfo pattern.")
-    print("Review and externalize those settings before promoting any source candidate; this scan is not a substitute for provider-side secret scanning.")
+    print("LIMITATION: URI schemes outside the explicit database/cache/broker allowlist are not scanned for embedded userinfo credentials.")
+    print("Review and externalize any unsupported connection URI before promoting a source candidate; this scan is not a substitute for provider-side secret scanning.")
     return 0
 
 
