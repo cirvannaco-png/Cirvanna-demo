@@ -13,6 +13,7 @@ on:
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
       - "services/identity-learning-service/**"
+      - "services/vision-intelligence/**"
       - "packages/identity-intelligence/age_evidence/**"
       - "services/api-gateway/**"
       - "services/dermalsight/**"
