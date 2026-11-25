@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import os
 from pathlib import Path
 from typing import Iterable
@@ -122,9 +123,16 @@ def anonymize_click_it_image(image: Image.Image) -> tuple[Image.Image, int]:
         for detection in detections:
             categories = getattr(detection, "categories", None) or []
             scores = [float(getattr(category, "score", 0.0)) for category in categories]
-            confidence = max(scores, default=0.0)
             bounding_box = getattr(detection, "bounding_box", None)
-            if confidence < FACE_DETECTION_CONFIDENCE or bounding_box is None:
+            # NaN compares false to ordinary thresholds. Treat non-finite or
+            # out-of-range detector scores as uncertain rather than allowing
+            # malformed confidence metadata to bypass the fail-closed check.
+            if (
+                not scores
+                or any(not math.isfinite(score) or score < 0.0 or score > 1.0 for score in scores)
+                or max(scores) < FACE_DETECTION_CONFIDENCE
+                or bounding_box is None
+            ):
                 raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
             boxes.append((
                 int(bounding_box.origin_x), int(bounding_box.origin_y),
