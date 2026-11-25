@@ -5,7 +5,7 @@ CREATE SCHEMA IF NOT EXISTS auth_private;
 DO $create_role$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cirvanna_bff_auth') THEN
-        CREATE ROLE cirvanna_bff_auth NOLOGIN;
+        EXECUTE 'CREATE ROLE cirvanna_bff_auth NOLOGIN';
     END IF;
 END
 $create_role$;
