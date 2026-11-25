@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS decision_private.catacaci_vsl_proposals (
 
 CREATE TABLE IF NOT EXISTS decision_private.catacaci_vsl_events (
     event_id TEXT PRIMARY KEY,
-    proposal_id TEXT NOT NULL REFERENCES catacaci_vsl_proposals(proposal_id),
+    proposal_id TEXT NOT NULL REFERENCES decision_private.catacaci_vsl_proposals(proposal_id),
     event_type TEXT NOT NULL CHECK (event_type IN ('proposed','approved','rejected','stale')),
     actor_id TEXT NOT NULL,
     base_version TEXT NOT NULL,
