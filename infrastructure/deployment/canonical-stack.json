@@ -417,9 +417,9 @@
     {
       "id": "wardrobe-service",
       "source_path": "services/wardrobe-service",
-      "containerized": false,
-      "dockerfile": null,
-      "build_context": null,
+      "containerized": true,
+      "dockerfile": "services/wardrobe-service/Dockerfile",
+      "build_context": ".",
       "build_context_verified_by_ci": false,
       "exposure": "not_containerized",
       "required_for_marketplace": false,
@@ -429,7 +429,9 @@
         "identity-learning-service"
       ],
       "depends_on_providers": [],
-      "data_store_refs": [],
+      "data_store_refs": [
+        "wardrobe-postgres"
+      ],
       "release_gates": [
         "REL-03",
         "REL-09",
@@ -440,9 +442,9 @@
     {
       "id": "npl-service",
       "source_path": "services/npl-service",
-      "containerized": false,
-      "dockerfile": null,
-      "build_context": null,
+      "containerized": true,
+      "dockerfile": "services/npl-service/Dockerfile",
+      "build_context": ".",
       "build_context_verified_by_ci": false,
       "exposure": "not_containerized",
       "required_for_marketplace": true,
@@ -463,9 +465,9 @@
     {
       "id": "cultural-identity-service",
       "source_path": "services/cultural-identity-service",
-      "containerized": false,
-      "dockerfile": null,
-      "build_context": null,
+      "containerized": true,
+      "dockerfile": "services/cultural-identity-service/Dockerfile",
+      "build_context": ".",
       "build_context_verified_by_ci": false,
       "exposure": "not_containerized",
       "required_for_marketplace": true,
@@ -486,9 +488,9 @@
     {
       "id": "xari",
       "source_path": "services/xari",
-      "containerized": false,
-      "dockerfile": null,
-      "build_context": null,
+      "containerized": true,
+      "dockerfile": "services/xari/Dockerfile",
+      "build_context": ".",
       "build_context_verified_by_ci": false,
       "exposure": "not_containerized",
       "required_for_marketplace": false,
@@ -614,6 +616,13 @@
       "id": "appearance-intelligence-postgres",
       "owner_service": "appearance-intelligence-service",
       "kind": "approved_shared_postgresql_namespace",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "wardrobe-postgres",
+      "owner_service": "wardrobe-service",
+      "kind": "managed_postgresql",
       "provisioned_for_production": false,
       "backup_restore_verified": false
     }
