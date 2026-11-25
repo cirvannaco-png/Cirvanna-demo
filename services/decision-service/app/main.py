@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated, Literal
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -30,8 +31,22 @@ for package in (
     sys.path.insert(0, str(package))
 
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
+from catacaci.core import ArbitrationRequest, arbitrate  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
+from catacaci.receipts import (
+    DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt,
+    load_decision_receipt,
+)  # noqa: E402
+from catacaci.governance_store import (
+    GovernanceStoreError, append_cam_audit, record_cil_contribution,
+    release_cil_aggregate, purge_expired_cil_contributions, current_vsl_profile,
+    create_vsl_proposal, approve_vsl_proposal, reject_vsl_proposal,
+    check_governance_store,
+)  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
+from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
+from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
@@ -55,6 +70,36 @@ def require_internal_token(credentials: Annotated[HTTPAuthorizationCredentials |
         raise HTTPException(401, detail="Valid internal bearer authentication is required.", headers={"WWW-Authenticate": "Bearer"})
 
 
+def _require_named_token(credentials: HTTPAuthorizationCredentials | None, token_name: str) -> None:
+    expected = _required_env(token_name)
+    if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(401, detail={"code": token_name + "_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
+def require_cam_service(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CAM_SERVICE_TOKEN")
+
+
+def require_cil_service(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CIL_SERVICE_TOKEN")
+
+
+def require_cil_aggregator(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CIL_AGGREGATE_TOKEN")
+
+
+def require_cil_retention(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CIL_RETENTION_TOKEN")
+
+
+def require_vsl_proposer(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_VSL_PROPOSER_TOKEN")
+
+
+def require_vsl_approver(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_VSL_APPROVER_TOKEN")
+
+
 def require_cal_review_operator(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
     expected = _required_env("CAL_REVIEW_OPERATOR_TOKEN")
     if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
@@ -63,6 +108,49 @@ def require_cal_review_operator(credentials: Annotated[HTTPAuthorizationCredenti
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class CAMSignalOverrideIn(StrictModel):
+    signal_id: str = Field(min_length=1, max_length=160)
+    state: Literal["pass", "block", "unknown"]
+    reason_code: str | None = Field(default=None, min_length=1, max_length=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class CAMAuditIn(StrictModel):
+    audit_id: str = Field(min_length=8, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
+    candidate_id: str = Field(min_length=1, max_length=128)
+    changed_signals: list[CAMSignalOverrideIn] = Field(min_length=1, max_length=64)
+    replay_version: Literal["catacaci-cam-replay-v1"] = "catacaci-cam-replay-v1"
+
+
+class CILContributionIn(StrictModel):
+    event_id: str = Field(min_length=8, max_length=128)
+    contributor_token: str = Field(min_length=76, max_length=76)
+    cohort_key: str = Field(min_length=2, max_length=128)
+    outcome_success: bool = Field(strict=True)
+
+
+class CILAggregateIn(StrictModel):
+    cohort_key: str = Field(min_length=2, max_length=128)
+    period_start: date
+
+
+class VSLApprovalIn(StrictModel):
+    approval_event_id: str = Field(min_length=8, max_length=128)
+
+
+class VSLProposalIn(StrictModel):
+    proposal_id: str = Field(min_length=8, max_length=128)
+    base_version: str = Field(min_length=1, max_length=64)
+    proposed_version: str = Field(min_length=1, max_length=64)
+    proposed_order: list[Literal[
+        "safety", "legal_eligibility", "user_hard_constraint", "npl_hard_negative",
+        "cultural_requirement", "context_eligibility", "identity_alignment",
+        "fit_confidence", "other",
+    ]] = Field(min_length=9, max_length=9)
+    rationale: str = Field(min_length=10, max_length=2000)
 
 
 class CALFeedbackDecisionIn(StrictModel):
@@ -165,7 +253,11 @@ class UpstreamSignalIn(StrictModel):
 class EligibilityRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
-    policy_version: str = Field(default="decision-pipeline-1.0.0", min_length=1, max_length=100)
+    catalog_version: int = Field(strict=True, ge=1)
+    # Only a separately signed, purpose-bound provider attestation can influence EEPL.
+    # Request-body context.age_years is retained for compatibility but is never trusted.
+    age_attestation: dict | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     context: ContextIn
     eepl_policy: PolicyIn
     usi_profile: USIProfileIn
@@ -178,8 +270,6 @@ class EligibilityRequest(StrictModel):
     fit_estimate_signature: str = Field(min_length=64, max_length=128)
     npl_evidence_signature: str = Field(min_length=64, max_length=128)
     upstream_signals: list[UpstreamSignalIn] = Field(default_factory=list, max_length=64)
-    minimum_fit_confidence: float = Field(default=0.70, ge=0, le=1)
-    minimum_alignment_score: float = Field(default=0.60, ge=0, le=1)
 
 
 def _cil_review_bridge() -> tuple[str, str, str]:
@@ -295,6 +385,100 @@ def _apply_cil_cal_feedback_veto(result_json: dict, review: dict | None) -> dict
     return result_json
 
 
+def _server_policy(payload: "EligibilityRequest" | None = None) -> PolicyIn:
+    """Resolve the active EEPL policy exclusively from trusted service configuration.
+
+    The legacy request field is deliberately ignored for wire compatibility. It
+    cannot select a policy ID/version or alter any eligibility rule.
+    """
+    try:
+        registered = resolve_active_policy()
+        return PolicyIn.model_validate(registered)
+    except (PolicyRegistryError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
+
+
+def _redeem_age_attestation(payload: dict, signature: str) -> None:
+    """Atomically consume a verified JTI in the Identity service before EEPL use."""
+    url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    token = os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").strip()
+    parsed = urlsplit(url)
+    if (
+        len(token.encode("utf-8")) < 32 or parsed.scheme != "https"
+        or not parsed.hostname or parsed.username or parsed.password
+        or parsed.query or parsed.fragment
+        or not parsed.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    ):
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_NOT_CONFIGURED"})
+    request_body = {
+        "jti": payload["jti"], "subject_id": payload["subject_id"],
+        "request_id": payload["request_id"], "purpose": payload["purpose"],
+        "policy_id": payload["policy_id"], "policy_version": payload["policy_version"],
+        "threshold": payload["threshold"], "signature": signature,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                url, headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=request_body,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_UNAVAILABLE"}) from exc
+    if response.status_code == 409:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_ALREADY_REDEEMED_OR_REVOKED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_REJECTED"})
+    try:
+        redeemed = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"}) from exc
+    if not isinstance(redeemed, dict) or redeemed.get("redeemed") is not True:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"})
+
+
+def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] | None:
+    attestation = payload.age_attestation
+    signature = payload.age_attestation_signature
+    if attestation is None and signature is None:
+        return None
+    if not isinstance(attestation, dict) or not isinstance(signature, str):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_SIGNATURE_MISSING"})
+    policy = _server_policy(payload)
+    # A threshold-only OVER proof cannot establish a maximum-age rule or a
+    # different threshold. Such policies remain REVIEW until richer evidence exists.
+    if policy.minimum_age is None or policy.maximum_age is not None:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
+    if (
+        attestation.get("subject_id") != payload.context.user_id
+        or attestation.get("request_id") != payload.request_id
+        or attestation.get("purpose") != "shopper_eligibility"
+        or attestation.get("policy_id") != policy.policy_id
+        or attestation.get("policy_version") != policy.policy_version
+        or attestation.get("threshold") != policy.minimum_age
+        or type(attestation.get("threshold_met")) is not bool
+    ):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_POLICY_BINDING_INVALID"})
+    secret = _required_env("AGE_EVIDENCE_HMAC_SECRET")
+    try:
+        valid = verify_threshold_attestation(
+            attestation,
+            signature,
+            secret,
+            subject_id=payload.context.user_id,
+            request_id=payload.request_id,
+            purpose="shopper_eligibility",
+            policy_id=policy.policy_id,
+            policy_version=policy.policy_version,
+            threshold=policy.minimum_age,
+        )
+    except AgeEvidenceError as exc:
+        raise HTTPException(401, detail={"code": "INVALID_AGE_EVIDENCE"}) from exc
+    if not valid:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"})
+    _redeem_age_attestation(attestation, signature)
+    return attestation["threshold"], attestation["threshold_met"]
+
+
 def canonical_fit_payload(fit: FitEvidenceIn) -> bytes:
     normalized = fit.model_dump(mode="json", exclude_none=False)
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -344,7 +528,7 @@ def verify_npl_signature(payload: "EligibilityRequest") -> None:
         raise HTTPException(401, detail={"code": "UNTRUSTED_NPL_EVIDENCE"})
 
 
-def _result_json(result, payload: "EligibilityRequest") -> dict:
+def _result_json(result, payload: "EligibilityRequest", cal_policy: CALPolicy, eepl_policy: EEPLPolicy) -> dict:
     arbitration = result.arbitration
     return {
         "service": SERVICE,
@@ -386,9 +570,11 @@ def _result_json(result, payload: "EligibilityRequest") -> dict:
                 "model_version": result.fit_estimate.model_version, "calibration_version": result.fit_estimate.calibration_version,
                 "evidence_ids": list(result.fit_estimate.evidence_ids)},
         },
-        "policy": {"version": result.arbitration.policy_version,
-            "minimum_fit_confidence": payload.minimum_fit_confidence,
-            "minimum_alignment_score": payload.minimum_alignment_score,
+        "eepl_policy": {"id": eepl_policy.policy_id, "version": eepl_policy.policy_version},
+        "policy": {"id": cal_policy.policy_id, "version": cal_policy.policy_version,
+            "minimum_fit_confidence": cal_policy.minimum_fit_confidence,
+            "maximum_fit_confidence_disagreement": cal_policy.maximum_fit_confidence_disagreement,
+            "minimum_alignment_score": cal_policy.minimum_alignment_score,
             "fci_model_version": result.fit_estimate.model_version,
             "fci_calibration_version": result.fit_estimate.calibration_version},
     }
@@ -408,11 +594,73 @@ def readiness() -> dict:
     fit_key_configured = len(os.getenv("FCI_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
     npl_key_configured = len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
     cultural_key_configured = len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
-    ready = internal_configured and fit_key_configured and npl_key_configured and cultural_key_configured
+    try:
+        resolve_configured_cal_policy()
+        cal_policy_registry_configured = True
+    except CALPolicyRegistryError:
+        cal_policy_registry_configured = False
+    try:
+        resolve_active_policy()
+        eepl_policy_registry_configured = True
+    except PolicyRegistryError:
+        eepl_policy_registry_configured = False
+    redemption_url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    redemption_parts = urlsplit(redemption_url)
+    age_evidence_redemption_configured = bool(
+        len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("AGE_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+        and redemption_parts.scheme == "https" and redemption_parts.hostname
+        and not redemption_parts.username and not redemption_parts.password
+        and not redemption_parts.query and not redemption_parts.fragment
+        and redemption_parts.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    )
+    decision_receipt_store_ready = check_receipt_store()
+    governance_store_ready = check_governance_store()
+    governance_tokens = (
+        "CATACACI_CAM_SERVICE_TOKEN", "CATACACI_CIL_SERVICE_TOKEN",
+        "CATACACI_CIL_AGGREGATE_TOKEN", "CATACACI_CIL_RETENTION_TOKEN",
+        "CATACACI_VSL_PROPOSER_TOKEN",
+        "CATACACI_VSL_APPROVER_TOKEN",
+    )
+    governance_credentials_configured = all(
+        len(os.getenv(name, "").encode("utf-8")) >= 32 for name in governance_tokens
+    )
+    proposer_id = os.getenv("CATACACI_VSL_PROPOSER_ID", "").strip()
+    approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
+    cil_cohort_allowlist_configured = bool({
+        item.strip() for item in os.getenv("CATACACI_CIL_ALLOWED_COHORT_KEYS", "").split(",")
+        if item.strip()
+    })
+    try:
+        release_epsilon = float(os.getenv("CATACACI_CIL_RELEASE_EPSILON", "0.5"))
+        epsilon_budget = float(os.getenv("CATACACI_CIL_EPSILON_BUDGET", "1.0"))
+        privacy_budget_configured = (
+            0 < release_epsilon <= epsilon_budget <= 10
+        )
+    except ValueError:
+        privacy_budget_configured = False
+    governance_configuration_ready = bool(
+        governance_credentials_configured and proposer_id and approver_id
+        and proposer_id != approver_id and cil_cohort_allowlist_configured
+        and privacy_budget_configured
+    )
+    ready = (
+        internal_configured and fit_key_configured and npl_key_configured
+        and cultural_key_configured and cal_policy_registry_configured
+        and eepl_policy_registry_configured and age_evidence_redemption_configured
+        and decision_receipt_store_ready and governance_store_ready
+        and governance_configuration_ready
+    )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
         "trusted_npl_evidence_configured": npl_key_configured,
         "trusted_cultural_evidence_configured": cultural_key_configured,
+        "catacaci_policy_registry_configured": cal_policy_registry_configured,
+        "eepl_policy_registry_configured": eepl_policy_registry_configured,
+        "age_evidence_redemption_configured": age_evidence_redemption_configured,
+        "decision_receipt_store_ready": decision_receipt_store_ready,
+        "catacaci_governance_store_ready": governance_store_ready,
+        "catacaci_governance_configuration_ready": bool(governance_configuration_ready),
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -423,13 +671,175 @@ def readiness() -> dict:
 def capabilities() -> dict:
     return {"service": SERVICE, "eepl_policy_evaluation": True, "npl_hard_veto": True,
         "usi_explicit_preference_alignment": True, "fci_calibrated_evidence_contract": True,
-        "catacaci_cal_arbitration": True, "decision_explanations": True,
+        "catacaci_cal_arbitration": True, "catacaci_server_owned_policy": True,
+        "decision_explanations": True,
         "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
         "cil_feedback_review_enforcement_required": _cil_cal_review_enforcement_required(),
-        "decision_audit_persistence": False, "click_it_reconstruction": False,
+        "decision_audit_persistence": check_receipt_store(),
+        "catacaci_cam_durable_audit": check_governance_store() and bool(os.getenv("CATACACI_CAM_SERVICE_TOKEN")),
+        "catacaci_cil_differential_privacy_release": check_governance_store() and bool(os.getenv("CATACACI_CIL_ALLOWED_COHORT_KEYS")),
+        "catacaci_vsl_two_person_approval": check_governance_store() and bool(os.getenv("CATACACI_VSL_PROPOSER_TOKEN") and os.getenv("CATACACI_VSL_APPROVER_TOKEN")) and os.getenv("CATACACI_VSL_PROPOSER_ID") != os.getenv("CATACACI_VSL_APPROVER_ID"),
+        "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
+
+
+@app.post("/v1/governance/cam/audits", dependencies=[Depends(require_cam_service)])
+def append_cam_governance_audit(payload: CAMAuditIn) -> dict:
+    try:
+        baseline = load_decision_receipt(payload.request_id, payload.candidate_id)
+        stored = baseline["evaluated_signals"]
+        by_id = {item["signal_id"]: item for item in stored}
+        overrides = [item.model_dump() for item in payload.changed_signals]
+        override_by_id = {item["signal_id"]: item for item in overrides}
+        if len(override_by_id) != len(overrides) or not set(override_by_id).issubset(by_id):
+            raise GovernanceStoreError("CAM may change only unique signal IDs from the durable baseline")
+        simulated = []
+        for item in stored:
+            override = override_by_id.get(item["signal_id"])
+            state = override["state"] if override else item["state"]
+            confidence = (
+                override["confidence"] if override and override["confidence"] is not None
+                else item["confidence"]
+            )
+            reason_code = (
+                override["reason_code"] if override and override["reason_code"]
+                else item["reason_code"]
+            )
+            simulated.append(DecisionSignal(
+                signal_id=item["signal_id"],
+                kind=SignalKind(item["kind"]),
+                state=SignalState(state),
+                reason_code=reason_code,
+                explanation="Counterfactual replay of stored evidence; not a new observation.",
+                required=item["required"],
+                confidence=confidence,
+                source_version=item["source_version"],
+            ))
+        replay = arbitrate(ArbitrationRequest(
+            request_id=payload.request_id,
+            candidate_id=payload.candidate_id,
+            signals=tuple(simulated),
+            minimum_fit_confidence=baseline["minimum_fit_confidence"],
+            maximum_fit_confidence_disagreement=baseline["maximum_fit_confidence_disagreement"],
+            policy_version=baseline["cal_policy_version"],
+        ))
+        simulated_snapshot = [
+            {
+                "signal_id": signal.signal_id, "kind": signal.kind.value,
+                "state": signal.state.value, "required": signal.required,
+                "confidence": signal.confidence, "reason_code": signal.reason_code,
+                "source_version": signal.source_version,
+            }
+            for signal in replay.evaluated_signals
+        ]
+        simulated_digest = hashlib.sha256(json.dumps(
+            simulated_snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        audit = {
+            "audit_id": payload.audit_id,
+            "request_id": payload.request_id,
+            "candidate_id": payload.candidate_id,
+            "observed_verdict": baseline["verdict"].lower(),
+            "simulated_verdict": replay.verdict.value.lower(),
+            "changed_signal_ids": sorted(override_by_id),
+            "changed_signal_overrides": overrides,
+            "simulated_signal_snapshot_sha256": simulated_digest,
+            "policy_version": baseline["cal_policy_version"],
+            "replay_version": payload.replay_version,
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "interpretation": "counterfactual_scenario_not_observed_causality",
+        }
+        return append_cam_audit(audit)
+    except (GovernanceStoreError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CAM_PERSISTENCE_FAILED"}) from exc
+
+
+@app.post("/v1/governance/cil/contributions", dependencies=[Depends(require_cil_service)])
+def append_cil_contribution(payload: CILContributionIn) -> dict:
+    try:
+        inserted = record_cil_contribution(
+            **payload.model_dump(), observed_at=datetime.now(timezone.utc),
+        )
+        return {"recorded": inserted}
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CIL_CONTRIBUTION_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/cil/retention/purge", dependencies=[Depends(require_cil_retention)])
+def purge_cil_contributions() -> dict:
+    try:
+        return {"purged_contributions": purge_expired_cil_contributions()}
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CIL_RETENTION_PURGE_FAILED"}) from exc
+
+
+@app.post("/v1/governance/cil/aggregates", dependencies=[Depends(require_cil_aggregator)])
+def create_cil_aggregate(payload: CILAggregateIn) -> dict:
+    try:
+        epsilon = float(os.getenv("CATACACI_CIL_RELEASE_EPSILON", "0.5"))
+        budget = float(os.getenv("CATACACI_CIL_EPSILON_BUDGET", "1.0"))
+        return release_cil_aggregate(
+            cohort_key=payload.cohort_key,
+            period_start=payload.period_start.isoformat(),
+            epsilon=epsilon,
+            minimum_contributors=30,
+            epsilon_limit=budget,
+        )
+    except (GovernanceStoreError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CIL_AGGREGATE_UNAVAILABLE"}) from exc
+
+
+@app.get("/v1/governance/vsl/profile", dependencies=[Depends(require_internal_token)])
+def get_vsl_governance_profile() -> dict:
+    try:
+        return current_vsl_profile()
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_PROFILE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/governance/vsl/proposals", dependencies=[Depends(require_vsl_proposer)])
+def propose_vsl_change(payload: VSLProposalIn) -> dict:
+    proposer_id = os.getenv("CATACACI_VSL_PROPOSER_ID", "").strip()
+    if not proposer_id:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_PROPOSER_ID_NOT_CONFIGURED"})
+    try:
+        return create_vsl_proposal(
+            **payload.model_dump(exclude={"proposed_order"}),
+            proposed_order=payload.proposed_order,
+            proposer_id=proposer_id,
+        )
+    except GovernanceStoreError as exc:
+        raise HTTPException(409, detail={"code": "CATACACI_VSL_PROPOSAL_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/vsl/proposals/{proposal_id}/approve", dependencies=[Depends(require_vsl_approver)])
+def approve_vsl_change(proposal_id: str, payload: VSLApprovalIn) -> dict:
+    approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
+    if not approver_id:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_APPROVER_ID_NOT_CONFIGURED"})
+    try:
+        return approve_vsl_proposal(
+            proposal_id=proposal_id, approver_id=approver_id,
+            approval_event_id=payload.approval_event_id,
+        )
+    except GovernanceStoreError as exc:
+        raise HTTPException(409, detail={"code": "CATACACI_VSL_APPROVAL_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/vsl/proposals/{proposal_id}/reject", dependencies=[Depends(require_vsl_approver)])
+def reject_vsl_change(proposal_id: str, payload: VSLApprovalIn) -> dict:
+    approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
+    if not approver_id:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_APPROVER_ID_NOT_CONFIGURED"})
+    try:
+        return reject_vsl_proposal(
+            proposal_id=proposal_id, approver_id=approver_id,
+            rejection_event_id=payload.approval_event_id,
+        )
+    except GovernanceStoreError as exc:
+        raise HTTPException(409, detail={"code": "CATACACI_VSL_REJECTION_REJECTED"}) from exc
 
 
 @app.get("/v1/cal/feedback-reviews", dependencies=[Depends(require_internal_token)])
@@ -480,22 +890,28 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
     verify_npl_signature(payload)
     verify_cultural_signature(payload)
     try:
+        server_policy = _server_policy(payload)
+        cal_policy = resolve_configured_cal_policy()
         policy = EEPLPolicy(
-            policy_id=payload.eepl_policy.policy_id,
-            policy_version=payload.eepl_policy.policy_version,
-            minimum_age=payload.eepl_policy.minimum_age,
-            maximum_age=payload.eepl_policy.maximum_age,
-            allowed_locations=tuple(payload.eepl_policy.allowed_locations),
-            allowed_occasions=tuple(payload.eepl_policy.allowed_occasions),
-            allowed_climates=tuple(payload.eepl_policy.allowed_climates),
-            required_context=tuple(ContextField(x) for x in payload.eepl_policy.required_context),
+            policy_id=server_policy.policy_id,
+            policy_version=server_policy.policy_version,
+            minimum_age=server_policy.minimum_age,
+            maximum_age=server_policy.maximum_age,
+            allowed_locations=tuple(server_policy.allowed_locations),
+            allowed_occasions=tuple(server_policy.allowed_occasions),
+            allowed_climates=tuple(server_policy.allowed_climates),
+            required_context=tuple(ContextField(x) for x in server_policy.required_context),
         )
+        verified_age = _verified_age_threshold(payload)
         context = EEPLContext(
             user_id=payload.context.user_id,
-            age_years=payload.context.age_years,
+            # Client-supplied age_years is deliberately ignored.
+            age_years=None,
             location=payload.context.location,
             occasion=payload.context.occasion,
             climate=payload.context.climate,
+            minimum_age_threshold=verified_age[0] if verified_age else None,
+            minimum_age_threshold_met=verified_age[1] if verified_age else None,
         )
         profile = USIProfile(
             profile_id=payload.usi_profile.profile_id,
@@ -540,11 +956,81 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             cultural_requirements=cultural_requirements,
             fit_required_evidence=tuple(payload.fit_estimate.required_evidence_fields),
             fit_observed_evidence=tuple(payload.fit_estimate.observed_evidence_fields),
-            minimum_fit_confidence=payload.minimum_fit_confidence,
-            minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
+            minimum_fit_confidence=cal_policy.minimum_fit_confidence,
+            maximum_fit_confidence_disagreement=cal_policy.maximum_fit_confidence_disagreement,
+            minimum_alignment_score=cal_policy.minimum_alignment_score,
+            policy_version=cal_policy.policy_version,
         )
-        response_payload = _result_json(result, payload)
+        response_payload = _result_json(result, payload, cal_policy, policy)
+        response_payload["age_evidence"] = {
+            "contract_version": "age-threshold-attestation-v1",
+            "status": (
+                "verified_threshold_met" if verified_age and verified_age[1]
+                else "verified_threshold_not_met" if verified_age
+                else "unverified_client_value" if payload.context.age_years is not None
+                else "missing"
+            ),
+            "used_for_eligibility": verified_age is not None,
+            "threshold": verified_age[0] if verified_age else None,
+        }
         feedback_review = _load_cil_cal_feedback_decision(payload)
-        return _apply_cil_cal_feedback_veto(response_payload, feedback_review)
+        final_response = _apply_cil_cal_feedback_veto(response_payload, feedback_review)
+        evaluated_signals = [
+            {
+                "signal_id": signal.signal_id,
+                "kind": signal.kind.value,
+                "state": signal.state.value,
+                "required": signal.required,
+                "confidence": signal.confidence,
+                "reason_code": signal.reason_code,
+                "source_version": signal.source_version,
+            }
+            for signal in result.arbitration.evaluated_signals
+        ]
+        if feedback_review and feedback_review.get("verdict") == "BLOCK":
+            evaluated_signals.append({
+                "signal_id": f"cil-feedback-review:{feedback_review['review_id']}",
+                "kind": "other", "state": "block", "required": True,
+                "confidence": None, "reason_code": "CIL_FEEDBACK_REVIEW_BLOCK",
+                "source_version": str(feedback_review["decision_reference"]),
+            })
+        snapshot = json.dumps(
+            {
+                "candidate_id": payload.candidate_id,
+                "catalog_version": payload.catalog_version,
+                "candidate_attributes": payload.candidate_attributes,
+                "candidate_attributes_complete": payload.candidate_attributes_complete,
+            },
+            sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+        receipt = {
+            "request_id": payload.request_id,
+            "candidate_id": payload.candidate_id,
+            "verdict": final_response["decision"],
+            "may_display": final_response["may_display"],
+            "eepl_policy_id": policy.policy_id,
+            "eepl_policy_version": policy.policy_version,
+            "cal_policy_id": cal_policy.policy_id,
+            "cal_policy_version": cal_policy.policy_version,
+            "minimum_fit_confidence": cal_policy.minimum_fit_confidence,
+            "maximum_fit_confidence_disagreement": cal_policy.maximum_fit_confidence_disagreement,
+            "arbitration_contract_version": result.arbitration.contract_version,
+            "pipeline_contract_version": result.contract_version,
+            "candidate_snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
+            "catalog_version": payload.catalog_version,
+            "evaluated_signals": evaluated_signals,
+            "reasons": [
+                {"code": item.get("code"), "signal_id": item.get("signal_id")}
+                for item in final_response.get("arbitration", {}).get("reasons", [])
+            ],
+        }
+        try:
+            persisted = persist_decision_receipt(receipt)
+        except DecisionReceiptStoreError as exc:
+            raise HTTPException(503, detail={"code": "CATACACI_DECISION_RECEIPT_UNAVAILABLE"}) from exc
+        final_response["decision_receipt"] = persisted
+        return final_response
+    except CALPolicyRegistryError as exc:
+        raise HTTPException(503, detail={"code": "SERVER_CAL_POLICY_UNAVAILABLE"}) from exc
     except ValueError as exc:
         raise HTTPException(422, detail={"code": "INVALID_DECISION_EVIDENCE", "detail": str(exc)}) from exc
