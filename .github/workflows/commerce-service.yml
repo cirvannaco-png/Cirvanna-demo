@@ -105,6 +105,22 @@ jobs:
           alembic upgrade head
           docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=test-secret-postgres postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U postgres -d commerce_ci --format=custom -f /backup/cirvanna-commerce.dump && createdb -h 127.0.0.1 -U postgres commerce_restore && pg_restore -h 127.0.0.1 -U postgres -d commerce_restore --exit-on-error /backup/cirvanna-commerce.dump'
           psql -h localhost -U postgres -d commerce_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261121_0016') THEN RAISE EXCEPTION 'Commerce migration head was not restored'; END IF; IF to_regclass('public.commerce_cal_purchase_audits') IS NULL THEN RAISE EXCEPTION 'CAL purchase audit table missing after restore'; END IF; IF (SELECT count(*) FROM pg_trigger WHERE tgname IN ('trg_commerce_cal_purchase_audits_no_update_delete','trg_commerce_cal_purchase_audits_no_truncate') AND NOT tgisinternal) <> 2 THEN RAISE EXCEPTION 'CAL audit UPDATE/DELETE and TRUNCATE triggers missing after restore'; END IF; IF has_table_privilege('commerce_runtime','public.commerce_cal_purchase_audits','TRUNCATE') THEN RAISE EXCEPTION 'Commerce runtime can truncate immutable CAL audit table'; END IF; IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.commerce_cal_purchase_audits'::regclass) <> 'commerce_migrator' THEN RAISE EXCEPTION 'CAL audit table owner is not migration role'; END IF; END \$\$;"
+      - name: Generate offline PostgreSQL migration SQL for managed staging
+        env:
+          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce_runtime:offline-placeholder@127.0.0.1:5432/commerce
+          COMMERCE_MIGRATION_DATABASE_URL: postgresql+psycopg://commerce_migrator:offline-placeholder@127.0.0.1:5432/commerce
+          COMMERCE_ENVIRONMENT: production
+          COMMERCE_AUTO_CREATE_SCHEMA: "false"
+        run: |
+          alembic upgrade head --sql > /tmp/cirvanna-commerce-migrations.sql
+          test -s /tmp/cirvanna-commerce-migrations.sql
+      - name: Preserve offline PostgreSQL migration SQL
+        uses: actions/upload-artifact@v4
+        with:
+          name: cirvanna-commerce-managed-postgres-migration
+          path: /tmp/cirvanna-commerce-migrations.sql
+          if-no-files-found: error
+          retention-days: 7
       - name: Validate model schema compilation
         run: python -m compileall -q app migrations
       - name: Run portal contract tests
