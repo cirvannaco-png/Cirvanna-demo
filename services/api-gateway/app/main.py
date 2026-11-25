@@ -60,6 +60,7 @@ bearer = HTTPBearer(auto_error=False)
 
 class ContextInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # Compatibility-only input. Client-declared age is never eligibility evidence.
     age_years: int | None = Field(default=None, ge=0, le=120)
     location: str | None = Field(default=None, max_length=120)
     occasion: str | None = Field(default=None, max_length=120)
