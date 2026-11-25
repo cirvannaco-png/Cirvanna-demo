@@ -1362,4 +1362,4 @@ def test_decision_route_does_not_use_client_age_for_eepl_or_legal_gate(monkeypat
     assert captured["eepl_context_age"] is None
     assert captured["legal_signal"].state is main.SignalState.UNKNOWN
     assert captured["legal_signal"].reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
-    assert "verified age evidence is unavailable" in captured["legal_signal"].explanation
+    assert "no redeemed, request-bound Yoti evidence is available" in captured["legal_signal"].explanation
