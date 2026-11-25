@@ -26,6 +26,8 @@ class IdentityAgeMigrationChainTests(unittest.TestCase):
         self.assertEqual(offsets, sorted(offsets))
         for name in expected:
             self.assertTrue((MIGRATIONS / name).is_file(), name)
+        for name in expected[3:]:
+            self.assertTrue((MIGRATIONS / name.replace(".sql", ".down.sql")).is_file(), name)
 
     def test_colliding_age_migration_names_are_absent(self):
         for name in (
