@@ -12,6 +12,8 @@ on:
       - "packages/appearance_intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
+      - "services/identity-learning-service/**"
+      - "packages/identity-intelligence/age_evidence/**"
       - "services/api-gateway/**"
       - ".github/workflows/container-image-builds.yml"
   push:
@@ -57,5 +59,7 @@ jobs:
         run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
       - name: Build Cirvanna Intelligence Service image
         run: docker build -f services/intelligence-service/Dockerfile -t cirvanna-intelligence:ci services/intelligence-service
+      - name: Build Identity Learning service image
+        run: docker build -f services/identity-learning-service/Dockerfile -t cirvanna-identity-learning:ci .
       - name: Build API Gateway image
         run: docker build -f services/api-gateway/Dockerfile -t cirvanna-api-gateway:ci .
