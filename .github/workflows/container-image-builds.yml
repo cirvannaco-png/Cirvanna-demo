@@ -15,6 +15,12 @@ on:
       - "services/identity-learning-service/**"
       - "packages/identity-intelligence/age_evidence/**"
       - "services/api-gateway/**"
+      - "services/dermalsight/**"
+      - "services/twin-mesh-validator/**"
+      - "services/twin-registry/**"
+      - "services/virtual-try-on/**"
+      - "services/virtual-twin/**"
+      - "services/skincare-routine-service/**"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -28,6 +34,14 @@ on:
       - "services/vision-intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
+      - "services/identity-learning-service/**"
+      - "services/api-gateway/**"
+      - "services/dermalsight/**"
+      - "services/twin-mesh-validator/**"
+      - "services/twin-registry/**"
+      - "services/virtual-try-on/**"
+      - "services/virtual-twin/**"
+      - "services/skincare-routine-service/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
@@ -37,7 +51,7 @@ permissions:
 jobs:
   build-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Build Catalog service image
@@ -62,6 +76,22 @@ jobs:
         run: docker build -f services/identity-learning-service/Dockerfile -t cirvanna-identity-learning:ci .
       - name: Build API Gateway image
         run: docker build -f services/api-gateway/Dockerfile -t cirvanna-api-gateway:ci .
+      - name: Build DermalSight service image
+        run: docker build -f services/dermalsight/Dockerfile -t cirvanna-dermalsight:ci services/dermalsight
+      - name: Build Twin Mesh Validator image
+        run: docker build -f services/twin-mesh-validator/Dockerfile -t cirvanna-twin-mesh-validator:ci services/twin-mesh-validator
+      - name: Build Twin Registry image
+        run: docker build -f services/twin-registry/Dockerfile -t cirvanna-twin-registry:ci .
+      - name: Build Virtual Try-On API image
+        run: docker build -f services/virtual-try-on/Dockerfile -t cirvanna-virtual-try-on:ci .
+      - name: Build Virtual Twin image
+        run: docker build -f services/virtual-twin/Dockerfile -t cirvanna-virtual-twin:ci services/virtual-twin
+      - name: Build Skincare Routine service image
+        run: docker build -f services/skincare-routine-service/Dockerfile -t cirvanna-skincare-routine:ci .
+
+      # The FASHN model worker is a separately qualified GPU workload. It is
+      # intentionally not deployed to Render's CPU service fleet; its pinned
+      # source and model-weight/licence/runtime qualification is tracked separately.
 
       - name: Record exact-candidate local image IDs
         shell: bash
@@ -82,7 +112,13 @@ jobs:
               cirvanna-privacy-governance:ci \
               cirvanna-intelligence:ci \
               cirvanna-identity-learning:ci \
-              cirvanna-api-gateway:ci; do
+              cirvanna-api-gateway:ci \
+              cirvanna-dermalsight:ci \
+              cirvanna-twin-mesh-validator:ci \
+              cirvanna-twin-registry:ci \
+              cirvanna-virtual-try-on:ci \
+              cirvanna-virtual-twin:ci \
+              cirvanna-skincare-routine:ci; do
               printf '%s ' "${image}"
               docker image inspect --format '{{.Id}}' "${image}"
             done
