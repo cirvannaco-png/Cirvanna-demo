@@ -9,9 +9,6 @@ DROP POLICY IF EXISTS identity_private_service_all ON identity_private.identity_
 DROP POLICY IF EXISTS identity_private_service_all ON identity_private.identity_dsi_capture_verification_receipts;
 DROP POLICY IF EXISTS identity_private_service_all ON identity_private.identity_consent_revocation_outbox;
 DROP POLICY IF EXISTS identity_private_service_all ON identity_private.identity_cil_provider_consent_revocation_outbox;
-DROP POLICY IF EXISTS twin_private_service_all ON twin_private.twin_registry_twins;
-DROP POLICY IF EXISTS twin_private_service_all ON twin_private.twin_registry_deletion_outbox;
-
 ALTER TABLE identity_private.identity_usi_profiles DISABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_private.identity_usi_color_profiles DISABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_private.identity_tal_events DISABLE ROW LEVEL SECURITY;
@@ -22,6 +19,4 @@ ALTER TABLE identity_private.identity_dsi_capture_challenges DISABLE ROW LEVEL S
 ALTER TABLE identity_private.identity_dsi_capture_verification_receipts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_private.identity_consent_revocation_outbox DISABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_private.identity_cil_provider_consent_revocation_outbox DISABLE ROW LEVEL SECURITY;
-ALTER TABLE twin_private.twin_registry_twins DISABLE ROW LEVEL SECURITY;
-ALTER TABLE twin_private.twin_registry_deletion_outbox DISABLE ROW LEVEL SECURITY;
 COMMIT;
