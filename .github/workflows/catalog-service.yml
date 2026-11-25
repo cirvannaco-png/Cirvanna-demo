@@ -60,7 +60,7 @@ jobs:
         env:
           PGPASSWORD: test-secret-catalog
         run: |
-          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=catalog postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U catalog -d catalog_ci --format=custom -f /backup/cirvanna-catalog.dump && createdb -h 127.0.0.1 -U catalog catalog_restore && pg_restore -h 127.0.0.1 -U catalog -d catalog_restore --exit-on-error /backup/cirvanna-catalog.dump'
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=test-secret-catalog postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U catalog -d catalog_ci --format=custom -f /backup/cirvanna-catalog.dump && createdb -h 127.0.0.1 -U catalog catalog_restore && pg_restore -h 127.0.0.1 -U catalog -d catalog_restore --exit-on-error /backup/cirvanna-catalog.dump'
           psql -h localhost -U catalog -d catalog_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261104_0002') THEN RAISE EXCEPTION 'catalog migration head was not restored'; END IF; IF to_regclass('public.catalog_products') IS NULL THEN RAISE EXCEPTION 'catalog_products table missing after restore'; END IF; IF to_regclass('public.catalog_product_variants') IS NULL THEN RAISE EXCEPTION 'catalog_variants table missing after restore'; END IF; END \$\$;"
       - name: Run catalog API tests
         working-directory: services/catalog-service
