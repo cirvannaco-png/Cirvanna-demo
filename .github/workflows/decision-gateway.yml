@@ -6,7 +6,6 @@ on:
       - main
       - "engineering/**"
       - "feature/**"
-      - "integration/**"
     paths:
       - "services/api-gateway/**"
       - "services/recommendation-service/**"
