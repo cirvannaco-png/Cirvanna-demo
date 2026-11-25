@@ -624,15 +624,38 @@ async def auth_readiness() -> dict[str, Any]:
                     to_regclass('auth_private.pending_auth') IS NOT NULL AS pending_exists,
                     to_regclass('auth_private.sessions') IS NOT NULL AS sessions_exists,
                     has_schema_privilege(current_user, 'auth_private', 'USAGE') AS schema_usage,
+                    COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid=to_regclass('auth_private.pending_auth')), false) AS pending_rls,
+                    COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid=to_regclass('auth_private.sessions')), false) AS sessions_rls,
                     has_table_privilege(current_user, 'auth_private.pending_auth', 'SELECT') AS pending_select,
                     has_table_privilege(current_user, 'auth_private.pending_auth', 'INSERT') AS pending_insert,
                     has_table_privilege(current_user, 'auth_private.pending_auth', 'DELETE') AS pending_delete,
                     has_table_privilege(current_user, 'auth_private.sessions', 'SELECT') AS sessions_select,
                     has_table_privilege(current_user, 'auth_private.sessions', 'INSERT') AS sessions_insert,
                     has_table_privilege(current_user, 'auth_private.sessions', 'UPDATE') AS sessions_update,
-                    has_table_privilege(current_user, 'auth_private.sessions', 'DELETE') AS sessions_delete"""
+                    has_table_privilege(current_user, 'auth_private.sessions', 'DELETE') AS sessions_delete,
+                    has_schema_privilege('anon', 'auth_private', 'USAGE') AS anon_schema_usage,
+                    has_schema_privilege('authenticated', 'auth_private', 'USAGE') AS authenticated_schema_usage,
+                    has_table_privilege('anon', 'auth_private.sessions', 'SELECT') AS anon_session_select,
+                    has_table_privilege('authenticated', 'auth_private.sessions', 'SELECT') AS authenticated_session_select,
+                    has_table_privilege('anon', 'auth_private.pending_auth', 'SELECT') AS anon_pending_select,
+                    has_table_privilege('authenticated', 'auth_private.pending_auth', 'SELECT') AS authenticated_pending_select,
+                    EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='auth_private' AND tablename='sessions' AND policyname='auth_private_bff_service_all') AS sessions_service_policy,
+                    EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='auth_private' AND tablename='pending_auth' AND policyname='auth_private_bff_service_all') AS pending_service_policy"""
             )
-        result["database_ready"] = bool(db) and all(bool(db[name]) for name in db.keys())
+        required_database_checks = (
+            "pending_exists", "sessions_exists", "schema_usage",
+            "pending_rls", "sessions_rls",
+            "pending_select", "pending_insert", "pending_delete",
+            "sessions_select", "sessions_insert", "sessions_update", "sessions_delete",
+            "sessions_service_policy", "pending_service_policy",
+        )
+        client_access_denied = not any(bool(db[name]) for name in (
+            "anon_schema_usage", "authenticated_schema_usage",
+            "anon_session_select", "authenticated_session_select",
+            "anon_pending_select", "authenticated_pending_select",
+        ))
+        result["client_access_denied"] = client_access_denied
+        result["database_ready"] = bool(db) and all(bool(db[name]) for name in required_database_checks) and client_access_denied
         async with httpx.AsyncClient(timeout=5, trust_env=False, follow_redirects=False) as client:
             jwks_response = await client.get(expected_jwks)
             settings_response = await client.get(
