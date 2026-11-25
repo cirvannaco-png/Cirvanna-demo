@@ -1309,3 +1309,54 @@ def test_gateway_yoti_poll_rejects_attestation_for_another_subject(monkeypatch):
     })
     with pytest.raises(Exception):
         main.poll_my_age_evidence_session(str(uuid.uuid4()), "Bearer commerce-user-token")
+
+
+def test_decision_route_does_not_use_client_age_for_eepl_or_legal_gate(monkeypatch, tmp_path):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
+    monkeypatch.setenv("CIRVANNA_MINIMUM_AGE", "18")
+    monkeypatch.setattr(main, "fetch_product", lambda _product_id: product())
+    monkeypatch.setattr(main, "_load_cil_feedback_decisions", lambda *_args: {})
+    monkeypatch.setattr(main, "_load_persisted_cultural_requirements", lambda **_kwargs: ())
+    monkeypatch.setattr(
+        main, "_load_safety_signal",
+        lambda *_args, **_kwargs: main.DecisionSignal(
+            signal_id="test-safety-pass", kind=main.SignalKind.SAFETY,
+            state=main.SignalState.PASS, reason_code="TEST_SAFETY_PASS",
+            explanation="Test fixture only.", source_version="test",
+        ),
+    )
+    monkeypatch.setattr(main, "_user_constraint_signals", lambda *_args: ())
+    monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
+    monkeypatch.setattr(main, "_load_fci_estimate", lambda *_args: None)
+    monkeypatch.setattr(main, "_fit_evidence_fields", lambda _estimate: ((), ()))
+    captured = {}
+
+    original_legal_signal = main._legal_signal
+    def capture_legal_signal(context, candidate):
+        captured["legal_context_age"] = context.age_years
+        captured["legal_signal"] = original_legal_signal(context, candidate)
+        return captured["legal_signal"]
+    monkeypatch.setattr(main, "_legal_signal", capture_legal_signal)
+
+    class StopAfterContextCapture(Exception):
+        pass
+
+    def capture_pipeline_context(**kwargs):
+        captured["eepl_context_age"] = kwargs["context"].age_years
+        raise StopAfterContextCapture()
+    monkeypatch.setattr(main, "evaluate_candidate", capture_pipeline_context)
+
+    test_client = TestClient(main.app, raise_server_exceptions=False)
+    body = request_body(context={
+        "age_years": 17, "location": "Nairobi",
+        "occasion": "everyday", "climate": "warm",
+    })
+    response = test_client.post("/v1/decisions", json=body, headers=auth_headers())
+    assert response.status_code == 500
+    assert captured["legal_context_age"] is None
+    assert captured["eepl_context_age"] is None
+    assert captured["legal_signal"].state is main.SignalState.UNKNOWN
+    assert captured["legal_signal"].reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
+    assert "verified age evidence is unavailable" in captured["legal_signal"].explanation
