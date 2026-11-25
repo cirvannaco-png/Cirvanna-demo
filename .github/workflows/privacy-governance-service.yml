@@ -29,7 +29,7 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_USER: privacy
-          POSTGRES_PASSWORD: privacy
+          POSTGRES_PASSWORD: test-secret-privacy
           POSTGRES_DB: privacy_governance
         ports:
           - 5432:5432
@@ -56,7 +56,7 @@ jobs:
         run: python -m pip check
       - name: Apply PostgreSQL migration and verify mapped schema
         env:
-          PRIVACY_GOVERNANCE_DATABASE_URL: postgresql+psycopg://privacy:privacy@localhost:5432/privacy_governance
+          PRIVACY_GOVERNANCE_DATABASE_URL: postgresql+psycopg://privacy:test-secret-privacy@localhost:5432/privacy_governance
         run: |
           python - <<'PY'
           import os
@@ -81,12 +81,12 @@ jobs:
           PY
       - name: Seed a representative privacy consent record
         env:
-          PGPASSWORD: privacy
+          PGPASSWORD: test-secret-privacy
         run: |
           psql -h localhost -U privacy -d privacy_governance -v ON_ERROR_STOP=1 -c "INSERT INTO privacy_consent_records (consent_id, subject_id, resource_id, granted_scopes, photographed_people_status, consent_version, active) VALUES ('restore-consent-ci-0001', 'restore-subject-ci-0001', 'restore-click-it-ci-0001', '[\"image_processing\",\"click_it\"]'::jsonb, 'no_people', 'click-it-ci-v1', true)"
       - name: Verify privacy PostgreSQL dump and isolated restore
         env:
-          PGPASSWORD: privacy
+          PGPASSWORD: test-secret-privacy
         run: |
           docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=privacy postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U privacy -d privacy_governance --format=custom -f /backup/cirvanna-privacy.dump && createdb -h 127.0.0.1 -U privacy privacy_restore && pg_restore -h 127.0.0.1 -U privacy -d privacy_restore --exit-on-error /backup/cirvanna-privacy.dump'
           psql -h localhost -U privacy -d privacy_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM privacy_consent_records WHERE consent_id='restore-consent-ci-0001' AND subject_id='restore-subject-ci-0001' AND resource_id='restore-click-it-ci-0001' AND active=true) THEN RAISE EXCEPTION 'privacy consent record missing after restore'; END IF; IF to_regclass('public.privacy_image_rights_cases') IS NULL THEN RAISE EXCEPTION 'image-rights table missing after restore'; END IF; IF to_regclass('public.privacy_governance_audit_events') IS NULL THEN RAISE EXCEPTION 'privacy audit table missing after restore'; END IF; END \$\$;"
