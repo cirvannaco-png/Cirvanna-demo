@@ -667,7 +667,21 @@ def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
     )
 
 
-def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSignal:
+def _legal_signal(
+    context: ContextInput,
+    product: dict[str, Any],
+    *,
+    verified_age_years: int | None = None,
+) -> DecisionSignal:
+    """Apply age restrictions only to independently verified age evidence.
+
+    ContextInput.age_years is user-declared and deliberately ignored. Until a
+    verified attestation is supplied, age-dependent rules remain UNKNOWN.
+    """
+    if verified_age_years is not None and (
+        type(verified_age_years) is not int or not 0 <= verified_age_years <= 120
+    ):
+        raise ValueError("verified_age_years must be a verified integer in [0, 120]")
     minimum_age = _optional_age("CIRVANNA_MINIMUM_AGE")
     maximum_age = _optional_age("CIRVANNA_MAXIMUM_AGE")
     raw_product_min = product.get("attributes", {}).get("minimum_age")
@@ -683,23 +697,23 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
             "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
             "No additional age restriction is configured for this candidate.",
         )
-    elif context.age_years is None:
+    elif verified_age_years is None:
         state, code, explanation = (
             SignalState.UNKNOWN,
             "LEGAL_AGE_EVIDENCE_MISSING",
-            "An age-dependent eligibility rule applies, but verified age evidence is unavailable.",
+            "An age-dependent eligibility rule applies, but age was not supplied.",
         )
-    elif context.age_years < (minimum_age or 0) or (maximum_age is not None and context.age_years > maximum_age):
+    elif verified_age_years < (minimum_age or 0) or (maximum_age is not None and verified_age_years > maximum_age):
         state, code, explanation = (
             SignalState.BLOCK,
             "LEGAL_AGE_RESTRICTION_VIOLATION",
-            "Verified age evidence conflicts with the configured age restriction.",
+            "The supplied age conflicts with the configured age restriction.",
         )
     else:
         state, code, explanation = (
             SignalState.PASS,
             "LEGAL_AGE_RESTRICTION_PASSED",
-            "Verified age evidence satisfies configured age restrictions.",
+            "The supplied age satisfies configured age restrictions.",
         )
     return DecisionSignal(
         signal_id=f"legal-age:{product['product_id']}",
