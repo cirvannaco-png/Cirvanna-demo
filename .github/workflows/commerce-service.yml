@@ -38,15 +38,15 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
-          POSTGRES_USER: commerce
-          POSTGRES_PASSWORD: commerce
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci
           POSTGRES_DB: commerce_ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U commerce -d commerce_ci"
+          --health-cmd "pg_isready -U postgres -d commerce_ci"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -62,9 +62,26 @@ jobs:
           cache-dependency-path: services/commerce-service/requirements.txt
       - name: Install service dependencies
         run: python -m pip install -r requirements.txt
+      - name: Provision separate migration, runtime and audit-probe roles
+        env:
+          PGPASSWORD: postgres_ci
+        run: |
+          psql -h localhost -U postgres -d commerce_ci -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE commerce_migrator LOGIN PASSWORD 'commerce_migrator_ci';
+          ALTER DATABASE commerce_ci OWNER TO commerce_migrator;
+          CREATE ROLE commerce_runtime LOGIN PASSWORD 'commerce_runtime_ci';
+          CREATE ROLE commerce_audit_probe LOGIN PASSWORD 'commerce_audit_probe_ci';
+          GRANT CONNECT ON DATABASE commerce_ci TO commerce_runtime, commerce_audit_probe;
+          GRANT USAGE ON SCHEMA public TO commerce_runtime, commerce_audit_probe;
+          ALTER DEFAULT PRIVILEGES FOR ROLE commerce_migrator IN SCHEMA public
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO commerce_runtime, commerce_audit_probe;
+          ALTER DEFAULT PRIVILEGES FOR ROLE commerce_migrator IN SCHEMA public
+            GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO commerce_runtime, commerce_audit_probe;
+          SQL
       - name: Apply versioned schema migration
         env:
           COMMERCE_DATABASE_URL: sqlite:///./migration-ci.db
+          COMMERCE_MIGRATION_DATABASE_URL: sqlite:///./migration-ci.db
           COMMERCE_AUTO_CREATE_SCHEMA: "false"
         run: |
           alembic upgrade 20261109_0007
@@ -74,11 +91,16 @@ jobs:
           alembic upgrade head
       - name: Verify CAL purchase audit immutability on PostgreSQL
         env:
-          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce:commerce@localhost:5432/commerce_ci
+          PGPASSWORD: postgres_ci
+          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce_runtime:commerce_runtime_ci@localhost:5432/commerce_ci
+          COMMERCE_MIGRATION_DATABASE_URL: postgresql+psycopg://commerce_migrator:commerce_migrator_ci@localhost:5432/commerce_ci
+          COMMERCE_ENVIRONMENT: production
+          COMMERCE_CAL_AUDIT_PROBE_DATABASE_URL: postgresql+psycopg://commerce_audit_probe:commerce_audit_probe_ci@localhost:5432/commerce_ci
           COMMERCE_AUTO_CREATE_SCHEMA: "false"
         run: |
           alembic upgrade 20261109_0007
           alembic upgrade head
+          psql -h localhost -U postgres -d commerce_ci -v ON_ERROR_STOP=1 -c "GRANT TRUNCATE ON TABLE commerce_cal_purchase_audits TO commerce_audit_probe"
           python scripts/verify_cal_purchase_audit_immutability.py
           alembic downgrade 20261109_0007
           alembic upgrade head
