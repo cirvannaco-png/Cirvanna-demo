@@ -1334,9 +1334,9 @@ def test_decision_route_does_not_use_client_age_for_eepl_or_legal_gate(monkeypat
     captured = {}
 
     original_legal_signal = main._legal_signal
-    def capture_legal_signal(context, candidate):
+    def capture_legal_signal(context, candidate, **kwargs):
         captured["legal_context_age"] = context.age_years
-        captured["legal_signal"] = original_legal_signal(context, candidate)
+        captured["legal_signal"] = original_legal_signal(context, candidate, **kwargs)
         return captured["legal_signal"]
     monkeypatch.setattr(main, "_legal_signal", capture_legal_signal)
 
