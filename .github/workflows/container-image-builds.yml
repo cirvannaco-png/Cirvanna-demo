@@ -49,6 +49,12 @@ on:
       - "services/virtual-try-on/**"
       - "services/virtual-twin/**"
       - "services/skincare-routine-service/**"
+      - "services/recommendation-service/**"
+      - "services/npl-service/**"
+      - "services/cultural-identity-service/**"
+      - "services/wardrobe-service/**"
+      - "services/xari/**"
+      - "render.yaml"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
