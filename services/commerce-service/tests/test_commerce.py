@@ -102,6 +102,7 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_ROLE_CLAIM", raising=False)
+    monkeypatch.setenv("COMMERCE_JWT_ROLE_CLAIM", "role")
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "true")
     monkeypatch.delenv("CATALOG_API_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
