@@ -37,6 +37,10 @@ for package_path in (
 
 from catacaci import DecisionSignal, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from catacaci.policy import CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
+from catacaci.receipts import DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt  # noqa: E402
+from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
+from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
 from cultural_identity import (  # noqa: E402
     CulturalRequirement,
     RequirementKind,
@@ -103,6 +107,9 @@ class DecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
     product_ids: list[str] = Field(min_length=1, max_length=25)
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    age_attestation: dict[str, Any] | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     context: ContextInput = Field(default_factory=ContextInput)
     use_wardrobe_context: bool = False
     style_preferences: list[StylePreferenceInput] = Field(default_factory=list, max_length=40)
@@ -188,6 +195,9 @@ class PurchaseAuthorizationItem(BaseModel):
 class PurchaseAuthorizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    age_attestation: dict[str, Any] | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     authorizations: list[PurchaseAuthorizationItem] = Field(min_length=1, max_length=100)
 
     @field_validator("user_id")
@@ -203,6 +213,9 @@ class DiscoveryRequest(BaseModel):
     """Live Catalog/Commerce search; all returned products are gated by candidate-bound CAL."""
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    age_attestation: dict[str, Any] | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     # Empty query means browse the active merchant offers in the selected market.
     query: str = Field(default="", max_length=160)
     category: str | None = Field(default=None, max_length=80)
@@ -251,6 +264,12 @@ class USIProfileUpdateInput(BaseModel):
     expected_version: int | None = Field(default=None, ge=0)
     consent_receipt_id: str | None = Field(default=None, min_length=8, max_length=128)
     preferences: list[USIProfilePreferenceInput] = Field(max_length=100)
+
+
+class AgeEvidenceSessionStartInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    purpose: Literal["shopper_eligibility"] = "shopper_eligibility"
 
 
 class ConsentReceiptInput(BaseModel):
@@ -536,21 +555,103 @@ def _catalog_attributes_complete(product: dict[str, Any]) -> bool:
 
 
 def _policy() -> EEPLPolicy:
-    required = _env_csv("CIRVANNA_REQUIRED_CONTEXT_FIELDS", "location,occasion,climate")
+    """Resolve the same server-selected EEPL policy used by Identity and Decision."""
+    try:
+        resolved = resolve_active_policy()
+    except PolicyRegistryError as exc:
+        raise RuntimeError("Server EEPL policy is unavailable; decisions fail closed.") from exc
     field_map = {field.value: field for field in ContextField}
+    required = resolved["required_context"]
     unknown = sorted(set(required) - set(field_map))
     if unknown:
-        raise RuntimeError(f"Unknown values in CIRVANNA_REQUIRED_CONTEXT_FIELDS: {', '.join(unknown)}")
+        raise RuntimeError(f"Server EEPL policy contains unsupported context fields: {', '.join(unknown)}")
     return EEPLPolicy(
-        policy_id=os.getenv("CIRVANNA_EEPL_POLICY_ID", "cirvanna-context-v1"),
-        policy_version=os.getenv("CIRVANNA_EEPL_POLICY_VERSION", "1.0.0"),
-        minimum_age=_optional_age("CIRVANNA_MINIMUM_AGE"),
-        maximum_age=_optional_age("CIRVANNA_MAXIMUM_AGE"),
-        allowed_locations=_env_csv("CIRVANNA_ALLOWED_LOCATIONS"),
-        allowed_occasions=_env_csv("CIRVANNA_ALLOWED_OCCASIONS"),
-        allowed_climates=_env_csv("CIRVANNA_ALLOWED_CLIMATES"),
+        policy_id=resolved["policy_id"],
+        policy_version=resolved["policy_version"],
+        minimum_age=resolved["minimum_age"],
+        maximum_age=resolved["maximum_age"],
+        allowed_locations=tuple(resolved["allowed_locations"]),
+        allowed_occasions=tuple(resolved["allowed_occasions"]),
+        allowed_climates=tuple(resolved["allowed_climates"]),
         required_context=tuple(field_map[name] for name in required),
     )
+
+
+
+def _redeem_age_attestation(attestation: dict[str, Any], signature: str) -> None:
+    url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    token = os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").strip()
+    parts = urlsplit(url)
+    if (
+        len(token.encode("utf-8")) < 32 or parts.scheme != "https"
+        or not parts.hostname or parts.username or parts.password
+        or parts.query or parts.fragment
+        or not parts.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    ):
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_NOT_CONFIGURED"})
+    body = {
+        "jti": attestation["jti"], "subject_id": attestation["subject_id"],
+        "request_id": attestation["request_id"], "purpose": attestation["purpose"],
+        "policy_id": attestation["policy_id"], "policy_version": attestation["policy_version"],
+        "threshold": attestation["threshold"], "signature": signature,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                url, headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=body,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_UNAVAILABLE"}) from exc
+    if response.status_code == 409:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_ALREADY_REDEEMED_OR_REVOKED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_REJECTED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"}) from exc
+    if not isinstance(result, dict) or result.get("redeemed") is not True:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"})
+
+
+def _verified_age_threshold(
+    payload: DecisionRequest, request_id: str, policy: EEPLPolicy,
+) -> tuple[int, bool] | None:
+    attestation = payload.age_attestation
+    signature = payload.age_attestation_signature
+    if attestation is None and signature is None:
+        return None
+    if not isinstance(attestation, dict) or not isinstance(signature, str):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_SIGNATURE_MISSING"})
+    if policy.minimum_age is None or policy.maximum_age is not None:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
+    if (
+        attestation.get("subject_id") != payload.user_id
+        or attestation.get("request_id") != request_id
+        or attestation.get("purpose") != "shopper_eligibility"
+        or attestation.get("policy_id") != policy.policy_id
+        or attestation.get("policy_version") != policy.policy_version
+        or attestation.get("threshold") != policy.minimum_age
+        or type(attestation.get("threshold_met")) is not bool
+    ):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_POLICY_BINDING_INVALID"})
+    secret = os.getenv("AGE_EVIDENCE_HMAC_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SIGNING_KEY_NOT_CONFIGURED"})
+    try:
+        valid = verify_threshold_attestation(
+            attestation, signature, secret,
+            subject_id=payload.user_id, request_id=request_id,
+            purpose="shopper_eligibility", policy_id=policy.policy_id,
+            policy_version=policy.policy_version, threshold=policy.minimum_age,
+        )
+    except AgeEvidenceError as exc:
+        raise HTTPException(401, detail={"code": "INVALID_AGE_EVIDENCE"}) from exc
+    if not valid:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"})
+    _redeem_age_attestation(attestation, signature)
+    return attestation["threshold"], attestation["threshold_met"]
 
 
 def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
@@ -566,9 +667,16 @@ def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
     )
 
 
-def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSignal:
-    minimum_age = _optional_age("CIRVANNA_MINIMUM_AGE")
-    maximum_age = _optional_age("CIRVANNA_MAXIMUM_AGE")
+def _legal_signal(
+    context: ContextInput,
+    product: dict[str, Any],
+    *,
+    policy: EEPLPolicy,
+    verified_age: tuple[int, bool] | None = None,
+) -> DecisionSignal:
+    """Only request-bound, redeemed Yoti evidence can satisfy age restrictions."""
+    minimum_age = policy.minimum_age
+    maximum_age = policy.maximum_age
     raw_product_min = product.get("attributes", {}).get("minimum_age")
     raw_product_max = product.get("attributes", {}).get("maximum_age")
     if isinstance(raw_product_min, int) and not isinstance(raw_product_min, bool):
@@ -576,29 +684,37 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
     if isinstance(raw_product_max, int) and not isinstance(raw_product_max, bool):
         maximum_age = min(maximum_age, raw_product_max) if maximum_age is not None else raw_product_max
 
+    verified_threshold = verified_age[0] if verified_age else None
+    threshold_met = verified_age[1] if verified_age else False
     if minimum_age is None and maximum_age is None:
         state, code, explanation = (
-            SignalState.PASS,
-            "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
+            SignalState.PASS, "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
             "No additional age restriction is configured for this candidate.",
         )
-    elif context.age_years is None:
+    elif verified_age is None:
         state, code, explanation = (
-            SignalState.UNKNOWN,
-            "LEGAL_AGE_EVIDENCE_MISSING",
-            "An age-dependent eligibility rule applies, but age was not supplied.",
+            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_MISSING",
+            "An age-dependent rule applies, but no redeemed, request-bound Yoti evidence is available.",
         )
-    elif context.age_years < (minimum_age or 0) or (maximum_age is not None and context.age_years > maximum_age):
+    elif maximum_age is not None:
         state, code, explanation = (
-            SignalState.BLOCK,
-            "LEGAL_AGE_RESTRICTION_VIOLATION",
-            "The supplied age conflicts with the configured age restriction.",
+            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_INSUFFICIENT_FOR_MAXIMUM",
+            "The available Yoti threshold attestation proves only a minimum-age threshold and cannot establish a maximum-age rule.",
+        )
+    elif verified_threshold < (minimum_age or 0):
+        state, code, explanation = (
+            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_THRESHOLD_INSUFFICIENT",
+            "The verified Yoti threshold is lower than the candidate's required minimum age.",
+        )
+    elif not threshold_met:
+        state, code, explanation = (
+            SignalState.BLOCK, "LEGAL_AGE_RESTRICTION_VIOLATION",
+            "The verified Yoti age threshold was not met.",
         )
     else:
         state, code, explanation = (
-            SignalState.PASS,
-            "LEGAL_AGE_RESTRICTION_PASSED",
-            "The supplied age satisfies configured age restrictions.",
+            SignalState.PASS, "LEGAL_AGE_RESTRICTION_PASSED",
+            "The request-bound Yoti threshold attestation satisfies the configured minimum-age rule.",
         )
     return DecisionSignal(
         signal_id=f"legal-age:{product['product_id']}",
@@ -607,9 +723,8 @@ def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSig
         reason_code=code,
         explanation=explanation,
         required=True,
-        source_version=POLICY_VERSION,
+        source_version=f"{policy.policy_id}:{policy.policy_version}",
     )
-
 
 def _user_constraint_signals(
     user_id: str,
@@ -1846,8 +1961,43 @@ def _record_audit(
     arbitration_contract_version: str,
     pipeline_contract_version: str,
     policy_version: str,
+    eepl_policy_id: str,
+    eepl_policy_version: str,
+    cal_policy_id: str,
+    minimum_fit_confidence: float,
+    maximum_fit_confidence_disagreement: float,
+    evaluated_signals: list[dict[str, Any]],
+    candidate_snapshot_sha256: str,
 ) -> None:
-    """Append minimal decision metadata; omit user IDs, measurements and images."""
+    """Persist full receipts to PostgreSQL in production; SQLite is local-test only."""
+    if os.getenv("CIRVANNA_ENVIRONMENT", "").strip().lower() == "production":
+        receipt = {
+            "request_id": request_id,
+            "candidate_id": product_id,
+            "verdict": verdict.upper(),
+            "may_display": verdict == "show",
+            "eepl_policy_id": eepl_policy_id,
+            "eepl_policy_version": eepl_policy_version,
+            "cal_policy_id": cal_policy_id,
+            "cal_policy_version": policy_version,
+            "minimum_fit_confidence": minimum_fit_confidence,
+            "maximum_fit_confidence_disagreement": maximum_fit_confidence_disagreement,
+            "arbitration_contract_version": arbitration_contract_version,
+            "pipeline_contract_version": pipeline_contract_version,
+            "candidate_snapshot_sha256": candidate_snapshot_sha256,
+            "catalog_version": catalog_version,
+            "evaluated_signals": evaluated_signals,
+            "reasons": [
+                {"code": item.get("code"), "signal_id": item.get("signal_id")}
+                for item in reasons
+            ],
+        }
+        try:
+            persist_decision_receipt(receipt)
+            return
+        except DecisionReceiptStoreError as exc:
+            raise RuntimeError("Durable PostgreSQL CAL receipt persistence failed.") from exc
+
     path = _audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1888,7 +2038,6 @@ def _record_audit(
             connection.commit()
     except (OSError, sqlite3.Error) as exc:
         raise RuntimeError("Decision audit persistence failed; response cannot be released.") from exc
-
 
 app = FastAPI(
     title="Cirvanna Decision Gateway",
@@ -1940,6 +2089,9 @@ def authorize_purchase_candidates(
     decision_request = DecisionRequest(
         user_id=subject,
         product_ids=product_ids,
+        request_id=payload.request_id,
+        age_attestation=payload.age_attestation,
+        age_attestation_signature=payload.age_attestation_signature,
         allow_without_profile_consent=True,
     )
     decisions = evaluate_decisions(decision_request, end_user_authorization)
@@ -2042,7 +2194,12 @@ def capabilities() -> dict[str, Any]:
             and len(os.getenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
             and len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
         ),
-        "durable_decision_audit": "sqlite_local_only",
+        "durable_decision_audit": (
+            "postgresql_shared_receipts" if check_receipt_store()
+            else "sqlite_local_only_or_unavailable"
+        ),
+        "server_owned_eepl_policy": bool(os.getenv("EEPL_POLICY_ID") and os.getenv("EEPL_POLICY_REGISTRY_JSON")),
+        "server_owned_cal_policy": bool(os.getenv("CATACACI_POLICY_ID") and os.getenv("CATACACI_POLICY_REGISTRY_JSON")),
         "trained_fit_predictor": False,
         "calibrated_fci_provider": all(
             os.getenv(key, "").strip() for key in (
@@ -2092,18 +2249,22 @@ def readiness() -> dict[str, Any]:
             catalog_ready = response.status_code == 200 and response.json().get("ready") is True
         except (httpx.HTTPError, ValueError):
             catalog_ready = False
-    try:
-        path = _audit_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(path), timeout=2.0) as connection:
-            connection.execute("SELECT 1")
-        audit_ready = True
-    except (OSError, sqlite3.Error, RuntimeError):
-        audit_ready = False
+    if os.getenv("CIRVANNA_ENVIRONMENT", "").strip().lower() == "production":
+        audit_ready = check_receipt_store()
+    else:
+        try:
+            path = _audit_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(str(path), timeout=2.0) as connection:
+                connection.execute("SELECT 1")
+            audit_ready = True
+        except (OSError, sqlite3.Error, RuntimeError):
+            audit_ready = False
     try:
         _policy()
+        resolve_configured_cal_policy()
         policy_configured = True
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, CALPolicyRegistryError):
         policy_configured = False
     identity_required = _verified_identity_required()
     identity_ready = False
@@ -2120,6 +2281,18 @@ def readiness() -> dict[str, Any]:
     identity_binding_configured = bool(
         identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
     )
+    redemption_url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    redemption_parts = urlsplit(redemption_url)
+    age_evidence_orchestrator_configured = bool(
+        identity_url and _trusted_internal_base_url(identity_url)
+        and len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("AGE_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+        and redemption_parts.scheme == "https" and redemption_parts.hostname
+        and not redemption_parts.username and not redemption_parts.password
+        and not redemption_parts.query and not redemption_parts.fragment
+        and redemption_parts.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    )
     feedback_review_required = _cil_cal_review_enforcement_required()
     feedback_review_configured = bool(
         os.getenv("CIL_SERVICE_URL", "").strip()
@@ -2129,6 +2302,7 @@ def readiness() -> dict[str, Any]:
     ready = (
         configured and catalog_ready and audit_ready and policy_configured
         and (not identity_required or identity_binding_configured)
+        and (os.getenv("CIRVANNA_ENVIRONMENT", "").strip().lower() != "production" or age_evidence_orchestrator_configured)
         and (not feedback_review_required or feedback_review_configured)
     )
     return {
@@ -2140,6 +2314,8 @@ def readiness() -> dict[str, Any]:
         "catalog_ready": catalog_ready,
         "audit_store_ready": audit_ready,
         "policy_configuration_valid": policy_configured,
+        "shared_eepl_and_cal_policy_configured": policy_configured,
+        "yoti_age_evidence_orchestrator_configured": age_evidence_orchestrator_configured,
         "identity_provider_binding": identity_binding_configured,
         "identity_learning_service_ready": identity_ready,
         "cil_cal_feedback_review_required": feedback_review_required,
@@ -2275,6 +2451,100 @@ def compose_pnelly_daily_looks(
     result["eligibility"] = eligibility
     result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
     return result
+
+
+def _age_evidence_bridge() -> tuple[str, str]:
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_ORCHESTRATOR_NOT_CONFIGURED"})
+    return base, token
+
+
+def _age_evidence_proxy(path: str, subject_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    base, token = _age_evidence_bridge()
+    try:
+        with httpx.Client(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                f"{base}/internal/v1/age-evidence/{path.lstrip('/')}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={"subject_id": subject_id, **body},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404, 409, 422}:
+        raise HTTPException(response.status_code, detail={"code": "AGE_EVIDENCE_REQUEST_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "AGE_EVIDENCE_PROVIDER_RESPONSE_INVALID"}) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(502, detail={"code": "AGE_EVIDENCE_PROVIDER_RESPONSE_INVALID"})
+    return result
+
+
+@app.post("/v1/me/age-evidence/sessions", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def create_my_age_evidence_session(
+    payload: AgeEvidenceSessionStartInput,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    subject = _resolve_verified_subject(end_user_authorization)
+    result = _age_evidence_proxy(
+        "sessions", subject,
+        {"request_id": payload.request_id, "purpose": payload.purpose},
+    )
+    verification_url = result.get("verification_url")
+    parts = urlsplit(verification_url) if isinstance(verification_url, str) else None
+    if (
+        not isinstance(result.get("session_id"), str)
+        or result.get("state") != "pending"
+        or parts is None or parts.scheme != "https" or not parts.hostname
+        or parts.username or parts.password
+    ):
+        raise HTTPException(502, detail={"code": "AGE_EVIDENCE_SESSION_RESPONSE_INVALID"})
+    return {
+        "session_id": result["session_id"], "provider": "yoti",
+        "state": "pending", "verification_url": verification_url,
+        "expires_at": result.get("expires_at"), "request_id": payload.request_id,
+    }
+
+
+@app.post("/v1/me/age-evidence/sessions/{session_id}/poll", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def poll_my_age_evidence_session(
+    session_id: str,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    subject = _resolve_verified_subject(end_user_authorization)
+    try:
+        normalized_id = str(uuid.UUID(session_id))
+    except ValueError as exc:
+        raise HTTPException(404, detail={"code": "AGE_EVIDENCE_SESSION_NOT_FOUND"}) from exc
+    result = _age_evidence_proxy(f"sessions/{normalized_id}/poll", subject, {})
+    if result.get("state") in {"verified", "denied"}:
+        attestation = result.get("attestation")
+        signature = result.get("signature")
+        if (
+            not isinstance(attestation, dict)
+            or attestation.get("subject_id") != subject
+            or not isinstance(signature, str) or len(signature) < 64
+        ):
+            raise HTTPException(502, detail={"code": "AGE_EVIDENCE_ATTESTATION_RESPONSE_INVALID"})
+    return result
+
+
+@app.post("/v1/me/age-evidence/sessions/{session_id}/revoke", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def revoke_my_age_evidence_session(
+    session_id: str,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    subject = _resolve_verified_subject(end_user_authorization)
+    try:
+        normalized_id = str(uuid.UUID(session_id))
+    except ValueError as exc:
+        raise HTTPException(404, detail={"code": "AGE_EVIDENCE_SESSION_NOT_FOUND"}) from exc
+    return _age_evidence_proxy(f"sessions/{normalized_id}/revoke", subject, {})
 
 
 @app.get("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
@@ -2786,6 +3056,9 @@ def discover_marketplace(
     decision_request = DecisionRequest(
         user_id=subject,
         product_ids=[item[0] for item in ranked],
+        request_id=payload.request_id,
+        age_attestation=payload.age_attestation,
+        age_attestation_signature=payload.age_attestation_signature,
         context=eepl_context,
         use_wardrobe_context=payload.use_wardrobe_context,
         style_preferences=[],
@@ -2871,7 +3144,9 @@ def evaluate_decisions(
     end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
 ) -> DecisionResponse:
     """Evaluate active catalog products; verified USI profile and CAL govern eligibility."""
-    request_id = str(uuid.uuid4())
+    if (payload.age_attestation is not None and payload.request_id is None):
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_REQUEST_ID_REQUIRED"})
+    request_id = payload.request_id or str(uuid.uuid4())
     if _verified_identity_required():
         verified_subject = _resolve_verified_subject(end_user_authorization)
         if not hmac.compare_digest(verified_subject, payload.user_id):
@@ -2895,9 +3170,21 @@ def evaluate_decisions(
                 for index, item in enumerate(payload.style_preferences)
             ),
         )
+    eepl_policy = _policy()
+    verified_age = _verified_age_threshold(payload, request_id, eepl_policy)
+    try:
+        cal_policy = resolve_configured_cal_policy()
+    except CALPolicyRegistryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "SERVER_CAL_POLICY_UNAVAILABLE"},
+        ) from exc
     context = EEPLContext(
         user_id=payload.user_id,
-        age_years=payload.context.age_years,
+        # Never trust ContextInput.age_years; Yoti proves only the configured threshold.
+        age_years=None,
+        minimum_age_threshold=verified_age[0] if verified_age else None,
+        minimum_age_threshold_met=verified_age[1] if verified_age else None,
         location=payload.context.location,
         occasion=payload.context.occasion,
         climate=payload.context.climate,
@@ -2924,7 +3211,6 @@ def evaluate_decisions(
         )
         for item in payload.cultural_requirements
     )
-    eepl_policy = _policy()
     candidates: list[CandidateDecisionOutput] = []
     # Bound parallelism so a batch does not serially pay the catalog timeout per item.
     with ThreadPoolExecutor(max_workers=min(5, len(payload.product_ids))) as executor:
@@ -2949,7 +3235,7 @@ def evaluate_decisions(
         cultural_requirements = tuple(requirement_by_id[key] for key in sorted(requirement_by_id))
         upstream_signals = (
             _load_safety_signal(product, user_id=payload.user_id, request_id=request_id),
-            _legal_signal(payload.context, product),
+            _legal_signal(payload.context, product, policy=eepl_policy, verified_age=verified_age),
         ) + _user_constraint_signals(
             payload.user_id, product_id, attributes, complete, payload.hard_constraints,
         )
@@ -2981,7 +3267,10 @@ def evaluate_decisions(
             fit_required_evidence=fit_required_evidence,
             fit_observed_evidence=fit_observed_evidence,
             upstream_signals=upstream_signals,
-            policy_version=POLICY_VERSION,
+            minimum_fit_confidence=cal_policy.minimum_fit_confidence,
+            maximum_fit_confidence_disagreement=cal_policy.maximum_fit_confidence_disagreement,
+            minimum_alignment_score=cal_policy.minimum_alignment_score,
+            policy_version=cal_policy.policy_version,
         )
         arbitration = result.arbitration
         reasons = [
@@ -3010,6 +3299,27 @@ def evaluate_decisions(
                 arbitration_contract_version=arbitration.contract_version,
                 pipeline_contract_version=result.contract_version,
                 policy_version=arbitration.policy_version,
+                eepl_policy_id=eepl_policy.policy_id,
+                eepl_policy_version=eepl_policy.policy_version,
+                cal_policy_id=cal_policy.policy_id,
+                minimum_fit_confidence=cal_policy.minimum_fit_confidence,
+                maximum_fit_confidence_disagreement=cal_policy.maximum_fit_confidence_disagreement,
+                evaluated_signals=[
+                    {
+                        "signal_id": signal.signal_id,
+                        "kind": signal.kind.value,
+                        "state": signal.state.value,
+                        "required": signal.required,
+                        "confidence": signal.confidence,
+                        "reason_code": signal.reason_code,
+                        "source_version": signal.source_version,
+                    }
+                    for signal in arbitration.evaluated_signals
+                ],
+                candidate_snapshot_sha256=hashlib.sha256(json.dumps(
+                    product, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=False, allow_nan=False,
+                ).encode("utf-8")).hexdigest(),
             )
         except RuntimeError as exc:
             raise HTTPException(
