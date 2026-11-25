@@ -13,6 +13,20 @@ Complementer coordinates a complete look without treating the user's existing id
 - **Look completion:** proposes at most two optional finishing changes and explicitly preserves the chosen silhouette, identity and existing statement pieces.
 - **Explainability:** each domain returns the preference or current-look context that explains why a suggestion was made.
 
+
+## PNELLY Occasion Intelligence
+
+The service also exposes `POST /v1/pnelly/occasion-guide`, an internal-token-protected, non-personalized education endpoint. It recognizes a bounded set of explicit dress-code themes (currently Old Money, Quiet Luxury, Black Tie and Cocktail) and returns a plain-language explanation, palette, fabrics, silhouettes, finishing directions, and common mismatches to avoid. It needs only the user's theme text; it does not read profile, wardrobe, image or Twin data. Unknown themes return `theme_guide: null`.
+
+The daily-look composer embeds the same `recommendation.theme_guide` and adds transparent ranking hints to the existing three-look wardrobe composer; it does not create or assume wardrobe inventory.
+
+- The user may enter natural-language occasion text such as `old money themed party`; the UI does not constrain this to a fixed dropdown.
+- The three existing distinct roles are labelled with theme-specific styling directions while preserving the stable `everyday`, `elevated`, and `explore` role identifiers.
+- Unknown themes return `theme_guide: null`; the service does not invent a definition for an unrecognized dress code.
+- Theme guidance is general fashion education, not a claim about a user's wealth, identity, culture or background. User preferences and NPL hard exclusions remain authoritative.
+- Complementer remains an explicit, optional per-look advisory action. It can refine colour, accessories and other finishing choices without authorizing products or changing the user's choices.
+- Three Virtual Twin preview slots remain explicitly unavailable until persistent full-body Twin storage, purpose-specific consent, private asset authorization, a licensed/pinned renderer and staging validation pass. No placeholder is presented as a real try-on.
+
 ## Checkout preference learning contract
 
 The checkout-learning module defines a versioned TAL handoff for explicit checkout choices. It can represent selected offers, selected fulfilment, selected payment-method family, explicit item removal/replacement reasons, and a verified paid-order event.
