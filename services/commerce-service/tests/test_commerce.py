@@ -7,7 +7,7 @@ import time
 import uuid
 
 import jwt as pyjwt
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 os.environ.setdefault("COMMERCE_DATABASE_URL", "sqlite:///./test-commerce-import.db")
 os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
@@ -5282,3 +5282,41 @@ def test_commerce_purchase_age_evidence_rejects_partial_headers():
     })
     with pytest.raises(HTTPException):
         main._commerce_age_evidence_fields(request, "buyer-age-1")
+
+
+def test_oidc_jwks_mode_verifies_es256_supabase_tokens(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_AUTH_MODE", "oidc_jwks")
+    monkeypatch.setenv("COMMERCE_JWT_JWKS_URL", "https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json")
+    monkeypatch.setenv("COMMERCE_JWT_ISSUER", "https://opmfudcofezmatqqsfho.supabase.co/auth/v1")
+    monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "authenticated")
+    monkeypatch.setenv("COMMERCE_JWT_ROLE_CLAIM", "app_role")
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+
+    class SigningKey:
+        key = public_key
+
+    class FakeJwksClient:
+        def get_signing_key_from_jwt(self, token):
+            return SigningKey()
+
+    monkeypatch.setattr(main, "_jwks_client", lambda url: FakeJwksClient())
+    claims = {
+        "sub": "supabase-customer-1",
+        "role": "authenticated",
+        "app_role": "customer",
+        "iss": "https://opmfudcofezmatqqsfho.supabase.co/auth/v1",
+        "aud": "authenticated",
+        "exp": int(time.time()) + 300,
+        "iat": int(time.time()),
+    }
+    token = pyjwt.encode(claims, private_key, algorithm="ES256", headers={"kid": "supabase-es256-test"})
+    actor = main.decode_actor(token)
+    assert actor.user_id == "supabase-customer-1"
+    assert actor.role == "customer"
+
+    forged_role = {**claims, "app_role": "root"}
+    bad_token = pyjwt.encode(forged_role, private_key, algorithm="ES256", headers={"kid": "supabase-es256-test"})
+    rejected = client.get("/cart", headers={"Authorization": "Bearer " + bad_token})
+    assert rejected.status_code == 401
