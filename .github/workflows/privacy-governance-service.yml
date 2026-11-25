@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: privacy
           POSTGRES_PASSWORD: privacy
@@ -50,6 +50,8 @@ jobs:
           cache-dependency-path: services/privacy-governance-service/requirements.txt
       - name: Install service dependencies
         run: python -m pip install -r requirements.txt
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Check dependency consistency
         run: python -m pip check
       - name: Apply PostgreSQL migration and verify mapped schema
@@ -77,6 +79,17 @@ jobs:
                   raise SystemExit(f"{table_name}: migration missing columns {sorted(missing)}")
           print("PostgreSQL migration applied; mapped model columns verified.")
           PY
+      - name: Seed a representative privacy consent record
+        env:
+          PGPASSWORD: privacy
+        run: |
+          psql -h localhost -U privacy -d privacy_governance -v ON_ERROR_STOP=1 -c "INSERT INTO privacy_consent_records (consent_id, subject_id, resource_id, granted_scopes, photographed_people_status, consent_version, active) VALUES ('restore-consent-ci-0001', 'restore-subject-ci-0001', 'restore-click-it-ci-0001', '[\"image_processing\",\"click_it\"]'::jsonb, 'no_people', 'click-it-ci-v1', true)"
+      - name: Verify privacy PostgreSQL dump and isolated restore
+        env:
+          PGPASSWORD: privacy
+        run: |
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=privacy postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U privacy -d privacy_governance --format=custom -f /backup/cirvanna-privacy.dump && createdb -h 127.0.0.1 -U privacy privacy_restore && pg_restore -h 127.0.0.1 -U privacy -d privacy_restore --exit-on-error /backup/cirvanna-privacy.dump'
+          psql -h localhost -U privacy -d privacy_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM privacy_consent_records WHERE consent_id='restore-consent-ci-0001' AND subject_id='restore-subject-ci-0001' AND resource_id='restore-click-it-ci-0001' AND active=true) THEN RAISE EXCEPTION 'privacy consent record missing after restore'; END IF; IF to_regclass('public.privacy_image_rights_cases') IS NULL THEN RAISE EXCEPTION 'image-rights table missing after restore'; END IF; IF to_regclass('public.privacy_governance_audit_events') IS NULL THEN RAISE EXCEPTION 'privacy audit table missing after restore'; END IF; END \$\$;"
       - name: Compile service and tests
         run: python -m compileall -q app tests
       - name: Run privacy governance contract tests
