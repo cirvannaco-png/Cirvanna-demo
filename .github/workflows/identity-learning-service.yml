@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - "services/identity-learning-service/**"
+      - "packages/identity-intelligence/age_evidence/**"
       - ".github/workflows/identity-learning-service.yml"
   push:
     branches:
@@ -12,6 +13,7 @@ on:
       - "feature/**"
     paths:
       - "services/identity-learning-service/**"
+      - "packages/identity-intelligence/age_evidence/**"
       - ".github/workflows/identity-learning-service.yml"
 permissions:
   contents: read
@@ -60,6 +62,21 @@ jobs:
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0010_runtime_role_grants.sql
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0011_supabase_auth_app_role_hook.sql
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < tests/verify_supabase_auth_hook.sql
+          docker exec -e PGOPTIONS=-csearch_path=identity_private cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END \$\$;"
+          docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0012_age_evidence_lifecycle.sql
+          docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0013_age_attestation_retry_delivery.sql
+          docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0014_age_attestation_delivery_constraints.sql
+          docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0015_age_session_terminal_state_constraint.sql
+          docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0016_age_session_request_idempotency.sql
+          AGE_EVIDENCE_TEST_DATABASE_URL=postgresql+psycopg://cirvanna:ci-only-password@localhost:5432/cirvanna_identity python -m pytest -q tests/test_age_evidence_postgres.py
+          docker exec -e PGOPTIONS=-csearch_path=identity_private cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='identity_private' AND c.relname='identity_age_verification_sessions' AND c.relrowsecurity) THEN RAISE EXCEPTION 'age session RLS is not enabled'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='identity_private' AND c.relname='identity_age_threshold_attestations' AND c.relrowsecurity) THEN RAISE EXCEPTION 'age attestation RLS is not enabled'; END IF; IF has_table_privilege('anon','identity_private.identity_age_verification_sessions','SELECT') OR has_table_privilege('authenticated','identity_private.identity_age_verification_sessions','SELECT') OR has_table_privilege('anon','identity_private.identity_age_threshold_attestations','SELECT') OR has_table_privilege('authenticated','identity_private.identity_age_threshold_attestations','SELECT') THEN RAISE EXCEPTION 'client roles can read age evidence'; END IF; IF NOT has_table_privilege('identity_learning_service','identity_private.identity_age_verification_sessions','SELECT') OR NOT has_table_privilege('identity_learning_service','identity_private.identity_age_threshold_attestations','INSERT') THEN RAISE EXCEPTION 'Identity service role missing age evidence privileges'; END IF; END \$\$;"
+          # Exercise the age migration downgrade/upgrade chain on this disposable PostgreSQL instance.
+          for migration in 0016_age_session_request_idempotency 0015_age_session_terminal_state_constraint 0014_age_attestation_delivery_constraints 0013_age_attestation_retry_delivery 0012_age_evidence_lifecycle; do
+            docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < "migrations/${migration}.down.sql"
+          done
+          for migration in 0012_age_evidence_lifecycle 0013_age_attestation_retry_delivery 0014_age_attestation_delivery_constraints 0015_age_session_terminal_state_constraint 0016_age_session_request_idempotency; do
+            docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < "migrations/${migration}.sql"
+          done
           docker exec -e PGOPTIONS=-csearch_path=identity_private cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM identity_tal_consent_receipts WHERE receipt_id='legacy-consent-0001' AND consent_id='legacy-consent-0001' AND resource_id IS NULL AND expires_at IS NULL) THEN RAISE EXCEPTION 'legacy consent backfill or null expiry preservation failed'; END IF; IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='identity_tal_consent_receipts' AND column_name='expires_at') THEN RAISE EXCEPTION 'consent expiry column missing'; END IF; IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='identity_tal_consent_receipts' AND column_name='provider_contributor_token') THEN RAISE EXCEPTION 'CIL contributor pseudonym column missing'; END IF; IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='identity_cil_provider_consent_revocation_outbox' AND column_name='revocation_receipt_id') THEN RAISE EXCEPTION 'CIL revocation event receipt column missing'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='uq_identity_skin_analysis_consent_id') THEN RAISE EXCEPTION 'unique skin-analysis consent index missing'; END IF; END \$\$;"
           docker exec -e PGOPTIONS=-csearch_path=identity_private cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "INSERT INTO identity_tal_consent_receipts(receipt_id, subject_id, consent_id, resource_id, scope, consent_version, granted, expires_at) VALUES ('resource-consent-0001', 'user-0001', 'bundle-0001', 'twin-0001', 'virtual_twin_storage', 'v1', true, now() + interval '1 day')"
           docker exec -e PGOPTIONS=-csearch_path=identity_private cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "INSERT INTO identity_tal_consent_receipts(receipt_id, subject_id, consent_id, resource_id, scope, consent_version, granted, expires_at) VALUES ('pnelly-consent-0001', 'user-0002', 'pnelly-conversation-0001', 'pnelly-conversation-0001', 'pnelly_conversation', 'pnelly-context-v1', true, now() + interval '1 day')"
@@ -86,4 +103,4 @@ jobs:
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0006_consent_revocation_outbox.down.sql
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0006_consent_revocation_outbox.sql
       - name: Build service container
-        run: docker build -t cirvanna-identity-learning .
+        run: docker build -f Dockerfile -t cirvanna-identity-learning ../..
