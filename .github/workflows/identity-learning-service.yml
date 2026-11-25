@@ -43,10 +43,16 @@ jobs:
       - name: Apply identity migrations and verify legacy consent backfill
         shell: bash
         run: |
-          for attempt in {1..40}; do
-            if docker exec cirvanna-identity-pg pg_isready -U cirvanna -d cirvanna_identity; then break; fi
+          # pg_isready only proves that PostgreSQL accepts connections; it can
+          # succeed while the Docker entrypoint is still completing initdb and
+          # before POSTGRES_DB has been created. Probe the actual target database.
+          for attempt in {1..60}; do
+            if docker exec cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "SELECT 1" >/dev/null 2>&1; then
+              break
+            fi
             sleep 1
           done
+          docker exec cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "SELECT 1"
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0001_identity_tal.sql
           docker exec -e PGOPTIONS=-csearch_path=identity_private -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0002_color_profile.sql
           docker exec -e PGOPTIONS=-csearch_path=identity_private cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "INSERT INTO identity_tal_consent_receipts(receipt_id, subject_id, scope, consent_version, granted) VALUES ('legacy-consent-0001', 'legacy-user-0001', 'profile_storage', 'legacy-v1', true)"
