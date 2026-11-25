@@ -48,3 +48,7 @@ Apply `migrations/0001_twin_registry.sql` followed by `migrations/0002_twin_regi
 5. Keep Try-On unavailable until consent, Twin, Asset Service, renderer, private output storage and output validation are all independently operationally verified.
 
 Unit tests use SQLite and mocked internal providers; they do not demonstrate live provider operation or physical fit accuracy.
+
+## Private-schema access control
+
+Migration `0005_private_service_rls.sql` enables row-level security on `twin_registry_twins` and `twin_registry_deletion_outbox`, revokes schema/table access from `PUBLIC`, `anon` and `authenticated`, and grants a service-only policy to the NOLOGIN `twin_registry_service` group. The runtime LOGIN must be a separate least-privilege role that is a member only of this group. The PostgreSQL 17 workflow applies, verifies, downgrades and re-applies this migration; it also verifies client-role denial. RLS is defense-in-depth, not a substitute for subject ownership checks in the service.
