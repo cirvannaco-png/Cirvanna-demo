@@ -199,7 +199,7 @@ class CaTaCaCiCoreTests(unittest.TestCase):
         self.assertEqual(result.verdict, DecisionVerdict.SHOW)
 
 
-def test_boolean_fit_thresholds_are_rejected(self):
+    def test_boolean_fit_thresholds_are_rejected(self):
         for field in ("minimum_fit_confidence", "maximum_fit_confidence_disagreement"):
             with self.subTest(field=field):
                 with self.assertRaises(ValueError):
@@ -210,7 +210,7 @@ def test_boolean_fit_thresholds_are_rejected(self):
                         **{field: True},
                     )
 
-def test_required_flag_must_be_boolean(self):
+    def test_required_flag_must_be_boolean(self):
         with self.assertRaises(ValueError):
             DecisionSignal(
                 signal_id="bad-required", kind=SignalKind.SAFETY,
@@ -218,7 +218,7 @@ def test_required_flag_must_be_boolean(self):
                 explanation="Invalid required flag", required="false",
             )
 
-def test_arbitration_rejects_non_signal_members(self):
+    def test_arbitration_rejects_non_signal_members(self):
         with self.assertRaises(ValueError):
             ArbitrationRequest(
                 request_id="request-invalid-signal",
