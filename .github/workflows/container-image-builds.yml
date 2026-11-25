@@ -22,6 +22,11 @@ on:
       - "services/virtual-try-on/**"
       - "services/virtual-twin/**"
       - "services/skincare-routine-service/**"
+      - "services/recommendation-service/**"
+      - "services/npl-service/**"
+      - "services/cultural-identity-service/**"
+      - "services/wardrobe-service/**"
+      - "services/xari/**"
       - "render.yaml"
       - ".github/workflows/container-image-builds.yml"
   push:
@@ -53,7 +58,7 @@ permissions:
 jobs:
   build-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build Catalog service image
@@ -90,6 +95,16 @@ jobs:
         run: docker build -f services/virtual-twin/Dockerfile -t cirvanna-virtual-twin:ci services/virtual-twin
       - name: Build Skincare Routine service image
         run: docker build -f services/skincare-routine-service/Dockerfile -t cirvanna-skincare-routine:ci .
+      - name: Build Recommendation service image
+        run: docker build -f services/recommendation-service/Dockerfile -t cirvanna-recommendation:ci services/recommendation-service
+      - name: Build NPL service image
+        run: docker build -f services/npl-service/Dockerfile -t cirvanna-npl:ci .
+      - name: Build Cultural Identity service image
+        run: docker build -f services/cultural-identity-service/Dockerfile -t cirvanna-cultural-identity:ci .
+      - name: Build Wardrobe service image
+        run: docker build -f services/wardrobe-service/Dockerfile -t cirvanna-wardrobe:ci .
+      - name: Build PNELLY service image
+        run: docker build -f services/xari/Dockerfile -t cirvanna-pnelly:ci .
 
       # The FASHN model worker is a separately qualified GPU workload. It is
       # intentionally not deployed to Render's CPU service fleet; its pinned
@@ -120,7 +135,12 @@ jobs:
               cirvanna-twin-registry:ci \
               cirvanna-virtual-try-on:ci \
               cirvanna-virtual-twin:ci \
-              cirvanna-skincare-routine:ci; do
+              cirvanna-skincare-routine:ci \
+              cirvanna-recommendation:ci \
+              cirvanna-npl:ci \
+              cirvanna-cultural-identity:ci \
+              cirvanna-wardrobe:ci \
+              cirvanna-pnelly:ci; do
               printf '%s ' "${image}"
               docker image inspect --format '{{.Id}}' "${image}"
             done
