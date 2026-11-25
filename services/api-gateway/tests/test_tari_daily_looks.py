@@ -467,7 +467,9 @@ def test_pnelly_theme_education_remains_available_when_eepl_requires_review(monk
 
 def test_pnelly_daily_looks_ignores_client_age_and_reviews_age_dependent_policy(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
-    monkeypatch.setenv("CIRVANNA_MINIMUM_AGE", "18")
+    policy_registry = json.loads(os.getenv("EEPL_POLICY_REGISTRY_JSON", "{}"))
+    policy_registry["adult-market"]["minimum_age"] = 18
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps(policy_registry))
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
     observed = {"profile": False, "compose": False}
     monkeypatch.setattr(
