@@ -79,6 +79,18 @@ A successful paid settlement writes a versioned `commerce.order.paid` record to 
 
 ## Identity provider setup
 
+### Supabase Auth ES256/RS256 configuration
+
+The approved staging issuer is Supabase Auth. Configure these exact values in the deployment secret manager:
+
+- `COMMERCE_JWT_JWKS_URL=https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json`
+- `COMMERCE_JWT_ISSUER=https://opmfudcofezmatqqsfho.supabase.co/auth/v1`
+- `COMMERCE_JWT_AUDIENCE=authenticated`
+- `COMMERCE_JWT_ROLE_CLAIM=app_role`
+
+Supabase reserves JWT `role=authenticated` for the Postgres role. Commerce must read the application role only from the server-controlled `app_role` claim supplied by the reviewed private Identity Auth Hook. Do not accept role assignments from `user_metadata`, request bodies or browser input. Missing `app_role` defaults to customer; unknown roles are rejected. Production OIDC mode accepts only ES256/RS256 and rejects HS256 even if a development secret is configured. Verify the live JWKS key ID, active asymmetric signing configuration, key rotation, issuer/audience, expiry, disabled-user/session revocation and live Auth Hook claims before rollout. This does not replace browser Authorization Code + PKCE or server-side session lifecycle.
+
+
 This repository does not issue login sessions or manage the user lifecycle. Connect the actual Cirvanna identity provider before staging rollout. Configure the provider's JWKS URL, exact issuer and Commerce audience in the secret manager, map its trusted application-role claim, and test key rotation, expiry, unknown keys, issuer/audience mismatch and disabled-user/session revocation. Signature verification here does not replace the provider's sign-in, consent, account recovery or lifecycle controls.
 
 ## Production gates still open
