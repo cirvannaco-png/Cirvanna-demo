@@ -2883,8 +2883,8 @@ def test_wardrobe_ui_is_packaged_in_the_marketplace_bff_image(client):
 
     root = Path(__file__).resolve().parents[3]
     dockerfile = (root / "services/marketplace-bff/Dockerfile").read_text()
-    assert "COPY apps/demo-web/wardrobe.html /app/wardrobe.html" in dockerfile
-    assert "WARDROBE_HTML_PATH=/app/wardrobe.html" in dockerfile
+    assert "COPY apps/demo-web /app/apps/demo-web" in dockerfile
+    assert "WARDROBE_HTML_PATH=/app/apps/demo-web/wardrobe.html" in dockerfile
     response = client.get("/wardrobe")
     assert response.status_code == 200
     assert "/api/wardrobe/pnelly/preferences" in response.text
