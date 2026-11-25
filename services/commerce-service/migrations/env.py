@@ -5,6 +5,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from app.main import Base
 
@@ -12,7 +13,31 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.getenv("COMMERCE_DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+migration_database_url = os.getenv("COMMERCE_MIGRATION_DATABASE_URL", "").strip()
+runtime_database_url = os.getenv("COMMERCE_DATABASE_URL", "").strip()
+is_production = os.getenv("COMMERCE_ENVIRONMENT", "").strip().lower() in {"production", "prod"}
+
+if is_production:
+    if not migration_database_url or not runtime_database_url:
+        raise RuntimeError(
+            "Production migrations require separate COMMERCE_MIGRATION_DATABASE_URL "
+            "and COMMERCE_DATABASE_URL credentials"
+        )
+    try:
+        migration_role = make_url(migration_database_url).username
+        runtime_role = make_url(runtime_database_url).username
+    except Exception as exc:
+        raise RuntimeError("Production Commerce database URLs are invalid") from exc
+    if not migration_role or not runtime_role or migration_role == runtime_role:
+        raise RuntimeError(
+            "Production Commerce migrations and runtime must use distinct database roles"
+        )
+
+database_url = (
+    migration_database_url
+    or runtime_database_url
+    or config.get_main_option("sqlalchemy.url")
+)
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
