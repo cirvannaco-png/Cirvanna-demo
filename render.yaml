@@ -9,7 +9,6 @@ services:
     autoDeploy: false
     dockerfilePath: services/catalog-service/Dockerfile
     dockerContext: services/catalog-service
-    healthCheckPath: /ready
     envVars:
       - key: CATALOG_ENVIRONMENT
         value: production
