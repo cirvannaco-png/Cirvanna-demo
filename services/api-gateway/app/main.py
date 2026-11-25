@@ -1627,8 +1627,17 @@ def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[Con
             "observed_at": observed_raw if status == "current" else None,
             "max_age_seconds": max_age,
         }
+    # Age is deliberately not accepted from request-body context. Until an
+    # authenticated age-evidence provider is integrated, age-dependent policy
+    # rules must see unknown and return REVIEW rather than trust a client claim.
+    evidence["age"] = {
+        "status": "unverified_client_value" if context.age_years is not None else "missing",
+        "source": None,
+        "observed_at": None,
+        "max_age_seconds": None,
+    }
     normalized = ContextInput(
-        age_years=context.age_years,
+        age_years=None,
         location=values["location"],
         occasion=values["occasion"],
         climate=values["climate"],
@@ -1640,7 +1649,6 @@ def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[Con
         climate_observed_at=context.climate_observed_at,
     )
     return normalized, evidence
-
 
 def _identity_service_request(method: str, path: str, subject_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
@@ -2407,7 +2415,8 @@ def compose_pnelly_daily_looks(
             policy,
             EEPLContext(
                 user_id=subject,
-                age_years=fresh_context.age_years,
+                # Client-supplied age is never eligibility evidence.
+                age_years=None,
                 location=fresh_context.location,
                 occasion=fresh_context.occasion,
                 climate=fresh_context.climate,
