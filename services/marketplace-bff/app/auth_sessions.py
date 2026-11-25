@@ -597,6 +597,7 @@ async def auth_readiness() -> dict[str, Any]:
         "configured": not missing,
         "missing_configuration": missing,
         "database_ready": False,
+        "client_access_denied": False,
         "jwks_ready": False,
         "providers": {"google": False, "apple": False, "microsoft": False},
         "email_delivery_verified": os.getenv("AUTH_EMAIL_DELIVERY_VERIFIED", "").lower() == "true",
@@ -639,6 +640,18 @@ async def auth_readiness() -> dict[str, Any]:
                     has_table_privilege('authenticated', 'auth_private.sessions', 'SELECT') AS authenticated_session_select,
                     has_table_privilege('anon', 'auth_private.pending_auth', 'SELECT') AS anon_pending_select,
                     has_table_privilege('authenticated', 'auth_private.pending_auth', 'SELECT') AS authenticated_pending_select,
+                    has_table_privilege('anon', 'auth_private.sessions', 'INSERT') AS anon_session_insert,
+                    has_table_privilege('anon', 'auth_private.sessions', 'UPDATE') AS anon_session_update,
+                    has_table_privilege('anon', 'auth_private.sessions', 'DELETE') AS anon_session_delete,
+                    has_table_privilege('authenticated', 'auth_private.sessions', 'INSERT') AS authenticated_session_insert,
+                    has_table_privilege('authenticated', 'auth_private.sessions', 'UPDATE') AS authenticated_session_update,
+                    has_table_privilege('authenticated', 'auth_private.sessions', 'DELETE') AS authenticated_session_delete,
+                    has_table_privilege('anon', 'auth_private.pending_auth', 'INSERT') AS anon_pending_insert,
+                    has_table_privilege('anon', 'auth_private.pending_auth', 'UPDATE') AS anon_pending_update,
+                    has_table_privilege('anon', 'auth_private.pending_auth', 'DELETE') AS anon_pending_delete,
+                    has_table_privilege('authenticated', 'auth_private.pending_auth', 'INSERT') AS authenticated_pending_insert,
+                    has_table_privilege('authenticated', 'auth_private.pending_auth', 'UPDATE') AS authenticated_pending_update,
+                    has_table_privilege('authenticated', 'auth_private.pending_auth', 'DELETE') AS authenticated_pending_delete,
                     EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='auth_private' AND tablename='sessions' AND policyname='auth_private_bff_service_all') AS sessions_service_policy,
                     EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='auth_private' AND tablename='pending_auth' AND policyname='auth_private_bff_service_all') AS pending_service_policy"""
             )
@@ -653,6 +666,10 @@ async def auth_readiness() -> dict[str, Any]:
             "anon_schema_usage", "authenticated_schema_usage",
             "anon_session_select", "authenticated_session_select",
             "anon_pending_select", "authenticated_pending_select",
+            "anon_session_insert", "anon_session_update", "anon_session_delete",
+            "authenticated_session_insert", "authenticated_session_update", "authenticated_session_delete",
+            "anon_pending_insert", "anon_pending_update", "anon_pending_delete",
+            "authenticated_pending_insert", "authenticated_pending_update", "authenticated_pending_delete",
         ))
         result["client_access_denied"] = client_access_denied
         result["database_ready"] = bool(db) and all(bool(db[name]) for name in required_database_checks) and client_access_denied
