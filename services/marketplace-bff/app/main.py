@@ -23,6 +23,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.auth_sessions import COOKIE_NAME, auth_readiness, router as auth_router, close_auth_pool, session_access_token
+
 from app.observability import install_observability
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
@@ -76,17 +78,47 @@ app = FastAPI(
 )
 
 install_observability(app, SERVICE)
+app.include_router(auth_router)
+
+
+@app.on_event("shutdown")
+async def close_auth_session_pool() -> None:
+    await close_auth_pool()
 
 app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    unsafe_method = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+    auth_write = request.url.path.startswith("/auth/") and unsafe_method and request.url.path != "/auth/ios/apple"
+    cookie_api_write = request.url.path.startswith("/api/") and unsafe_method and bool(request.cookies.get(COOKIE_NAME))
+    if auth_write or cookie_api_write:
+        callback = urlsplit(os.getenv("AUTH_CALLBACK_URL", ""))
+        expected_origin = f"{callback.scheme}://{callback.netloc}" if callback.scheme and callback.netloc else ""
+        private_headers = {"Cache-Control": "no-store, private", "Pragma": "no-cache", "Expires": "0"}
+        if not expected_origin:
+            return JSONResponse(status_code=503, content={"detail": {"code": "AUTH_ORIGIN_NOT_CONFIGURED"}}, headers=private_headers)
+        if request.headers.get("origin") != expected_origin:
+            return JSONResponse(status_code=403, content={"detail": {"code": "AUTH_CSRF_ORIGIN_REJECTED"}}, headers=private_headers)
     response = await call_next(request)
+    refreshed_cookie_age = getattr(request.state, "auth_session_refresh_max_age", None)
+    if isinstance(refreshed_cookie_age, int) and refreshed_cookie_age > 0:
+        session_handle = request.cookies.get(COOKIE_NAME)
+        if session_handle:
+            response.set_cookie(
+                COOKIE_NAME,
+                session_handle,
+                max_age=refreshed_cookie_age,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path="/",
+            )
     # Every API response, including framework-generated 4xx/5xx errors, can
     # contain account- or authorization-dependent state. Route-level headers
     # are easy to omit on exceptional paths, so enforce the cache boundary here.
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith(("/api/", "/auth/")):
         cache_control = response.headers.get("Cache-Control", "").casefold()
         if "no-store" not in cache_control:
             response.headers["Cache-Control"] = "no-store, private"
@@ -814,6 +846,43 @@ class WardrobeTryOnIn(BaseModel):
         if not self.look_id and (self.look_version is not None or self.wardrobe_snapshot_version is not None):
             raise ValueError("look versions require look_id")
         return self
+
+async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and user_token.strip() and user_token.strip() != "server-cookie-session":
+        user_token = user_token.strip()
+    else:
+        # Preserve the established API error contract for anonymous callers.
+        # Cookie-backed browser sessions are resolved only when the opaque cookie
+        # is actually present; a sentinel header never substitutes for a cookie.
+        if not request.cookies.get(COOKIE_NAME) and not (
+            scheme.lower() == "bearer" and user_token.strip() == "server-cookie-session"
+        ):
+            raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
+        user_token = await session_access_token(request)
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    try:
+        identity = await client.get(
+            commerce_base + "/me",
+            headers={"Authorization": "Bearer " + user_token.strip(), "Accept": "application/json"},
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "USER_IDENTITY_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"}) from exc
+    if identity.status_code in {401, 403}:
+        raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+    if identity.status_code != 200:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+    try:
+        actor = identity.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"}) from exc
+    subject = actor.get("user_id") if isinstance(actor, dict) else None
+    if not isinstance(subject, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}", subject.strip()):
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+    return subject.strip(), user_token.strip()
 
 def _age_evidence_request_fields(request: Request, subject: str) -> dict[str, Any]:
     """Forward only a signed, request/subject-bound Yoti attestation from the browser."""
@@ -3629,25 +3698,14 @@ async def marketplace_click_it(request: Request) -> Response:
     )
 
 
-def _developer_token_input_allowed() -> bool:
-    """Allow manual bearer entry only in an explicitly opted-in non-production environment."""
-    environment = os.getenv("MARKETPLACE_ENVIRONMENT", "").strip().lower()
-    if environment in {"production", "prod"}:
-        return False
-    return os.getenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "false").strip().lower() == "true"
-
-
 def _page_html() -> str:
     try:
         html = HTML_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
     marker = "<script>\n(() => {"
-    developer_token_input = "true" if _developer_token_input_allowed() else "false"
     bootstrap = (
-        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:'
-        + developer_token_input
-        + '});</script>\n'
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
         + "<script>\n(() => {"
     )
     if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
@@ -3663,7 +3721,7 @@ def health() -> dict[str, str]:
 
 
 @app.get("/ready")
-def readiness() -> dict:
+async def readiness() -> dict:
     catalog_configured = bool(os.getenv("CATALOG_API_URL"))
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
     catalog_ready = False
@@ -3679,7 +3737,8 @@ def readiness() -> dict:
         commerce_ready = _upstream_ready(commerce_base)
     except HTTPException:
         commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    auth_status = await auth_readiness()
+    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready and auth_status["ready"]
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
@@ -3687,6 +3746,7 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "auth": auth_status,
         "ready": ready,
     }
     if not ready:
