@@ -25,7 +25,6 @@ on:
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
       - "services/appearance-intelligence-service/**"
-      - "packages/appearance_intelligence/**"
       - "services/vision-intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
@@ -38,7 +37,7 @@ permissions:
 jobs:
   build-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Build Catalog service image
@@ -63,3 +62,37 @@ jobs:
         run: docker build -f services/identity-learning-service/Dockerfile -t cirvanna-identity-learning:ci .
       - name: Build API Gateway image
         run: docker build -f services/api-gateway/Dockerfile -t cirvanna-api-gateway:ci .
+
+      - name: Record exact-candidate local image IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit-artifacts
+          {
+            echo "candidate_commit=${GITHUB_SHA}"
+            echo "built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for image in \
+              cirvanna-catalog:ci \
+              cirvanna-commerce:ci \
+              cirvanna-decision:ci \
+              cirvanna-marketplace-bff:ci \
+              cirvanna-asset-service:ci \
+              cirvanna-appearance-intelligence:ci \
+              cirvanna-vision-intelligence:ci \
+              cirvanna-privacy-governance:ci \
+              cirvanna-intelligence:ci \
+              cirvanna-identity-learning:ci \
+              cirvanna-api-gateway:ci; do
+              printf '%s ' "${image}"
+              docker image inspect --format '{{.Id}}' "${image}"
+            done
+          } | tee audit-artifacts/container-image-local-ids.txt
+
+      - name: Preserve container build manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cirvanna-container-image-local-ids
+          path: audit-artifacts/container-image-local-ids.txt
+          if-no-files-found: warn
+          retention-days: 30
