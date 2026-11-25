@@ -25,7 +25,7 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_USER: catalog
-          POSTGRES_PASSWORD: catalog
+          POSTGRES_PASSWORD: test-secret-catalog
           POSTGRES_DB: catalog_ci
         ports:
           - 5432:5432
@@ -50,15 +50,15 @@ jobs:
       - name: Apply versioned schema migration on PostgreSQL
         working-directory: services/catalog-service
         env:
-          CATALOG_DATABASE_URL: postgresql+psycopg://catalog:catalog@localhost:5432/catalog_ci
+          CATALOG_DATABASE_URL: postgresql+psycopg://catalog:test-secret-catalog@localhost:5432/catalog_ci
           CATALOG_AUTO_CREATE_SCHEMA: "false"
-          PGPASSWORD: catalog
+          PGPASSWORD: test-secret-catalog
         run: |
           alembic upgrade head
           psql -h localhost -U catalog -d catalog_ci -v ON_ERROR_STOP=1 -c "SELECT version_num FROM alembic_version"
       - name: Verify catalog PostgreSQL dump and isolated restore
         env:
-          PGPASSWORD: catalog
+          PGPASSWORD: test-secret-catalog
         run: |
           docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=catalog postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U catalog -d catalog_ci --format=custom -f /backup/cirvanna-catalog.dump && createdb -h 127.0.0.1 -U catalog catalog_restore && pg_restore -h 127.0.0.1 -U catalog -d catalog_restore --exit-on-error /backup/cirvanna-catalog.dump'
           psql -h localhost -U catalog -d catalog_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261104_0002') THEN RAISE EXCEPTION 'catalog migration head was not restored'; END IF; IF to_regclass('public.catalog_products') IS NULL THEN RAISE EXCEPTION 'catalog_products table missing after restore'; END IF; IF to_regclass('public.catalog_product_variants') IS NULL THEN RAISE EXCEPTION 'catalog_variants table missing after restore'; END IF; END \$\$;"
