@@ -6,8 +6,7 @@ Internal service for persistent User Style Index profiles and consented Temporal
 
 This service is the canonical API owner for explicit positive style preferences and consented temporal observations. It uses its own table namespace (`identity_usi_*` and `identity_tal_*`) in the existing managed PostgreSQL database. Point `IDENTITY_DATABASE_URL` at the existing approved database instance (for example the Commerce Postgres instance); do not create a second database merely for this service. No Commerce tables are read or modified by this service.
 
-The namespace is physically isolated in the non-exposed `identity_private` schema. PostgreSQL connections are pinned to `search_path=identity_private` by the service engine; migrations create/use that schema explicitly. Do not add `identity_private` to Supabase API Exposed Schemas. The current application connection still requires a database login with the documented schema privileges; a dedicated least-privilege login/credential must be provisioned before deployment and must not be replaced by the broad project `postgres` credential.
-
+The namespace is physically isolated in the non-exposed `identity_private` schema. PostgreSQL connections are pinned to `search_path=identity_private` by the service engine; migrations create/use that schema explicitly. Do not add `identity_private` to Supabase API Exposed Schemas. The service runtime must use a dedicated least-privilege LOGIN role granted membership in `identity_learning_service`; never use the project `postgres` credential in the application container.
 The API is internal-only. The API Gateway must first resolve the end-user bearer token through Commerce `GET /me`, then pass the verified subject ID using its machine credential. A caller-supplied subject ID is not proof of identity.
 
 
@@ -17,7 +16,7 @@ The service owns a short-lived, subject-scoped store for normalized PNELLY disco
 
 Only structured discovery fields are retained (latest query, category, currency, declared location/occasion/climate, bounded constraints and owned-item exclusion choice). **Raw conversation messages and transcripts are not stored.** This table is not a language model, intent parser or conversation generator; the conversational orchestration/provider still has to interpret follow-up language and map it into this typed state before using CAL-protected discovery.
 
-Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`, then `0006_consent_revocation_outbox.sql`, `0007_dsi_capture_challenges.sql`, and `0008_cil_provider_consent_revocation.sql`. Apply `0009_foreign_key_indexes.sql` last. Apply `0010_runtime_role_grants.sql` after that; create a separate LOGIN role with a managed password at deployment and grant it membership in `identity_learning_service`. Apply `0011_supabase_auth_app_role_hook.sql` to install the private Custom Access Token Hook. Enable it explicitly in Supabase Authentication → Hooks and set Commerce `COMMERCE_JWT_ROLE_CLAIM=app_role`. The hook copies only server-controlled `app_metadata.app_role` (default `customer`) into the top-level claim; Supabase's reserved `role=authenticated` remains unchanged. Merchant/admin promotion must come only from a verified server-side role-assignment workflow. The identity workflow tests the migration chain and isolated PostgreSQL restore.
+Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`, then `0006_consent_revocation_outbox.sql`, `0007_dsi_capture_challenges.sql`, and `0008_cil_provider_consent_revocation.sql`. The identity workflow tests the migration chain and isolated PostgreSQL restore.
 
 ## Local setup
 
@@ -42,6 +41,34 @@ Run tests:
 - `CIL_SERVICE_URL` / `CIL_SERVICE_TOKEN`: trusted private CIL URL and its dedicated internal bearer for provider-revocation callbacks. This is distinct from `IDENTITY_SERVICE_TOKEN`.
 - `CIL_SKIN_ANALYSIS_RECEIPT_TTL_SECONDS`: short-lived signed receipt window, 60–900 seconds (default 600).
 - `IDENTITY_AUTO_CREATE_SCHEMA`: local/test only. Must be false in production; apply reviewed SQL migration instead.
+
+## Age evidence lifecycle
+
+The private `/internal/v1/age-evidence` routes own Yoti AVS Digital ID session creation, server-side result polling, revocation and one-time attestation redemption. The browser callback is navigation only; it never supplies an age result. The service polls Yoti over the pinned HTTPS API origin, stores opaque provider/session references and threshold outcomes only, and never persists DOB, raw age, document images, selfies or biometric templates.
+
+- `POST /internal/v1/age-evidence/sessions` requires `AGE_EVIDENCE_ORCHESTRATOR_TOKEN`. It accepts subject/request/purpose and policy ID/version only. The threshold is resolved from the server-side `EEPL_POLICY_REGISTRY_JSON`; request-supplied thresholds are rejected.
+- `POST /internal/v1/age-evidence/sessions/{session_id}/poll` polls Yoti directly. PENDING never produces an attestation. COMPLETE and FAIL produce signed threshold-only results.
+- `POST /internal/v1/age-evidence/sessions/{session_id}/revoke` invalidates the session and all unredeemed attestations.
+- `POST /internal/v1/age-evidence/attestations/redeem` requires the separate `AGE_EVIDENCE_REDEMPTION_TOKEN`; it atomically consumes a JTI once and checks subject, request, purpose, policy/version, threshold, signature digest, expiry and source-session revocation.
+
+Canonical PostgreSQL migration order is strictly numeric:
+- `0001`–`0008`: USI/TAL, consent, PNELLY context, revocation outboxes and DSI/CIL consent lifecycle.
+- `0009_foreign_key_indexes.sql`: supporting FK indexes.
+- `0010_runtime_role_grants.sql`: creates the non-login `identity_learning_service` group and grants only its private-schema DML rights.
+- `0011_supabase_auth_app_role_hook.sql`: installs the private custom access-token hook; enable it only after independent review and verify live token issuance.
+- `0012_age_evidence_lifecycle.sql`: purpose-bound Yoti sessions and threshold attestations.
+- `0013_age_attestation_retry_delivery.sql` and `0014_age_attestation_delivery_constraints.sql`: durable retry payload and non-null enforcement.
+- `0015_age_session_terminal_state_constraint.sql`: terminal-state invariant.
+- `0016_age_session_request_idempotency.sql`: unique subject/request/purpose/policy-version key. This reconciles the migration already present in the connected staging database.
+
+The age tables enable RLS and grant access only to `identity_learning_service`; `anon` and `authenticated` receive no table privileges. Keep the age orchestration and redemption credentials separate. A revoked provider session may still exist at Yoti until its short TTL ends, but it cannot issue or redeem a Cirvanna attestation.
+
+Required secret-manager variables:
+- `AGE_EVIDENCE_ORCHESTRATOR_TOKEN`: dedicated internal credential held by the trusted BFF/orchestrator only.
+- `AGE_EVIDENCE_REDEMPTION_TOKEN`: separate credential held only by Decision Service.
+- `AGE_EVIDENCE_HMAC_SECRET`: issuer/Decision Service signing key; minimum 32 bytes.
+- `YOTI_AVS_API_KEY`, `YOTI_AVS_SDK_ID`, callback/cancel/privacy-policy/terms URLs.
+- `EEPL_POLICY_REGISTRY_JSON`: server-owned, version-pinned policy map shared with Decision Service.
 
 ## Contracts
 
@@ -72,3 +99,10 @@ Before deployment: provision the service on the approved Cirvanna workspace; con
 ## Resource-bound consent expiry
 
 Migration `0004_consent_expiry.sql` adds an expiry timestamp to the existing consent receipt authority. It deliberately does not create a second consent-bundle table. New grants may supply an ISO-8601 timezone-aware `expires_at`; verification and all active-consent checks reject expired records. Existing null-expiry records are retained for backward compatibility and must be migrated through the approved consent renewal process rather than silently treated as newly issued time-bounded consent.
+
+
+## Private schema and role deployment
+
+Apply the full Identity migration sequence once, in numeric order, using a schema-owner/migration credential. The service engine pins runtime connections to `identity_private`. Provision a separate, non-superuser LOGIN credential in the secret manager and grant it membership in `identity_learning_service`; test the service with that credential and verify it cannot access `twin_private` or unrelated schemas. Do not provision a password in source control and do not use the project `postgres` role as an application runtime. The Supabase Auth hook is installed by migration 0011 but must be enabled explicitly in Authentication → Hooks only after independent review and live token issuance validation.
+
+The staging database currently has a pre-existing `uq_identity_age_session_request_policy` constraint; migration 0016 is idempotent so a clean database and the current staging schema converge on the same canonical source history.
