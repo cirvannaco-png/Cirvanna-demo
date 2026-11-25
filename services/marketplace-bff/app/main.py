@@ -1160,13 +1160,6 @@ async def replace_pnelly_style_preference_route(
 async def get_style_color_profile(request: Request) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
-        person_asset_id, consent_id = await _authorized_twin_try_on_context(
-            client, subject_id=subject, twin_id=payload.twin_id.strip()
-        )
-        if payload.person_image_asset_id and payload.person_image_asset_id.lower() != person_asset_id:
-            raise HTTPException(403, detail={"code": "CLIENT_PERSON_ASSET_DOES_NOT_MATCH_TWIN"})
-        if payload.consent_id and payload.consent_id.strip() != consent_id:
-            raise HTTPException(403, detail={"code": "CLIENT_CONSENT_DOES_NOT_MATCH_TWIN"})
         base, token = _identity_learning_service()
         try:
             response = await client.get(
@@ -1444,6 +1437,13 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
         timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False
     ) as client:
         subject, _ = await _verified_commerce_subject(client, request)
+        person_asset_id, consent_id = await _authorized_twin_try_on_context(
+            client, subject_id=subject, twin_id=payload.twin_id.strip()
+        )
+        if payload.person_image_asset_id and payload.person_image_asset_id.lower() != person_asset_id:
+            raise HTTPException(403, detail={"code": "CLIENT_PERSON_ASSET_DOES_NOT_MATCH_TWIN"})
+        if payload.consent_id and payload.consent_id.strip() != consent_id:
+            raise HTTPException(403, detail={"code": "CLIENT_CONSENT_DOES_NOT_MATCH_TWIN"})
         wardrobe_base, wardrobe_token = _wardrobe_service()
         try:
             item_response = await client.get(
