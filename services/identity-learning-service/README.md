@@ -60,6 +60,7 @@ Canonical PostgreSQL migration order is strictly numeric:
 - `0013_age_attestation_retry_delivery.sql` and `0014_age_attestation_delivery_constraints.sql`: durable retry payload and non-null enforcement.
 - `0015_age_session_terminal_state_constraint.sql`: terminal-state invariant.
 - `0016_age_session_request_idempotency.sql`: unique subject/request/purpose/policy-version key. This reconciles the migration already present in the connected staging database.
+- `0017_private_service_rls.sql`: enables service-only RLS on Identity and Twin private tables while preserving the private-schema boundary for `anon` and `authenticated`.
 
 The age tables enable RLS and grant access only to `identity_learning_service`; `anon` and `authenticated` receive no table privileges. Keep the age orchestration and redemption credentials separate. A revoked provider session may still exist at Yoti until its short TTL ends, but it cannot issue or redeem a Cirvanna attestation.
 
