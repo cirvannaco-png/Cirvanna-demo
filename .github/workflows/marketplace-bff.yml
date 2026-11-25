@@ -19,7 +19,6 @@ on:
   push:
     branches:
       - main
-      - "integration/**"
       - "engineering/**"
       - "feature/**"
     paths:
