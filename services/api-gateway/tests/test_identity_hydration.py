@@ -14,6 +14,16 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "true")
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", __import__("json").dumps({
+        "adult-market": {
+            "policy_version": "adult-v4", "minimum_age": None, "maximum_age": None,
+            "allowed_locations": ["Nairobi"], "allowed_occasions": ["everyday"],
+            "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
+        }
+    }))
+    monkeypatch.setenv("CATACACI_POLICY_ID", "cal-test")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", '{"cal-test":{"policy_version":"cal-test-v1","minimum_fit_confidence":0.7,"maximum_fit_confidence_disagreement":0.1,"minimum_alignment_score":0.6}}')
     return TestClient(main.app)
 
 
