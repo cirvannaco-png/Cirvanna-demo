@@ -148,10 +148,15 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client, monkeypat
     monkeypatch.delenv("MARKETPLACE_ENVIRONMENT", raising=False)
     response = client.get("/")
     assert response.status_code == 200
-    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:false});' in response.text
+    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});' in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
     assert "bootstrap.publicOffersBase" in response.text
-    assert 'window.dispatchEvent(new CustomEvent("cirvanna:session-ready"' in response.text
-    assert "accessToken:token" in response.text
+    assert 'data-auth-provider="google"' in response.text
+    assert 'data-auth-provider="apple"' in response.text
+    assert 'data-auth-provider="microsoft"' in response.text
+    assert 'id="emailOtpForm"' in response.text
+    assert 'id="commerceToken"' not in response.text
     assert "connect-src 'self'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "no-referrer"
@@ -4097,22 +4102,28 @@ def test_appearance_source_renewal_requires_explicit_source_storage_acceptance(c
     assert len(fake.calls) == 2
 
 
-def test_developer_token_entry_requires_explicit_nonproduction_opt_in(client, monkeypatch):
+def test_developer_token_entry_is_removed_even_when_nonproduction_opt_in_is_set(client, monkeypatch):
     monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "development")
     monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
     response = client.get("/")
     assert response.status_code == 200
-    assert 'allowDeveloperTokenInput:true' in response.text
-    assert "Signed customer test token" in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
+    assert 'data-auth-provider="google"' in response.text
+    assert 'data-auth-provider="apple"' in response.text
+    assert 'data-auth-provider="microsoft"' in response.text
+    assert 'id="emailOtpForm"' in response.text
+
 
 def test_production_never_renders_developer_token_entry_even_when_opted_in(client, monkeypatch):
     monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "production")
     monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
     response = client.get("/")
     assert response.status_code == 200
-    assert 'allowDeveloperTokenInput:false' in response.text
-    assert "Signed customer test token" in response.text
-    assert "Account sign-in is unavailable" in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
+    assert 'data-auth-provider="apple"' in response.text
+
 
 def test_cart_proxy_requires_bearer_before_cal_readiness_probe(client, monkeypatch):
     configure_upstreams(monkeypatch)
@@ -4768,3 +4779,64 @@ def test_wardrobe_try_on_rejects_ambiguous_multi_image_twin_source(client, monke
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "TWIN_NOT_AUTHORIZED_FOR_TRY_ON"
     assert len(fake.calls) == 2
+
+
+def test_cookie_authenticated_writes_reject_cross_origin_requests(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_URL", "https://bff.example.com/auth/callback")
+    response = client.post(
+        "/auth/refresh",
+        cookies={main.COOKIE_NAME: "opaque-session"},
+        headers={"Origin": "https://attacker.example"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AUTH_CSRF_ORIGIN_REJECTED"
+    assert "no-store" in response.headers["cache-control"].casefold()
+
+
+def test_cookie_authenticated_writes_accept_exact_application_origin(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_URL", "https://bff.example.com/auth/callback")
+    response = client.post(
+        "/auth/refresh",
+        cookies={main.COOKIE_NAME: "opaque-session"},
+        headers={"Origin": "https://bff.example.com"},
+    )
+    # The origin guard passes; the request then fails closed because this test
+    # intentionally has no production session database configured.
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "AUTH_SESSION_DATABASE_URL_NOT_CONFIGURED"
+
+
+def test_bff_readiness_fails_closed_until_auth_dependencies_are_ready(client, monkeypatch):
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setattr(main, "_upstream_ready", lambda base: True)
+
+    async def auth_blocked():
+        return {
+            "configured": True,
+            "database_ready": True,
+            "jwks_ready": False,
+            "providers": {"google": True, "apple": True, "microsoft": True},
+            "email_delivery_verified": True,
+            "ready": False,
+        }
+
+    async def auth_ready():
+        return {
+            "configured": True,
+            "database_ready": True,
+            "jwks_ready": True,
+            "providers": {"google": True, "apple": True, "microsoft": True},
+            "email_delivery_verified": True,
+            "ready": True,
+        }
+
+    monkeypatch.setattr(main, "auth_readiness", auth_blocked)
+    blocked = client.get("/ready")
+    assert blocked.status_code == 503
+    assert blocked.json()["detail"]["auth"]["jwks_ready"] is False
+
+    monkeypatch.setattr(main, "auth_readiness", auth_ready)
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json()["auth"]["ready"] is True
