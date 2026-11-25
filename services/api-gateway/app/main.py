@@ -667,16 +667,9 @@ def _safety_signal(product: dict[str, Any]) -> DecisionSignal:
     )
 
 
-def _legal_signal(
-    context: ContextInput,
-    product: dict[str, Any],
-    *,
-    policy: EEPLPolicy,
-    verified_age: tuple[int, bool] | None = None,
-) -> DecisionSignal:
-    """Only request-bound, redeemed Yoti evidence can satisfy age restrictions."""
-    minimum_age = policy.minimum_age
-    maximum_age = policy.maximum_age
+def _legal_signal(context: ContextInput, product: dict[str, Any]) -> DecisionSignal:
+    minimum_age = _optional_age("CIRVANNA_MINIMUM_AGE")
+    maximum_age = _optional_age("CIRVANNA_MAXIMUM_AGE")
     raw_product_min = product.get("attributes", {}).get("minimum_age")
     raw_product_max = product.get("attributes", {}).get("maximum_age")
     if isinstance(raw_product_min, int) and not isinstance(raw_product_min, bool):
@@ -684,37 +677,29 @@ def _legal_signal(
     if isinstance(raw_product_max, int) and not isinstance(raw_product_max, bool):
         maximum_age = min(maximum_age, raw_product_max) if maximum_age is not None else raw_product_max
 
-    verified_threshold = verified_age[0] if verified_age else None
-    threshold_met = verified_age[1] if verified_age else False
     if minimum_age is None and maximum_age is None:
         state, code, explanation = (
-            SignalState.PASS, "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
+            SignalState.PASS,
+            "LEGAL_AGE_GATE_NO_ADDITIONAL_RULES",
             "No additional age restriction is configured for this candidate.",
         )
-    elif verified_age is None:
+    elif context.age_years is None:
         state, code, explanation = (
-            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_MISSING",
-            "An age-dependent rule applies, but no redeemed, request-bound Yoti evidence is available.",
+            SignalState.UNKNOWN,
+            "LEGAL_AGE_EVIDENCE_MISSING",
+            "An age-dependent eligibility rule applies, but verified age evidence is unavailable.",
         )
-    elif maximum_age is not None:
+    elif context.age_years < (minimum_age or 0) or (maximum_age is not None and context.age_years > maximum_age):
         state, code, explanation = (
-            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_INSUFFICIENT_FOR_MAXIMUM",
-            "The available Yoti threshold attestation proves only a minimum-age threshold and cannot establish a maximum-age rule.",
-        )
-    elif verified_threshold < (minimum_age or 0):
-        state, code, explanation = (
-            SignalState.UNKNOWN, "LEGAL_AGE_EVIDENCE_THRESHOLD_INSUFFICIENT",
-            "The verified Yoti threshold is lower than the candidate's required minimum age.",
-        )
-    elif not threshold_met:
-        state, code, explanation = (
-            SignalState.BLOCK, "LEGAL_AGE_RESTRICTION_VIOLATION",
-            "The verified Yoti age threshold was not met.",
+            SignalState.BLOCK,
+            "LEGAL_AGE_RESTRICTION_VIOLATION",
+            "Verified age evidence conflicts with the configured age restriction.",
         )
     else:
         state, code, explanation = (
-            SignalState.PASS, "LEGAL_AGE_RESTRICTION_PASSED",
-            "The request-bound Yoti threshold attestation satisfies the configured minimum-age rule.",
+            SignalState.PASS,
+            "LEGAL_AGE_RESTRICTION_PASSED",
+            "Verified age evidence satisfies configured age restrictions.",
         )
     return DecisionSignal(
         signal_id=f"legal-age:{product['product_id']}",
@@ -723,7 +708,7 @@ def _legal_signal(
         reason_code=code,
         explanation=explanation,
         required=True,
-        source_version=f"{policy.policy_id}:{policy.policy_version}",
+        source_version=POLICY_VERSION,
     )
 
 def _user_constraint_signals(
