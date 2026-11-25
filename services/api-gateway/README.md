@@ -87,7 +87,8 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `CIRVANNA_API_TOKEN` | Inbound internal gateway bearer token |
 | `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` | Defaults to true; set false only for local/test-only request-scoped demo mode |
 | `CIRVANNA_AUDIT_DB` | Local/staging SQLite audit path; not production managed audit |
-| `CIRVANNA_POLICY_VERSION` | Decision policy version |
+| `EEPL_POLICY_ID` | Server-selected active EEPL policy ID shared with Identity Learning and Decision Service |
+| `EEPL_POLICY_REGISTRY_JSON` | Server-owned versioned EEPL policy registry; no caller-selectable rules |
 | `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | EEPL context requirements |
 | `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Required Catalog metadata |
 | `COMMERCE_API_URL` | Trusted Commerce `/me` and internal offers API base URL |
@@ -162,3 +163,13 @@ Do not claim production readiness from unit tests, signed test fixtures, a passi
 ## Consent scope expiry
 
 The `/v1/me/consents` request accepts an optional timezone-aware `expires_at`. For `skin_analysis`, the Gateway requires both a resource-bound `resource_id` and a future `expires_at`; it forwards them to Identity Learning. The browser cannot provide a CIL pseudonym, provider credential, signed provider receipt or adult-verification assertion. Those are issued only by trusted server-side services.
+
+
+In production, every Gateway candidate evaluation writes the same append-only PostgreSQL receipt schema as the Decision Service before returning a decision. Apply `services/decision-service/migrations/0001_catacaci_decision_receipts.sql` to the shared managed database and provision `DECISION_AUDIT_DATABASE_URL` with an insert/select-only role. The Gateway and Decision Service both use the active EEPL and CAL policy registries; legacy `CIRVANNA_*` EEPL threshold variables are not policy authority.
+
+
+## Yoti age-evidence lifecycle
+
+The API Gateway exposes owner-bound `POST /v1/me/age-evidence/sessions`, `POST /v1/me/age-evidence/sessions/{session_id}/poll`, and `POST /v1/me/age-evidence/sessions/{session_id}/revoke`. Each route first resolves the end-user subject through Commerce `GET /me`, then uses the separate `AGE_EVIDENCE_ORCHESTRATOR_TOKEN` to call Identity Learning. Identity Learning checks session ownership again before polling or revoking. The verified, signed attestation is bound to subject, request ID, purpose, active EEPL policy ID/version and threshold. Every Gateway decision request that carries an attestation must include its same request ID; the Gateway verifies the signature and consumes the one-time JTI through the dedicated redemption endpoint before EEPL can use it. Self-declared `context.age_years` is never eligibility evidence. A threshold-only Yoti proof cannot satisfy maximum-age policies or a product threshold above the attested threshold; those cases remain REVIEW.
+
+Production configuration additionally requires `IDENTITY_SERVICE_URL`, `AGE_EVIDENCE_ORCHESTRATOR_TOKEN`, `AGE_EVIDENCE_HMAC_SECRET`, `AGE_EVIDENCE_REDEMPTION_URL`, and `AGE_EVIDENCE_REDEMPTION_TOKEN`. All must be stored in the hosting secret manager, not committed to the repository.
