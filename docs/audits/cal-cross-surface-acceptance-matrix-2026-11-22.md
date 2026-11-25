@@ -58,3 +58,28 @@ The executable black-box runner is `tools/cal_staging_matrix/run.py`. It require
 The Click It privacy tools are `tools/click_it_privacy_eval/score.py` (independent annotation metrics with per-stratum FNR confidence bounds) and `tools/click_it_privacy_eval/rights_smoke.py` (deployed staging photographed-person report/removal intake and quarantine/status checks). These tools are harnesses, not test evidence.
 
 **Execution status: BLOCKED — no Cirvanna staging service URLs or fixture-control endpoint are available.** Supabase `cirvanna-staging` is active, but its identity/Twin/Auth-private tables currently contain zero rows and there are no Edge Functions. Neither connected Render workspace has a Cirvanna service or Cirvanna Postgres instance. The public Click It BFF upload remains blocked before multipart parsing. No live CAL matrix, consent/CDN revocation, rights-provider, masking dataset, merchant or payment-provider run is claimed.
+
+
+## 2026-11-25 staging infrastructure refresh
+
+The source and database foundation has advanced, but the ten-surface **deployed** matrix remains blocked.
+
+### Verified staging foundations
+
+- Exact source candidate `db2395f3ab6015ef0a53dce4be52ddaad1a1712c`: 24/24 GitHub workflows passed, including the strict source-lineage audit and all 22 CPU container image builds. The container artifact records CI-local image IDs; no registry push or deployed immutable image digest is claimed.
+- Supabase `cirvanna-staging`: Identity 0016/0017, Twin Registry 0005 and BFF Auth 0001 migrations are applied. RLS is enabled on all 16 private tables, service-only policies are present, the security advisor reports zero lints, and SQL role-level probes as `anon` and `authenticated` are denied on Identity, Twin and Auth private schemas. Three service app principals exist as NOLOGIN members of their service groups; password/LOGIN activation and live runtime connection tests remain pending.
+- Neon `cirvanna-catalog-staging`: eight isolated service databases now exist for Catalog, Commerce, NPL, Cultural Identity, Wardrobe, Privacy Governance, Appearance Intelligence and Asset metadata. Catalog is at revision `20261104_0002`; Commerce at `20261121_0016`; the remaining SQL migration chains are applied through their latest source migrations. Runtime roles are separated from schema-owner roles and tested for DML without schema CREATE or TRUNCATE.
+- Commerce CAL audit immutability was exercised against the real Neon staging database: UPDATE and DELETE were rejected by the immutability trigger, and TRUNCATE was rejected even for a dedicated probe role granted table-specific TRUNCATE. One synthetic, non-PII audit row is intentionally retained as evidence.
+- Asset metadata constraints rejected an attempted public-approval transition without consent, masking and human-review attestations.
+
+### Still blocked
+
+- No Render service is deployed. The private Catalog service Blueprint plan is blocked by Render `need_payment_info`; no resources were created. The current Blueprint is only a one-service foundation, not the full service fleet.
+- No S3 object store is configured. Supabase Storage's S3 compatibility does not meet the current Asset Service readiness contract: S3 versioning is unsupported and required bucket encryption/lifecycle inspection endpoints are not implemented. Do not substitute Supabase Storage without a separately reviewed provider adapter. A private AWS S3 bucket with bucket-scoped IAM credentials is the current preferred fit.
+- Stripe test mode is connected, but the test account reports `charges_enabled=false`, tax settings `pending`, zero products and zero webhook endpoints. No Checkout Session or webhook test has been run.
+- No deployed HTTPS URLs or staging fixture-control plane are available. The ten-surface runner below has **not** been run. No CDN/cache purge, live consent/session revocation, live merchant-state transition or payment-revocation race is certified.
+- Click It remains fail-closed before multipart parsing. The face-mask confidence path now rejects non-finite confidence values, but masking evaluation, photographed-person rights smoke tests, child-safety verification and independent publication-route review remain outstanding. Look It remains a separate internal path; its transient processing and storage/logging behavior still require independent verification.
+- Provider-backed safety/FCI, merchant verification, FX, tax, fulfilment and payment-capability adapters are not qualified. Backup restore, operational rollback, production monitoring/alerting and independent security/privacy assessment remain unverified.
+- No Neon restore branch was created because the project endpoint has `suspend_timeout_seconds=0` and the connected Neon account would not allow changing the suspend interval. No recurring-cost assumption is made.
+
+**Current acceptance status:** the source/CI and staging database foundations are materially improved, but issue #237 remains open. The exact ten-surface black-box matrix must run against deployed services and real staging dependencies, with redacted evidence retained. All 23 production release gates remain blocked until their individual deployed evidence and independent review requirements are met.
