@@ -54,7 +54,7 @@ jobs:
         run: python -m pytest -q
       - name: Start isolated PostgreSQL 17 for auth schema migration tests
         run: |
-          docker run -d --name cirvanna-bff-auth-pg -e POSTGRES_USER=cirvanna -e POSTGRES_PASSWORD=test-secret-identity -e POSTGRES_DB=cirvanna_auth -p 5433:5432 postgres:17
+          docker run -d --name cirvanna-bff-auth-pg -e POSTGRES_USER=cirvanna -e POSTGRES_PASSWORD=test-secret-auth -e POSTGRES_DB=cirvanna_auth -p 5433:5432 postgres:17
           for attempt in {1..40}; do
             if docker exec cirvanna-bff-auth-pg pg_isready -U cirvanna -d cirvanna_auth; then break; fi
             sleep 1
