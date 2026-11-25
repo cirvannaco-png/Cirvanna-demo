@@ -130,7 +130,7 @@ FOR EACH ROW EXECUTE FUNCTION decision_private.catacaci_reject_append_only_mutat
 
 -- Keep the private schema inaccessible to browser-facing Supabase roles.
 REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM PUBLIC;
-DO $
+DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
         REVOKE ALL ON SCHEMA decision_private FROM anon;
