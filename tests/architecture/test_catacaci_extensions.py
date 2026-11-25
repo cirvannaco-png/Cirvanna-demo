@@ -148,9 +148,9 @@ class VSLTests(unittest.TestCase):
             ValueProfile("1.0", bad_order)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-    def test_non_boolean_consent_is_rejected(self):
+def test_non_boolean_consent_is_rejected(self):
         with self.assertRaises(ValueError):
             self.event("e1", "minimal", consent="false")
+
+if __name__ == "__main__":
+    unittest.main()
