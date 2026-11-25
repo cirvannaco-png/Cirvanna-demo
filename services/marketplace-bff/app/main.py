@@ -197,6 +197,12 @@ def _pnelly_internal_service() -> tuple[str, str]:
     return base, token
 
 
+class AgeEvidenceSessionStartIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    purpose: Literal["shopper_eligibility"] = "shopper_eligibility"
+
+
 class ComplementerRequestIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=8, max_length=128)
@@ -397,6 +403,70 @@ async def _safe_json_post(
     if not isinstance(data, dict) or data.get("status") != "complete" or not isinstance(data.get("candidates"), list):
         raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_RESPONSE"})
     return data
+
+
+@app.post("/api/age-evidence/sessions")
+async def start_age_evidence_session(payload: AgeEvidenceSessionStartIn, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        try:
+            response = await client.post(
+                base + "/v1/me/age-evidence/sessions",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=payload.model_dump(),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SESSION_START_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(response.status_code if response.status_code < 500 else 503, detail={"code": "AGE_EVIDENCE_SESSION_START_FAILED"})
+    return JSONResponse(response.json(), headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/age-evidence/sessions/{session_id}/poll")
+async def poll_age_evidence_session(session_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        try:
+            response = await client.post(
+                base + f"/v1/me/age-evidence/sessions/{session_id}/poll",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SESSION_POLL_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(response.status_code if response.status_code < 500 else 503, detail={"code": "AGE_EVIDENCE_SESSION_POLL_FAILED"})
+    return JSONResponse(response.json(), headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/age-evidence/sessions/{session_id}/revoke")
+async def revoke_age_evidence_session(session_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        try:
+            response = await client.post(
+                base + f"/v1/me/age-evidence/sessions/{session_id}/revoke",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SESSION_REVOKE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(response.status_code if response.status_code < 500 else 503, detail={"code": "AGE_EVIDENCE_SESSION_REVOKE_FAILED"})
+    return JSONResponse(response.json(), headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/api/vision/marketplace-search")
@@ -769,6 +839,33 @@ async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request
     if not isinstance(subject, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}", subject.strip()):
         raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
     return subject.strip(), user_token.strip()
+
+
+def _age_evidence_request_fields(request: Request, subject: str) -> dict[str, Any]:
+    """Forward only a signed, request/subject-bound Yoti attestation from the browser."""
+    raw = request.headers.get("x-cirvanna-age-attestation")
+    signature = request.headers.get("x-cirvanna-age-attestation-signature")
+    request_id = request.headers.get("x-cirvanna-age-evidence-request-id")
+    if raw is None and signature is None and request_id is None:
+        return {}
+    if not raw or len(raw) > 8192 or not signature or len(signature) < 64 or not request_id:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_HEADERS_INCOMPLETE"})
+    try:
+        attestation = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_HEADER_INVALID"}) from exc
+    if (
+        not isinstance(attestation, dict)
+        or attestation.get("subject_id") != subject
+        or attestation.get("request_id") != request_id
+        or attestation.get("purpose") != "shopper_eligibility"
+    ):
+        raise HTTPException(403, detail={"code": "AGE_EVIDENCE_SUBJECT_OR_REQUEST_MISMATCH"})
+    return {
+        "request_id": request_id,
+        "age_attestation": attestation,
+        "age_attestation_signature": signature,
+    }
 
 
 def _wardrobe_service() -> tuple[str, str]:
@@ -3611,6 +3708,7 @@ async def public_offers(
             "limit": min(limit, 25),
             "use_wardrobe_context": False,
             "exclude_owned_products": True,
+            **_age_evidence_request_fields(request, subject),
         }
         try:
             response = await client.post(
@@ -3820,6 +3918,14 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     for key in ("content-type", "idempotency-key"):
         if request.headers.get(key):
             headers[key] = request.headers[key]
+    if is_purchase_path:
+        for key in (
+            "x-cirvanna-age-attestation",
+            "x-cirvanna-age-attestation-signature",
+            "x-cirvanna-age-evidence-request-id",
+        ):
+            if request.headers.get(key):
+                headers[key] = request.headers[key]
     body = await request.body()
 
     if is_purchase_path:
@@ -4360,6 +4466,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
             "context": context,
             "use_wardrobe_context": True,
             "exclude_owned_products": effective["exclude_owned_products"],
+            **_age_evidence_request_fields(request, subject),
         }
         try:
             response = await client.post(
