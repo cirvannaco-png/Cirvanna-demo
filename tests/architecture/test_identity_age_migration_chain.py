@@ -48,6 +48,11 @@ class IdentityAgeMigrationChainTests(unittest.TestCase):
         self.assertIn("CREATE ROLE identity_learning_service NOLOGIN", grants)
         self.assertNotIn("CREATE ROLE identity_learning_service", workflow)
 
+    def test_eepl_accepts_only_verified_threshold_evidence_fields(self):
+        eepl = (ROOT / "packages" / "identity-intelligence" / "eepl" / "core.py").read_text(encoding="utf-8")
+        self.assertIn("minimum_age_threshold", eepl)
+        self.assertIn("minimum_age_threshold_met", eepl)
+
     def test_staging_idempotency_constraint_is_reconciled(self):
         migration = (MIGRATIONS / "0016_age_session_request_idempotency.sql").read_text(encoding="utf-8")
         self.assertIn("uq_identity_age_session_request_policy", migration)
