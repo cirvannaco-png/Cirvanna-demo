@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS ix_catacaci_receipts_verdict_created
 
 -- Keep the private schema inaccessible to browser-facing Supabase roles.
 REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM PUBLIC;
-DO $
+DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
         REVOKE ALL ON SCHEMA decision_private FROM anon;
