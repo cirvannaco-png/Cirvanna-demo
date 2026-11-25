@@ -4151,13 +4151,21 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
+    age_headers = {
+        "X-Cirvanna-Age-Attestation": json.dumps({
+            "subject_id": "signed-user-42", "request_id": "checkout-age-001",
+            "purpose": "shopper_eligibility", "jti": "opaque-jti",
+        }),
+        "X-Cirvanna-Age-Attestation-Signature": "a" * 64,
+        "X-Cirvanna-Age-Evidence-Request-ID": "checkout-age-001",
+    }
     variant = "123e4567-e89b-12d3-a456-426614174000"
 
     responses = [
         client.get("/api/commerce/cart", headers=headers),
         client.post("/api/commerce/cart/items", headers=headers, json={"variant_id": variant, "quantity": 1}),
         client.patch(f"/api/commerce/cart/items/{variant}", headers=headers, json={"quantity": 2}),
-        client.post("/api/commerce/checkout", headers={**headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
+        client.post("/api/commerce/checkout", headers={**headers, **age_headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
     ]
     assert [response.status_code for response in responses] == [200, 200, 200, 200]
     assert [call[0] for call in fake.calls] == [
@@ -4192,6 +4200,10 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         "https://commerce.example.test/checkout",
     }]
     assert all(call[2]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
+    checkout_forward = next(call for call in forwarded if call[1] == "https://commerce.example.test/checkout")
+    assert checkout_forward[2]["headers"]["x-cirvanna-age-attestation-signature"] == "a" * 64
+    assert checkout_forward[2]["headers"]["x-cirvanna-age-evidence-request-id"] == "checkout-age-001"
+    assert all("X-Cirvanna-Age-Attestation-Signature" not in call[2]["headers"] for call in forwarded if call is not checkout_forward)
 
 
 def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(client, monkeypatch):
@@ -4624,3 +4636,41 @@ def test_cal_discovery_envelope_requires_authority_request_id_and_complete_count
             main._validate_cal_discovery_envelope(payload, error_code="INVALID")
         assert exc.value.status_code == 502
         assert exc.value.detail["code"] == "INVALID"
+
+
+def test_age_evidence_request_fields_require_signed_subject_and_request_binding():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "buyer-1", "request_id": "age-request-123",
+        "purpose": "shopper_eligibility", "jti": "opaque-jti",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"age-request-123"),
+        ],
+    })
+    fields = main._age_evidence_request_fields(request, "buyer-1")
+    assert fields["request_id"] == "age-request-123"
+    assert fields["age_attestation"] == attestation
+    assert fields["age_attestation_signature"] == "a" * 64
+
+
+def test_age_evidence_request_fields_reject_wrong_subject():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "other-buyer", "request_id": "age-request-123",
+        "purpose": "shopper_eligibility",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"age-request-123"),
+        ],
+    })
+    with pytest.raises(Exception):
+        main._age_evidence_request_fields(request, "buyer-1")
