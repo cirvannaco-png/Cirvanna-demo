@@ -88,9 +88,9 @@ jobs:
       - name: Verify asset PostgreSQL dump and isolated restore
         working-directory: .
         env:
-          PGPASSWORD: cirvanna_test
+          PGPASSWORD: test-secret-assets
         run: |
-          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=cirvanna_test postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U cirvanna_test -d cirvanna_assets --format=custom -f /backup/cirvanna-assets.dump && createdb -h 127.0.0.1 -U cirvanna_test asset_restore && pg_restore -h 127.0.0.1 -U cirvanna_test -d asset_restore --exit-on-error /backup/cirvanna-assets.dump'
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=test-secret-assets postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U cirvanna_test -d cirvanna_assets --format=custom -f /backup/cirvanna-assets.dump && createdb -h 127.0.0.1 -U cirvanna_test asset_restore && pg_restore -h 127.0.0.1 -U cirvanna_test -d asset_restore --exit-on-error /backup/cirvanna-assets.dump'
           psql -h localhost -U cirvanna_test -d asset_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM asset_objects WHERE asset_id='00000000-0000-4000-8000-000000000001' AND publication_state='approved' AND publication_surface='shared_link' AND masking_attestation_id='masking-test-001') THEN RAISE EXCEPTION 'approved asset provenance missing after restore'; END IF; IF NOT EXISTS (SELECT 1 FROM asset_objects WHERE asset_id='00000000-0000-4000-8000-000000000002' AND publication_scope='private_only' AND publication_state='private_only') THEN RAISE EXCEPTION 'Twin mesh private default missing after restore'; END IF; END \$\$;"
       - name: Build private asset service container
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
