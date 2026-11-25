@@ -2476,9 +2476,10 @@ def compose_pnelly_daily_looks(
     # Only positive, non-sensitive fashion preference namespaces may guide ranking.
     profile = _load_verified_usi_profile(subject, allow_without_consent=True)
     allowed_prefixes = ("style:", "color:", "colour:", "silhouette:", "material:", "pattern:")
+    profile_preferences = getattr(profile, "preferences", ()) or ()
     style_signals = [
         preference.attribute.strip()
-        for preference in profile.preferences
+        for preference in profile_preferences
         if preference.active and preference.attribute.strip().casefold().startswith(allowed_prefixes)
     ]
     if payload.wardrobe_items and not _pnelly_npl_provider_configured():
