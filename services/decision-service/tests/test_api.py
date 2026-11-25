@@ -3,7 +3,9 @@ import hmac
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
+os.environ.setdefault("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-provider-test-key-minimum-32-bytes")
 os.environ.setdefault("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
 os.environ.setdefault("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
 os.environ.setdefault("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
@@ -16,17 +18,65 @@ from app import main
 
 @pytest.fixture(autouse=True)
 def config(monkeypatch):
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
+    monkeypatch.setenv("AGE_EVIDENCE_REDEMPTION_URL", "https://identity.example.test/internal/v1/age-evidence/attestations/redeem")
+    monkeypatch.setenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "age-evidence-redemption-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CAM_SERVICE_TOKEN", "catacaci-cam-service-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CIL_SERVICE_TOKEN", "catacaci-cil-service-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CIL_AGGREGATE_TOKEN", "catacaci-cil-aggregate-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CIL_RETENTION_TOKEN", "catacaci-cil-retention-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_VSL_PROPOSER_TOKEN", "catacaci-vsl-proposer-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_VSL_APPROVER_TOKEN", "catacaci-vsl-approver-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_VSL_PROPOSER_ID", "proposer-test")
+    monkeypatch.setenv("CATACACI_VSL_APPROVER_ID", "approver-test")
+    monkeypatch.setenv("CATACACI_CIL_ALLOWED_COHORT_KEYS", "market:ke|category:tops")
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CAL_REVIEW_OPERATOR_TOKEN", "cal-review-operator-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_POLICY_ID", "standard-marketplace")
+    monkeypatch.setenv("EEPL_POLICY_ID", "standard-marketplace")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", json.dumps({
+        "standard-marketplace": {
+            "policy_version": "marketplace-policy-1",
+            "minimum_fit_confidence": 0.70,
+            "maximum_fit_confidence_disagreement": 0.10,
+            "minimum_alignment_score": 0.60,
+        }
+    }))
+    monkeypatch.setattr(main, "_redeem_age_attestation", lambda payload, signature: None)
+    monkeypatch.setattr(main, "check_receipt_store", lambda: True)
+    monkeypatch.setattr(main, "check_governance_store", lambda: True)
+    monkeypatch.setattr(main, "persist_decision_receipt", lambda receipt: {
+        "receipt_id": "123e4567-e89b-42d3-a456-426614174000",
+        "receipt_sha256": "a" * 64,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
+        "standard-marketplace": {
+            "policy_version": "1.0.0", "minimum_age": None, "maximum_age": None,
+            "allowed_locations": ["Nairobi"], "allowed_occasions": ["everyday"],
+            "allowed_climates": ["warm"], "required_context": [],
+        }
+    }))
 
 
 @pytest.fixture
 def client():
     with TestClient(main.app) as value:
         yield value
+
+
+def configure_server_policy(monkeypatch, *, minimum_age=None, maximum_age=None):
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
+        "standard-marketplace": {
+            "policy_version": "1.0.0", "minimum_age": minimum_age,
+            "maximum_age": maximum_age, "allowed_locations": ["Nairobi"],
+            "allowed_occasions": ["everyday"], "allowed_climates": ["warm"],
+            "required_context": [],
+        }
+    }))
 
 
 def signed_fit(fit: dict) -> str:
@@ -58,14 +108,14 @@ def request_body(**overrides):
     body = {
         "request_id": "req-eligibility-001",
         "candidate_id": "catalog-product-001",
-        "policy_version": "marketplace-policy-1",
+        "catalog_version": 7,
         "context": {
             "user_id": "user-001", "age_years": 21, "location": "Nairobi",
             "occasion": "everyday", "climate": "warm",
         },
         "eepl_policy": {
             "policy_id": "standard-marketplace", "policy_version": "1.0.0",
-            "minimum_age": 18, "allowed_locations": ["Nairobi"],
+            "minimum_age": None, "allowed_locations": ["Nairobi"],
             "allowed_occasions": ["everyday"], "allowed_climates": ["warm"],
         },
         "usi_profile": {
@@ -95,14 +145,108 @@ def request_body(**overrides):
             {"signal_id": "hard-001", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD",
              "explanation": "Declared hard constraints were checked.", "source_version": "constraints-v1"},
         ],
-        "minimum_fit_confidence": 0.70,
-        "minimum_alignment_score": 0.60,
     }
     body.update(overrides)
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
     body["npl_evidence_signature"] = signed_npl(body)
     body["cultural_evidence_signature"] = signed_cultural(body)
     return body
+
+
+
+def attach_age_attestation(body: dict, *, threshold_met: bool = True) -> None:
+    from age_evidence import build_threshold_attestation, sign_threshold_attestation
+
+    now = datetime.now(timezone.utc)
+    attestation = build_threshold_attestation(
+        subject_id=body["context"]["user_id"],
+        request_id=body["request_id"],
+        purpose="shopper_eligibility",
+        policy_id=body["eepl_policy"]["policy_id"],
+        policy_version=body["eepl_policy"]["policy_version"],
+        threshold=json.loads(os.environ["EEPL_POLICY_REGISTRY_JSON"])["standard-marketplace"]["minimum_age"],
+        threshold_met=threshold_met,
+        provider_session_id="yoti-session-123",
+        provider_evidence_id="yoti-evidence-123",
+        issued_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+    body["age_attestation"] = attestation
+    body["age_attestation_signature"] = sign_threshold_attestation(
+        attestation, os.environ["AGE_EVIDENCE_HMAC_SECRET"]
+    )
+
+
+def test_unverified_client_age_is_ignored_and_age_policy_routes_to_review(client, monkeypatch):
+    body = request_body()
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
+    body["context"]["age_years"] = 17
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "REVIEW"
+    assert result["may_display"] is False
+    assert result["gates"]["eepl"]["verdict"] == "review"
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_AGE" in result["gates"]["eepl"]["reason_codes"]
+    assert result["age_evidence"]["used_for_eligibility"] is False
+    assert result["age_evidence"]["status"] == "unverified_client_value"
+
+
+def test_verified_yoti_threshold_attestation_is_used_by_eepl(client, monkeypatch):
+    body = request_body()
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
+    body["context"]["age_years"] = 16
+    attach_age_attestation(body, threshold_met=True)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "SHOW"
+    assert result["age_evidence"] == {
+        "contract_version": "age-threshold-attestation-v1",
+        "status": "verified_threshold_met",
+        "used_for_eligibility": True,
+        "threshold": 18,
+    }
+
+
+def test_verified_under_threshold_attestation_blocks_eligibility(client, monkeypatch):
+    body = request_body()
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
+    attach_age_attestation(body, threshold_met=False)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "BLOCK"
+    assert response.json()["age_evidence"]["status"] == "verified_threshold_not_met"
+
+
+def test_age_attestation_subject_binding_mismatch_is_rejected(client, monkeypatch):
+    body = request_body()
+    configure_server_policy(monkeypatch, minimum_age=18)
+    body["eepl_policy"]["minimum_age"] = None
+    attach_age_attestation(body)
+    body["context"]["user_id"] = "different-user"
+    # Other signed evidence is re-created for the altered request identity.
+    body["fit_estimate"]["user_id"] = "different-user"
+    body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    body["npl_evidence_signature"] = signed_npl(body)
+    body["cultural_evidence_signature"] = signed_cultural(body)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "AGE_EVIDENCE_POLICY_BINDING_INVALID"
+
+
+def test_threshold_attestation_cannot_satisfy_maximum_age_policy(client, monkeypatch):
+    body = request_body()
+    configure_server_policy(monkeypatch, minimum_age=18, maximum_age=65)
+    body["eepl_policy"]["minimum_age"] = None
+    body["eepl_policy"]["maximum_age"] = None
+    attach_age_attestation(body)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "AGE_EVIDENCE_POLICY_UNSUPPORTED"
 
 
 def headers():
@@ -114,11 +258,51 @@ def test_health_capabilities_and_readiness_are_factual(client):
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["fci_prediction_model_available"] is False
+    assert ready.json()["catacaci_policy_registry_configured"] is True
     caps = client.get("/capabilities").json()
     assert caps["catacaci_cal_arbitration"] is True
+    assert caps["catacaci_server_owned_policy"] is True
     assert caps["eepl_policy_evaluation"] is True
     assert caps["fci_prediction_model_available"] is False
     assert caps["virtual_twin_generation"] is False
+
+
+
+def test_client_cannot_override_server_owned_cal_thresholds(client):
+    body = request_body()
+    body["minimum_fit_confidence"] = 0.0
+    body["minimum_alignment_score"] = 0.0
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "caller_policy_field",
+    [
+        {"cal_policy_id": "unregistered-policy"},
+        {"policy_version": "stale-policy-version"},
+    ],
+)
+def test_client_cannot_select_cal_policy_or_version(client, caller_policy_field):
+    body = request_body(**caller_policy_field)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+
+
+def test_unregistered_server_cal_policy_fails_closed(client, monkeypatch):
+    monkeypatch.setenv("CATACACI_POLICY_ID", "unregistered-policy")
+    response = client.post(
+        "/v1/eligibility/evaluate", json=request_body(), headers=headers()
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "SERVER_CAL_POLICY_UNAVAILABLE"
+
+
+def test_readiness_fails_when_server_cal_policy_registry_is_missing(client, monkeypatch):
+    monkeypatch.delenv("CATACACI_POLICY_REGISTRY_JSON", raising=False)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"]["catacaci_policy_registry_configured"] is False
 
 
 def test_decision_endpoint_requires_internal_authentication(client):
@@ -144,7 +328,11 @@ def test_full_eligibility_pipeline_calls_real_cal_and_only_show_authorizes_displ
     assert result["gates"]["confidence"]["status"] == "ready"
     assert result["gates"]["confidence"]["coverage_ratio"] == 1.0
     assert result["gates"]["fci"]["calibrated"] is True
+    assert result["policy"]["id"] == "standard-marketplace"
+    assert result["policy"]["version"] == "marketplace-policy-1"
     assert result["policy"]["minimum_fit_confidence"] == 0.70
+    assert result["policy"]["maximum_fit_confidence_disagreement"] == 0.10
+    assert result["policy"]["minimum_alignment_score"] == 0.60
     assert any(signal.startswith("eepl:") for signal in result["arbitration"]["evaluated_signal_ids"])
 
 
@@ -490,3 +678,13 @@ def test_required_cil_feedback_review_enforcement_fails_closed_when_service_unav
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CIL_CAL_FEEDBACK_DECISION_UNAVAILABLE"
+
+
+def test_durable_receipt_requires_strict_positive_catalog_version(client):
+    missing = request_body()
+    missing.pop("catalog_version")
+    assert client.post("/v1/eligibility/evaluate", json=missing, headers=headers()).status_code == 422
+    coerced = request_body(catalog_version="7")
+    assert client.post("/v1/eligibility/evaluate", json=coerced, headers=headers()).status_code == 422
+    invalid = request_body(catalog_version=0)
+    assert client.post("/v1/eligibility/evaluate", json=invalid, headers=headers()).status_code == 422
