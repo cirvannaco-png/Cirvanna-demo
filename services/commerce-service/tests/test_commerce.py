@@ -13,6 +13,7 @@ os.environ.setdefault("COMMERCE_DATABASE_URL", "sqlite:///./test-commerce-import
 os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
@@ -5233,3 +5234,51 @@ def test_shopify_staged_products_are_private_and_scoped_to_approved_merchant_own
     # Anonymous shopper traffic is rejected before any staging data is queried.
     anonymous_response = client.get("/integrations/shopify/staged-products")
     assert anonymous_response.status_code == 401
+
+
+def test_commerce_purchase_age_evidence_headers_are_subject_and_request_bound():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "buyer-age-1", "request_id": "checkout-age-001",
+        "purpose": "shopper_eligibility", "jti": str(uuid.uuid4()),
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"checkout-age-001"),
+        ],
+    })
+    fields = main._commerce_age_evidence_fields(request, "buyer-age-1")
+    assert fields["request_id"] == "checkout-age-001"
+    assert fields["age_attestation"] == attestation
+    assert fields["age_attestation_signature"] == "a" * 64
+
+
+def test_commerce_purchase_age_evidence_rejects_wrong_subject():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "another-buyer", "request_id": "checkout-age-002",
+        "purpose": "shopper_eligibility",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"checkout-age-002"),
+        ],
+    })
+    with pytest.raises(HTTPException):
+        main._commerce_age_evidence_fields(request, "buyer-age-1")
+
+
+def test_commerce_purchase_age_evidence_rejects_partial_headers():
+    from starlette.requests import Request
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-cirvanna-age-attestation-signature", b"a" * 64)],
+    })
+    with pytest.raises(HTTPException):
+        main._commerce_age_evidence_fields(request, "buyer-age-1")
