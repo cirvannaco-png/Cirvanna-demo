@@ -632,7 +632,7 @@ def _decode_oidc_actor(token: str) -> Actor:
     jwks_url = _oidc_jwks_url()
     issuer = os.getenv("COMMERCE_JWT_ISSUER", "").strip()
     audience = os.getenv("COMMERCE_JWT_AUDIENCE", "").strip()
-    role_claim = os.getenv("COMMERCE_JWT_ROLE_CLAIM", "role").strip() or "role"
+    role_claim = os.getenv("COMMERCE_JWT_ROLE_CLAIM", "app_role").strip() or "app_role"
     try:
         signing_key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
         claims = pyjwt.decode(
