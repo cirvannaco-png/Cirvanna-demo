@@ -41,7 +41,7 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres_ci
+          POSTGRES_PASSWORD: test-secret-postgres
           POSTGRES_DB: commerce_ci
         ports:
           - 5432:5432
@@ -64,13 +64,13 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Provision separate migration, runtime and audit-probe roles
         env:
-          PGPASSWORD: postgres_ci
+          PGPASSWORD: test-secret-postgres
         run: |
           psql -h localhost -U postgres -d commerce_ci -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE ROLE commerce_migrator LOGIN PASSWORD 'commerce_migrator_ci';
+          CREATE ROLE commerce_migrator LOGIN PASSWORD 'test-secret-migrator';
           ALTER DATABASE commerce_ci OWNER TO commerce_migrator;
-          CREATE ROLE commerce_runtime LOGIN PASSWORD 'commerce_runtime_ci';
-          CREATE ROLE commerce_audit_probe LOGIN PASSWORD 'commerce_audit_probe_ci';
+          CREATE ROLE commerce_runtime LOGIN PASSWORD 'test-secret-runtime';
+          CREATE ROLE commerce_audit_probe LOGIN PASSWORD 'test-secret-audit-probe';
           GRANT CONNECT ON DATABASE commerce_ci TO commerce_runtime, commerce_audit_probe;
           GRANT USAGE ON SCHEMA public TO commerce_runtime, commerce_audit_probe;
           ALTER DEFAULT PRIVILEGES FOR ROLE commerce_migrator IN SCHEMA public
@@ -91,11 +91,11 @@ jobs:
           alembic upgrade head
       - name: Verify CAL purchase audit immutability on PostgreSQL
         env:
-          PGPASSWORD: postgres_ci
-          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce_runtime:commerce_runtime_ci@localhost:5432/commerce_ci
-          COMMERCE_MIGRATION_DATABASE_URL: postgresql+psycopg://commerce_migrator:commerce_migrator_ci@localhost:5432/commerce_ci
+          PGPASSWORD: test-secret-postgres
+          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce_runtime:test-secret-runtime@localhost:5432/commerce_ci
+          COMMERCE_MIGRATION_DATABASE_URL: postgresql+psycopg://commerce_migrator:test-secret-migrator@localhost:5432/commerce_ci
           COMMERCE_ENVIRONMENT: production
-          COMMERCE_CAL_AUDIT_PROBE_DATABASE_URL: postgresql+psycopg://commerce_audit_probe:commerce_audit_probe_ci@localhost:5432/commerce_ci
+          COMMERCE_CAL_AUDIT_PROBE_DATABASE_URL: postgresql+psycopg://commerce_audit_probe:test-secret-audit-probe@localhost:5432/commerce_ci
           COMMERCE_AUTO_CREATE_SCHEMA: "false"
         run: |
           alembic upgrade 20261109_0007
@@ -104,7 +104,7 @@ jobs:
           python scripts/verify_cal_purchase_audit_immutability.py
           alembic downgrade 20261109_0007
           alembic upgrade head
-          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=postgres_ci postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U postgres -d commerce_ci --format=custom -f /backup/cirvanna-commerce.dump && createdb -h 127.0.0.1 -U postgres commerce_restore && pg_restore -h 127.0.0.1 -U postgres -d commerce_restore --exit-on-error /backup/cirvanna-commerce.dump'
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=test-secret-postgres postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U postgres -d commerce_ci --format=custom -f /backup/cirvanna-commerce.dump && createdb -h 127.0.0.1 -U postgres commerce_restore && pg_restore -h 127.0.0.1 -U postgres -d commerce_restore --exit-on-error /backup/cirvanna-commerce.dump'
           psql -h localhost -U postgres -d commerce_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261121_0016') THEN RAISE EXCEPTION 'Commerce migration head was not restored'; END IF; IF to_regclass('public.commerce_cal_purchase_audits') IS NULL THEN RAISE EXCEPTION 'CAL purchase audit table missing after restore'; END IF; IF (SELECT count(*) FROM pg_trigger WHERE tgname IN ('trg_commerce_cal_purchase_audits_no_update_delete','trg_commerce_cal_purchase_audits_no_truncate') AND NOT tgisinternal) <> 2 THEN RAISE EXCEPTION 'CAL audit UPDATE/DELETE and TRUNCATE triggers missing after restore'; END IF; IF has_table_privilege('commerce_runtime','public.commerce_cal_purchase_audits','TRUNCATE') THEN RAISE EXCEPTION 'Commerce runtime can truncate immutable CAL audit table'; END IF; IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.commerce_cal_purchase_audits'::regclass) <> 'commerce_migrator' THEN RAISE EXCEPTION 'CAL audit table owner is not migration role'; END IF; END \$\$;"
       - name: Validate model schema compilation
         run: python -m compileall -q app migrations
