@@ -11,7 +11,9 @@
       "status": "blocked",
       "owner_role": "Release engineer",
       "acceptance": "All required GitHub Actions workflows pass on the exact proposed release commit; scripts/audit_source_lineage.py is run in strict mode without --allow-unreconciled, and source archive, snapshot and candidate-lineage integrity checks pass; skips and warnings are reviewed and justified.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-exact-head-ci-and-catalog-staging-plan.md"
+      ],
       "verified_commit": null
     },
     {
@@ -22,7 +24,8 @@
       "owner_role": "Platform owner / budget approver",
       "acceptance": "Approved workspace, region, paid plan/budget, service/database IDs, recovery owner, RPO/RTO, and alert recipient are recorded. No unrelated project's resources are reused.",
       "evidence_refs": [
-        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md",
+        "docs/release/evidence/2026-11-26-exact-head-ci-and-catalog-staging-plan.md"
       ],
       "verified_commit": null
     },
@@ -124,7 +127,9 @@
       "status": "blocked",
       "owner_role": "QA/release owner",
       "acceptance": "A real deployed staging journey covers identity, consented profile, discovery, hard constraints, CAL arbitration, checkout, webhook reconciliation, persistence, failure paths and audit. Evidence uses redacted request IDs and identifies the exact candidate commit.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-exact-head-ci-and-catalog-staging-plan.md"
+      ],
       "verified_commit": null
     },
     {
@@ -178,7 +183,8 @@
       "acceptance": "One approved canonical deployment is running the exact release commit with immutable image digests, the full private/public service graph, versioned schemas, approved providers, secret-manager bindings, managed databases, encrypted backups and successful isolated restores, RPO/RTO, central logs/metrics/traces, actionable alerts, on-call/contact ownership, runbooks, dependency failure drills, rollback and staging-to-production promotion evidence. Rollback evidence must prove restoration of the last-known-good per-service immutable image digests (not a rebuild), safe database compatibility or isolated restore/reconciliation, successful traffic reversal, and post-rollback identity, discovery/CAL, commerce/payment, privacy, queue and observability checks with measured RTO/RPO and zero unresolved reconciliation gaps.",
       "evidence_refs": [
         "docs/release/evidence/2026-11-26-staging-database-security-verification.md",
-        "docs/release/evidence/2026-11-26-neon-snapshot-restore-drill.md"
+        "docs/release/evidence/2026-11-26-neon-snapshot-restore-drill.md",
+        "docs/release/evidence/2026-11-26-exact-head-ci-and-catalog-staging-plan.md"
       ],
       "verified_commit": null
     },
