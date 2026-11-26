@@ -25,7 +25,7 @@ def test_style_profile_builder_exposes_independent_axes():
 
 
 def test_wardrobe_inline_javascript_parses_with_node():
-    scripts = re.findall(r"<script(?:\\s[^>]*)?>(.*?)</script>", HTML, flags=re.IGNORECASE | re.DOTALL)
+    scripts = re.findall(r"<script(?:[ \t][^>]*)?>(.*?)</script>", HTML, flags=re.IGNORECASE | re.DOTALL)
     nonempty = [script for script in scripts if script.strip()]
     assert nonempty, "expected inline Wardrobe application script"
     for script in nonempty:
