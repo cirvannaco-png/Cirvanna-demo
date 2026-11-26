@@ -7,13 +7,12 @@
 The assessor must be independent of Cirvanna's implementation team and hosting/provider vendors, disclose conflicts, sign an NDA and data-processing terms, and provide named lead assessors, methodology, professional liability cover, secure evidence handling, and a fixed scope/price. The firm must be allowed to report critical findings directly to the founder and must not be paid contingent on a clean report.
 
 Shortlist for an RFP (verify current accreditation, scope and availability directly before appointment):
-- [Enovise](https://enovise.com/) — listed by CREST's Kenya provider directory for penetration testing.
 - [Technovar](https://www.techinnovar.com/) — listed by CREST's Kenya provider directory for penetration testing.
 - [RedLion](https://redlion.co.ke/) — listed by CREST's Kenya provider directory for penetration testing.
 - [Secmentis](https://www.secmentis.com/kenya/) — listed by CREST's Kenya provider directory for penetration testing.
 - [Cyber Security Africa](http://www.cybersecurityafrica.com/) — listed by CREST's Kenya provider directory for penetration testing.
 
-A penetration test alone is insufficient. The engagement must include an independent privacy/DPIA review by qualified privacy professionals familiar with Kenya's Data Protection Act and relevant target-market law. A firm may subcontract this work only with disclosure and approval. Do not treat the CREST directory as proof of privacy-assessment competence.
+A penetration test alone is insufficient. The CREST [Kenya provider directory](https://cmage.crest-approved.org/countries/kenya/reports/penetration_testing_providers.html) is the starting point for verifying current penetration-testing provider status; accreditation and service scope must be reconfirmed at procurement. The engagement must separately include an independent privacy/DPIA review by qualified privacy professionals familiar with Kenya's Data Protection Act and relevant target-market law. No privacy assessor has been selected. A firm may subcontract this work only with disclosure and approval. Do not treat penetration-testing accreditation as proof of privacy-assessment competence.
 
 ## Required assessment scope
 
