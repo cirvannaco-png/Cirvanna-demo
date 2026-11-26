@@ -519,16 +519,17 @@ def _score(
         if not signal or ":" not in signal:
             continue
         namespace, value = signal.split(":", 1)
+        value = _normalise(value)
         if value not in text:
             continue
         if namespace == "culture":
-            axis_matches["cultural_expression"] += 2
+            axis_matches["cultural_expression"] += 3
         elif namespace in {"style", "aesthetic"}:
-            axis_matches["personal_aesthetic"] += 2
+            axis_matches["personal_aesthetic"] += 3
         elif namespace == "occasion":
-            axis_matches["occasion"] += 2
+            axis_matches["occasion"] += 3
         elif namespace in {"color", "colour", "silhouette", "material", "pattern", "coverage"}:
-            axis_matches["personal_preferences"] += 2
+            axis_matches["personal_preferences"] += 3
     score += min(4, axis_matches["cultural_expression"])
     score += min(4, axis_matches["personal_aesthetic"])
     score += min(4, axis_matches["occasion"])
