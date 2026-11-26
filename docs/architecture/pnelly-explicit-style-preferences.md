@@ -109,4 +109,17 @@ Rollback: revert the branch. Existing USI profile JSON remains backward-compatib
 
 ### Coverage semantics
 
-The personal-atelier coverage values in this increment are persisted as **soft, user-confirmed styling preferences** and can influence ranking only. They are not a hard modesty, safety, or eligibility gate. A future hard coverage requirement must be captured as an explicit Cultural Identity declaration and evaluated before outfit composition; it must not be promoted from a soft USI preference or inferred from appearance.
+The personal-atelier coverage values remain **soft, user-confirmed styling preferences** and can influence ranking only. Wardrobe now provides a separate hard-requirement panel for explicit coverage declarations. The user must affirm that the selected requirements are non-negotiable; the BFF binds the declaration to the Commerce-verified subject and sends it to the canonical Cultural Identity service. The gateway retrieves active declarations per candidate, verifies candidate-bound signed evidence, and passes the requirements to CAL. Missing required product metadata routes to REVIEW; a hard forbidden-attribute conflict blocks. These requirements are never inferred from appearance or silently promoted from soft USI preferences.
+
+
+### Hard policy declarations and regional marketplace handoff
+
+The Wardrobe UI now separates the soft preference composer from non-negotiable coverage policy. The latter uses the authenticated BFF routes:
+
+- `POST /api/wardrobe/pnelly/cultural-declarations` creates a confirmed declaration. The browser cannot choose the subject ID; the BFF derives it from Commerce `/me`.
+- `GET /api/wardrobe/pnelly/cultural-declarations` lists declarations for that verified subject only.
+- `POST /api/wardrobe/pnelly/cultural-declarations/{declaration_id}/retract` records an explicit correction event. Retraction removes the requirement from subsequent active evaluations.
+
+The BFF uses a dedicated private Cultural Identity service token. Requirement IDs are deterministically namespaced by declaration to avoid collisions when a user later re-declares a previously retracted requirement. Contradictory required/forbidden values in one declaration are rejected. In production, the Decision Gateway returns 503 if Cultural Identity evidence is not configured; an absent provider is never treated as an empty declaration set. This code path still requires deployed service credentials, PostgreSQL migration/restore verification, and live cross-service signature/E2E tests before production promotion.
+
+A single active `market:XX` value in the verified USI profile is now applied to marketplace offer discovery when the shopper has not explicitly selected a market for the current search. An explicit search market wins. Saving a different PNELLY market selection deactivates the prior PNELLY market value atomically. Multiple or ambiguous active market values do not cause an arbitrary choice. This passes the selected market country code into the existing Commerce offer filter; it does not establish local designer ranking, inventory certainty, local tax, landed pricing, fulfilment capability or delivery coverage. Those remain Commerce/provider evidence and must be independently validated.
