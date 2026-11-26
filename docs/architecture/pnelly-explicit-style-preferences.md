@@ -105,3 +105,8 @@ The Wardrobe experience adds a multi-axis personal-atelier selector. Saving sele
 Regional availability, local designers, market pricing and fulfilment remain Catalog/Commerce responsibilities. The `market:XX` preference records a user-selected preferred market only; it does not assert product availability. All product display continues to require CAL authorization.
 
 Rollback: revert the branch. Existing USI profile JSON remains backward-compatible; newly saved attributes are ignored by older recommendation consumers unless explicitly supported. Do not delete user profile records during rollback.
+
+
+### Coverage semantics
+
+The personal-atelier coverage values in this increment are persisted as **soft, user-confirmed styling preferences** and can influence ranking only. They are not a hard modesty, safety, or eligibility gate. A future hard coverage requirement must be captured as an explicit Cultural Identity declaration and evaluated before outfit composition; it must not be promoted from a soft USI preference or inferred from appearance.
