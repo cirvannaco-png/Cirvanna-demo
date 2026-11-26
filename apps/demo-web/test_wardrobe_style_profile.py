@@ -45,18 +45,10 @@ def test_wardrobe_uses_sanctuary_visual_tokens():
     assert "border-radius:var(--radius)" in HTML
 
 def test_all_builder_values_are_manageable_and_allowlisted_in_the_ui():
-    options_match = re.search(
-        r"const PNELLY_PREFERENCE_OPTIONS = \\[(.*?)\\n  \\];",
-        HTML,
-        flags=re.DOTALL,
-    )
-    builder_match = re.search(
-        r'<div class="style-profile-builder".*?</div>\\s*</div>',
-        HTML,
-        flags=re.DOTALL,
-    )
-    assert options_match is not None
-    assert builder_match is not None
-    managed = set(re.findall(r'\\["((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', options_match.group(1)))
-    builder_values = set(re.findall(r'value="((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', builder_match.group(0)))
+    options_text = HTML.split("const PNELLY_PREFERENCE_OPTIONS = [", 1)[1].split("  ];", 1)[0]
+    builder_text = HTML.split('<div class="style-profile-builder"', 1)[1].split(
+        '<div class="status" id="pnellyPreferencesStatus"', 1
+    )[0]
+    managed = set(re.findall(r'"((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', options_text))
+    builder_values = set(re.findall(r'value="((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', builder_text))
     assert builder_values.issubset(managed)
