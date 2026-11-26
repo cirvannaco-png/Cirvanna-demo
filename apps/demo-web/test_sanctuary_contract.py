@@ -50,3 +50,20 @@ class SanctuaryContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_sanctuary_explains_independent_identity_dimensions():
+    for label in (
+        "CULTURAL EXPRESSION",
+        "PERSONAL AESTHETIC",
+        "OCCASION",
+        "PERSONAL PREFERENCES",
+        "REGIONAL CONTEXT",
+    ):
+        assert label in HTML
+    assert "Many influences. One unmistakably yours." in HTML
+    assert 'href="/wardrobe.html">Shape your personal atelier' in HTML
+    assert "Nothing is inferred from your appearance." in HTML
+    for token in (".cv-identity-grid", ".cv-identity-card", "@media (max-width: 440px)"):
+        assert token in CSS
