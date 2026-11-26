@@ -31,7 +31,7 @@ def compose_style_profile(preferences: dict[str, Any], look: dict[str, Any]) -> 
         "silhouettes": _values(preferences.get("preferred_silhouettes")),
         "materials": _values(preferences.get("preferred_materials")),
         "patterns": _values(preferences.get("preferred_patterns")),
-        "coverage_requirements": _values(preferences.get("coverage_preferences")),
+        "coverage_preferences": _values(preferences.get("coverage_preferences")),
     }
     regional = {
         "market_country_code": preferences.get("regional_market"),
