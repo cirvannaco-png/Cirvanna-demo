@@ -6,6 +6,7 @@ on:
       - "services/marketplace-bff/**"
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/wardrobe.html"
+      - "apps/demo-web/test_wardrobe_style_profile.py"
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/merchant-portal.html"
       - "apps/demo-web/assets/appearance-workspace.js"
@@ -54,6 +55,8 @@ jobs:
         run: python -m pytest -q
       - name: Compile BFF Python
         run: python -m compileall -q services/marketplace-bff/app
+      - name: Validate Wardrobe style-profile controls and inline JavaScript
+        run: python -m pytest apps/demo-web/test_wardrobe_style_profile.py -q
       - name: Validate shared appearance browser bundle
         run: node --check apps/demo-web/assets/appearance-workspace.js
       - name: Test shared Appearance portal integration
