@@ -109,10 +109,15 @@ A privileged-owner rollback-only probe attempted to UPDATE and DELETE a decision
 
 This validates the PostgreSQL schema and privilege contract. It still does not validate the Python receipt-store adapter through a deployed Decision Gateway/Decision Service, because `DECISION_AUDIT_DATABASE_URL` has not yet been bound in the hosting secret manager.
 
+## Decision receipt store staging
+
+The Decision service migration `services/decision-service/migrations/0001_catacaci_decision_receipts.sql` was reviewed against a dedicated Neon database named `cirvanna_decision_receipts` in the Cirvanna-only Neon project. The `decision_private.catacaci_decision_receipts` table has the expected 19 columns and two lookup indexes. It is owned by `cirvanna_catalog_owner`; the separate `cirvanna_decision_receipts_runtime` login role has SELECT/INSERT only, no UPDATE/DELETE/TRUNCATE, no schema CREATE, and no database CREATE. A rollback-only runtime-role probe confirmed that UPDATE, DELETE and TRUNCATE are rejected and left zero probe rows.
+
+This is a provisioned staging receipt store, not yet connected to the deployed Decision Service. `DECISION_AUDIT_DATABASE_URL` has not been bound to a service secret, and the real API persistence/replay/fail-closed integration test remains outstanding. The separate `cirvanna_decision_audit` database continues to hold the existing CIL/CaTaCaCi tables; the new receipt store is intentionally separate to match the adapter's dedicated database URL.
+
 ## Known deployment and provider blockers
 
-- Render private Catalog service blueprint planning returns `need_payment_info`. No public/free Catalog endpoint was created because the service is internal and exposing it publicly would create an avoidable CAL bypass surface.
-- Neon Decision Audit database is empty. The Decision Gateway's production PostgreSQL receipt adapter therefore is not yet provisioned or verified.
+- Render blueprint planning currently proposes a **public free web service** with generated, distinct read/write bearer tokens and one required manual secret, `CATALOG_DATABASE_URL`. The plan is not approved or deployed. Public staging is permitted only with internal tokens held server-side, no browser exposure, and real 401/403 negative tests. The workspace/account choice and deployment approval remain outstanding.
 - Stripe sandbox is confirmed `livemode=false`; it has no product and no webhook endpoint. Stripe Tax settings are `pending`. No Checkout Session or payment was created.
 - No production services, real payment transactions, independent assessor reports, backup restore drill, rollback drill, or full staging E2E run are evidenced here.
 
