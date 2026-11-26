@@ -141,3 +141,27 @@ def test_create_rejects_contradictory_required_and_forbidden_attributes():
         ))
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "CONTRADICTORY_CULTURAL_REQUIREMENTS"
+
+
+def test_create_replay_confirms_exact_existing_declaration_before_success():
+    subject = "verified-user-42"
+    declaration_id = declaration_id_for(subject, "request-hard-coverage-001")
+    client = Client([
+        Response({"detail": "duplicate declaration"}, 409),
+        Response({"user_id": subject, "declarations": [{
+            "declaration_id": declaration_id,
+            "status": "active",
+            "requirements": [{
+                "attribute": "coverage:long-sleeves",
+                "kind": "required_attribute",
+                "hard": True,
+            }],
+        }]}, 200),
+    ])
+    result = asyncio.run(create_cultural_declaration(
+        client, base="https://cultural.example.test", token="internal-token",
+        subject=subject, payload=create_payload(),
+    ))
+    assert result["idempotent_replay"] is True
+    assert result["status"] == "active"
+    assert len(client.calls) == 2
