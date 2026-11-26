@@ -93,7 +93,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
         page = self.browser.new_page()
         page.add_init_script("""
             // Set bootstrap first: this script may run for the initial opaque about:blank document.
-            window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:true});
+            window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});
             window.__marketplaceSessionReady = null;
             window.addEventListener("cirvanna:session-ready", event => {
                 window.__marketplaceSessionReady = event.detail || null;
@@ -154,15 +154,16 @@ class MarketplaceBrowserTests(unittest.TestCase):
                 route.fulfill(status=404, content_type="application/json", body='{"detail":"not found"}')
 
         page.route("**/api/commerce/**", api)
+        page.route("**/auth/session", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body='{"authenticated":true,"user":{"id":"browser-test-customer"}}',
+            headers={"Cache-Control":"no-store"}
+        ))
+        page.route("**/auth/logout", lambda route: route.fulfill(
+            status=204, headers={"Cache-Control":"no-store"}
+        ))
         page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
-        page.wait_for_function("document.querySelector('#status').textContent.includes('Sign in')")
-        page.locator("#settingsBtn").click()
-        page.locator("#commerceToken").fill("signed-user-session-token")
-        page.get_by_role("button", name="Connect test customer session").click()
         page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
-        page.wait_for_function(
-            "window.__marketplaceSessionReady && window.__marketplaceSessionReady.accessToken === 'signed-user-session-token'"
-        )
         return page
 
     def test_live_bff_cart_gate_off_keeps_purchase_controls_locked_and_demo_state_out(self):
@@ -197,33 +198,32 @@ class MarketplaceBrowserTests(unittest.TestCase):
             page.close()
 
 
-    def test_account_switch_immediately_hides_old_products_and_ignores_late_old_session_response(self):
+    def test_logout_invalidates_inflight_marketplace_response(self):
         page = self._open_live_marketplace(cart_status=200)
         try:
             self.assertEqual(page.locator(".card").count(), 1)
             self.assertEqual(page.locator("#cartCount").inner_text(), "1")
-
             page.evaluate("""() => {
                 const originalFetch = window.fetch.bind(window);
                 window.__resolveOldMarketplaceRequest = null;
                 window.fetch = (input, init = {}) => {
                     const headers = new Headers(init.headers || {});
                     const url = String(input);
-                    if (headers.get("Authorization") === "Bearer signed-user-session-token" && url.includes("/marketplace/offers")) {
+                    if (headers.get("Authorization") === "Bearer server-cookie-session" && url.includes("/marketplace/offers")) {
                         return new Promise(resolve => { window.__resolveOldMarketplaceRequest = () => resolve(new Response(JSON.stringify({
                             items: [{catalog_product_id:"old-account-product",variant_id:"old-account-variant",product_name:"Stale old-account product",merchant_name:"Old Merchant",price_minor:999,currency:"KES"}],
                             total:1,display_authority:"CaTaCaCi/CAL",withheld_candidate_count:0
                         }), {status:200,headers:{"Content-Type":"application/json"}})); });
                     }
-                    if (headers.get("Authorization") === "Bearer second-user-session-token") return new Promise(() => {});
                     return originalFetch(input, init);
                 };
             }""")
             page.locator("#query").fill("old account refresh")
             page.locator("#query").press("Enter")
             page.wait_for_function("typeof window.__resolveOldMarketplaceRequest === 'function'")
-            page.evaluate("window.dispatchEvent(new CustomEvent('cirvanna:session-ready',{detail:{accessToken:'second-user-session-token'}}))")
-            page.wait_for_function("document.querySelectorAll('.card').length === 0")
+            page.locator("#settingsBtn").click()
+            page.locator("[data-auth-logout]").click()
+            page.wait_for_function("document.querySelector('#status').textContent.includes('signed out')")
             self.assertEqual(page.locator("#cartCount").inner_text(), "0")
             self.assertEqual(page.locator("#savedCount").inner_text(), "0")
             page.evaluate("window.__resolveOldMarketplaceRequest()")
@@ -256,8 +256,13 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator("#apiBase").count(), 0)
         self.assertEqual(self.page.locator("#apiToken").count(), 0)
         self.assertEqual(self.page.locator("#commerceToken").count(), 0)
-        self.assertIn("approved Cirvanna OIDC browser session", self.page.get_by_role("dialog").inner_text())
-        self.assertIn("does not accept pasted access tokens", self.page.get_by_role("dialog").inner_text())
+        dialog = self.page.get_by_role("dialog")
+        self.assertIn("Sign in securely", dialog.inner_text())
+        self.assertIn("Continue with Google", dialog.inner_text())
+        self.assertIn("Continue with Apple", dialog.inner_text())
+        self.assertIn("Continue with Microsoft", dialog.inner_text())
+        self.assertIn("Email me a sign-in link", dialog.inner_text())
+        self.assertNotIn("pasted access tokens", dialog.inner_text())
 
 
 if __name__ == "__main__":

@@ -3,9 +3,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY services/marketplace-bff/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
-COPY services/marketplace-bff/app /app/app
-COPY apps/demo-web/marketplace.html /app/marketplace.html
-COPY apps/demo-web/wardrobe.html /app/wardrobe.html
-ENV MARKETPLACE_HTML_PATH=/app/marketplace.html WARDROBE_HTML_PATH=/app/wardrobe.html
+
+# Preserve the repository-relative layout expected by app/main.py:
+# ROOT = Path(__file__).resolve().parents[3] must resolve to /app.
+COPY services/marketplace-bff /app/services/marketplace-bff
+COPY apps/demo-web /app/apps/demo-web
+
+WORKDIR /app/services/marketplace-bff
+ENV PYTHONPATH=/app/services/marketplace-bff
+ENV MARKETPLACE_HTML_PATH=/app/apps/demo-web/marketplace.html
+ENV WARDROBE_HTML_PATH=/app/apps/demo-web/wardrobe.html
 EXPOSE 8080
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

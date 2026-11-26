@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- Canonical CIL skin-analysis contributor pseudonyms and durable provider cleanup outbox.
 -- Pseudonyms are derived by Identity Learning from a dedicated HMAC key. Raw subject IDs
 -- are not passed to CIL or to the external skin-analysis provider.

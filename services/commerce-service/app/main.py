@@ -632,11 +632,11 @@ def _decode_oidc_actor(token: str) -> Actor:
     jwks_url = _oidc_jwks_url()
     issuer = os.getenv("COMMERCE_JWT_ISSUER", "").strip()
     audience = os.getenv("COMMERCE_JWT_AUDIENCE", "").strip()
-    role_claim = os.getenv("COMMERCE_JWT_ROLE_CLAIM", "role").strip() or "role"
+    role_claim = os.getenv("COMMERCE_JWT_ROLE_CLAIM", "app_role").strip() or "app_role"
     try:
         signing_key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
         claims = pyjwt.decode(
-            token, signing_key.key, algorithms=["RS256"], issuer=issuer, audience=audience,
+            token, signing_key.key, algorithms=["ES256", "RS256"], issuer=issuer, audience=audience,
             options={"require": ["exp", "iss", "aud", "sub"]}, leeway=30,
         )
         return _actor_from_claims(claims, role_claim=role_claim)
@@ -1675,6 +1675,32 @@ def _purchase_authorization_item(
     }
 
 
+def _commerce_age_evidence_fields(request: Request, subject_id: str) -> dict[str, Any]:
+    raw = request.headers.get("x-cirvanna-age-attestation")
+    signature = request.headers.get("x-cirvanna-age-attestation-signature")
+    request_id = request.headers.get("x-cirvanna-age-evidence-request-id")
+    if raw is None and signature is None and request_id is None:
+        return {}
+    if not raw or len(raw) > 8192 or not signature or not 64 <= len(signature) <= 128 or not request_id:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_HEADERS_INCOMPLETE"})
+    try:
+        attestation = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_HEADER_INVALID"}) from exc
+    if (
+        not isinstance(attestation, dict)
+        or attestation.get("subject_id") != subject_id
+        or attestation.get("request_id") != request_id
+        or attestation.get("purpose") != "shopper_eligibility"
+    ):
+        raise HTTPException(403, detail={"code": "AGE_EVIDENCE_SUBJECT_OR_REQUEST_MISMATCH"})
+    return {
+        "request_id": request_id,
+        "age_attestation": attestation,
+        "age_attestation_signature": signature,
+    }
+
+
 def _request_cal_purchase_receipts(
     request: Request,
     subject_id: str,
@@ -1682,6 +1708,9 @@ def _request_cal_purchase_receipts(
 ) -> list[dict[str, Any]]:
     if not authorizations:
         return []
+    age_fields = _commerce_age_evidence_fields(request, subject_id)
+    if age_fields and len({item["catalog_product_id"] for item in authorizations}) > 25:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_SINGLE_REQUEST_LIMIT_EXCEEDED"})
     base, service_token, signing_key = _cal_gateway_settings()
     scheme, _, user_token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not user_token.strip():
@@ -1704,7 +1733,7 @@ def _request_cal_purchase_receipts(
                         "X-End-User-Authorization": "Bearer " + user_token.strip(),
                         "Accept": "application/json",
                     },
-                    json={"user_id": subject_id, "authorizations": batch},
+                    json={"user_id": subject_id, "authorizations": batch, **age_fields},
                 )
         except httpx.TimeoutException as exc:
             raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_TIMEOUT"}) from exc

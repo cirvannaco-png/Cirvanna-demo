@@ -34,7 +34,8 @@ Customer and merchant routes require bearer JWT authentication. Inventory writes
 
 Set these in a secret manager; never commit real secrets.
 
-- COMMERCE_DATABASE_URL: PostgreSQL for shared/production use. SQLite is local-development only.
+- COMMERCE_DATABASE_URL: PostgreSQL runtime connection for shared/production use. The application role must be a non-owner with only required DML/sequence privileges; it must not own schema/tables, create roles/databases, alter/drop triggers, or truncate CAL audit tables. SQLite is local-development only.
+- COMMERCE_MIGRATION_DATABASE_URL: separate Alembic-only connection for schema migrations. It must authenticate as the approved schema-owner/migration role, not the Commerce runtime role. Do not inject this credential into the running application container. Production deployment must configure both URLs distinctly.
 - COMMERCE_AUTO_CREATE_SCHEMA: defaults true locally; set false in deployments and apply Alembic migrations.
 - COMMERCE_ENVIRONMENT: set to production in deployed environments; production requires OIDC/JWKS.
 - SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED: defaults false; Shopify-backed checkout is blocked in production (and when the environment is unclassified) until live provider, PostgreSQL restore and compensation/refund acceptance is complete. Keep false in production until those gates are signed off.
@@ -43,7 +44,7 @@ Set these in a secret manager; never commit real secrets.
 - COMMERCE_JWT_JWKS_URL: trusted HTTPS JWKS endpoint from the chosen identity provider.
 - COMMERCE_JWT_ISSUER: exact issuer identifier configured by the identity provider (required for OIDC mode).
 - COMMERCE_JWT_AUDIENCE: exact Commerce API audience registered with the identity provider (required for OIDC mode).
-- COMMERCE_JWT_ROLE_CLAIM: claim containing customer, merchant, or admin; defaults to role. The identity provider must control this claim and grant merchant/admin roles only to authorized accounts.
+- COMMERCE_JWT_ROLE_CLAIM: claim containing customer, merchant, or admin; defaults to `app_role`. The identity provider must control this claim and grant merchant/admin roles only to authorized accounts. Supabase reserves JWT `role` for Postgres authorization; use the reviewed server-owned Auth Hook to populate `app_role`.
 - COMMERCE_JWT_SECRET: minimum 32 bytes for local HS256 mode only; it is not a production authentication mechanism.
 - CATALOG_API_URL and CATALOG_API_TOKEN: server-side canonical-catalog lookup. In production, CATALOG_API_TOKEN must equal Catalog's CATALOG_READ_TOKEN; never configure Catalog's write token here. Non-local URLs must use HTTPS.
 - COMMERCE_CORS_ORIGINS: optional comma-separated exact frontend origins. No wildcard is used.
@@ -63,7 +64,8 @@ Local run from this directory:
 
 Historical migration ordering: `20261107_0004` introduced the verified-purchase outbox and `20261107_0005` added refund snapshots. The current Commerce schema head is `20261121_0016`; always apply the full Alembic chain with `alembic upgrade head`:
 
-    export COMMERCE_DATABASE_URL='postgresql+psycopg://...'
+    export COMMERCE_DATABASE_URL='postgresql+psycopg://runtime-role:...'
+    export COMMERCE_MIGRATION_DATABASE_URL='postgresql+psycopg://schema-owner:...'
     export COMMERCE_AUTO_CREATE_SCHEMA=false
     alembic upgrade head
 
@@ -79,11 +81,24 @@ A successful paid settlement writes a versioned `commerce.order.paid` record to 
 
 ## Identity provider setup
 
+### Supabase Auth ES256/RS256 configuration
+
+The approved staging issuer is Supabase Auth. Configure these exact values in the deployment secret manager:
+
+- `COMMERCE_JWT_JWKS_URL=https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json`
+- `COMMERCE_JWT_ISSUER=https://opmfudcofezmatqqsfho.supabase.co/auth/v1`
+- `COMMERCE_JWT_AUDIENCE=authenticated`
+- `COMMERCE_JWT_ROLE_CLAIM=app_role`
+
+Supabase reserves JWT `role=authenticated` for the Postgres role. Commerce must read the application role only from the server-controlled `app_role` claim supplied by the reviewed private Identity Auth Hook. Do not accept role assignments from `user_metadata`, request bodies or browser input. Missing `app_role` defaults to customer; unknown roles are rejected. Production OIDC mode accepts only ES256/RS256 and rejects HS256 even if a development secret is configured. Verify the live JWKS key ID, active asymmetric signing configuration, key rotation, issuer/audience, expiry, disabled-user/session revocation and live Auth Hook claims before rollout. This does not replace browser Authorization Code + PKCE or server-side session lifecycle.
+
+
 This repository does not issue login sessions or manage the user lifecycle. Connect the actual Cirvanna identity provider before staging rollout. Configure the provider's JWKS URL, exact issuer and Commerce audience in the secret manager, map its trusted application-role claim, and test key rotation, expiry, unknown keys, issuer/audience mismatch and disabled-user/session revocation. Signature verification here does not replace the provider's sign-in, consent, account recovery or lifecycle controls.
 
 ## Production gates still open
 
-- Run migration on PostgreSQL and test backup/restore plus concurrent last-unit checkout contention. SQLite tests do not prove production locking semantics.
+- Provision separate managed PostgreSQL migration-owner and Commerce runtime credentials; the PostgreSQL CI suite verifies the role boundary and immutable audit triggers, but production role provisioning is not yet evidenced.
+- Run migrations on PostgreSQL and test encrypted backup/restore plus concurrent last-unit checkout contention. SQLite tests do not prove production locking semantics.
 - Integrate the actual Cirvanna identity issuer and validate JWT claims, role administration and secret handling.
 - Configure a non-production catalog and verify real TLS, credentials and CORS from the intended origin.
 - Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. Stripe/card is the only implemented payment rail; PayPal and bank rails are not integrated. Market-aware checkout can calculate totals only from fresh, validated FX/fulfilment/tax/payment capability records; live third-party quote-provider operations and market settlements still require staging evidence.
@@ -157,3 +172,8 @@ Merchant applications, admin decisions and owner-scoped listings are implemented
 ## Shopify merchant-provider connector
 
 The optional Shopify adapter is documented in [the Shopify Commerce connector contract](../../docs/commerce/shopify-commerce-connector.md). It uses expiring offline tokens encrypted at rest, stages provider products privately, requires explicit Catalog product/variant mapping, and reconciles complete location-scoped stock under a durable per-store sync lease. The staged-products, map, and reactivate routes require an authenticated approved merchant and resolve the Shopify connection from that merchant's owner identity; staged product snapshots are not a shopper-facing Catalog or Marketplace API. Regression tests prove anonymous/customer access is rejected and another merchant cannot enumerate the owner's staged records. Readiness distinguishes connected/webhook-ready from catalogue-ready and exposes interrupted sync recovery rather than reporting stale catalogue data as complete. For Shopify-backed checkout it requests a provider-native inventory hold through the Admin GraphQL `DraftOrderInput.reserveInventoryUntil` field before Stripe session creation. Because Shopify draft orders do not reserve inventory by default, Commerce reads back and verifies the exact future expiry, `OPEN` state and `ready=true` before treating a provider draft as reserved; missing or mismatched evidence fails closed and enters compensation. The local deadline is aligned to the provider's whole-second expiry, and the hold is revalidated immediately before draft completion after payment. After verified payment, Commerce completes those exact drafts; post-payment failures enter the seller-compensation/Stripe-refund saga and fulfilment stays blocked until every seller is reconciled. The API contract is pinned to Shopify Admin GraphQL `2026-10`; see [draftOrderCreate](https://shopify.dev/docs/api/admin-graphql/2026-10/mutations/draftOrderCreate) and [inventory management app states](https://shopify.dev/docs/apps/build/inventory-management-apps). Shopify product import does not grant shopper display access: all Marketplace product display continues through the Decision Gateway/CAL SHOW path, and all cart/checkout actions retain the separate candidate-bound purchase authorization. Set the Shopify secrets in the secret manager only; live Shopify credentials, store grants, webhook delivery, inventory reconciliation, payment/compensation lifecycle and production readiness remain unverified until staging acceptance passes.
+
+
+## Yoti age evidence for cart and checkout
+
+The BFF Commerce proxy forwards the three `X-Cirvanna-Age-*` headers only on cart/checkout purchase paths. Commerce validates that the signed attestation subject equals the authenticated buyer and that its request ID matches the companion header, then forwards it to the internal Decision Gateway as part of the candidate-bound CAL purchase authorization. The Gateway verifies the active EEPL policy and consumes the one-time attestation JTI before it can authorize an age-restricted candidate. A single attestation can cover at most 25 unique Catalog products in one purchase-authorization request; larger carts fail closed with `AGE_EVIDENCE_SINGLE_REQUEST_LIMIT_EXCEEDED` rather than reusing a one-time attestation across batches. Without verified evidence, age-restricted candidates remain REVIEW and cannot be added or checked out.

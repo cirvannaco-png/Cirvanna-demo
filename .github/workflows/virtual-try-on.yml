@@ -27,10 +27,10 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: cirvanna_test
-          POSTGRES_PASSWORD: cirvanna_test
+          POSTGRES_PASSWORD: test-secret-assets
           POSTGRES_DB: cirvanna_assets
         ports:
           - 5432:5432
@@ -59,7 +59,7 @@ jobs:
       - name: Apply asset migrations to PostgreSQL and verify fail-closed defaults
         working-directory: services/asset-service
         env:
-          PGPASSWORD: cirvanna_test
+          PGPASSWORD: test-secret-assets
         run: |
           psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -f migrations/0001_asset_objects.sql
           psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "INSERT INTO asset_objects (asset_id, owner_user_id, purpose, parent_id, object_key, content_type, byte_size, sha256, status) VALUES ('00000000-0000-4000-8000-000000000001','subject-001','appearance_source_image','look-001','private/test/source.png','image/png',128,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','active')"
@@ -85,6 +85,13 @@ jobs:
             echo "Expected rejection: Twin mesh representations remain private"
           fi
           psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "UPDATE asset_objects SET consent_receipt_id='consent-test-001', consent_version='click-it-v1', masking_attestation_id='masking-test-001', masking_model_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', human_privacy_review_receipt_id='human-review-test-001', human_privacy_reviewer_ref='reviewer-ref-001', human_privacy_reviewed_at=now(), publication_scope='approved_public', publication_state='approved', publication_surface='shared_link' WHERE asset_id='00000000-0000-4000-8000-000000000001'"
+      - name: Verify asset PostgreSQL dump and isolated restore
+        working-directory: .
+        env:
+          PGPASSWORD: test-secret-assets
+        run: |
+          docker run --rm --network host -v /tmp:/backup -e PGPASSWORD=test-secret-assets postgres:17 bash -ec 'pg_dump -h 127.0.0.1 -U cirvanna_test -d cirvanna_assets --format=custom -f /backup/cirvanna-assets.dump && createdb -h 127.0.0.1 -U cirvanna_test asset_restore && pg_restore -h 127.0.0.1 -U cirvanna_test -d asset_restore --exit-on-error /backup/cirvanna-assets.dump'
+          psql -h localhost -U cirvanna_test -d asset_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM asset_objects WHERE asset_id='00000000-0000-4000-8000-000000000001' AND publication_state='approved' AND publication_surface='shared_link' AND masking_attestation_id='masking-test-001') THEN RAISE EXCEPTION 'approved asset provenance missing after restore'; END IF; IF NOT EXISTS (SELECT 1 FROM asset_objects WHERE asset_id='00000000-0000-4000-8000-000000000002' AND publication_scope='private_only' AND publication_state='private_only') THEN RAISE EXCEPTION 'Twin mesh private default missing after restore'; END IF; END \$\$;"
       - name: Build private asset service container
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
 

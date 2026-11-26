@@ -27,7 +27,21 @@ permissions:
 jobs:
   decision-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: decision-ci-secret
+          POSTGRES_DB: decision_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d decision_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: services/decision-service
@@ -38,6 +52,63 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+      - name: Apply and adversarially verify decision audit migrations on PostgreSQL 17
+        env:
+          PGPASSWORD: decision-ci-secret
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGDATABASE: decision_ci
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE cirvanna_decision_audit_schema_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+          CREATE ROLE cirvanna_decision_audit NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+          GRANT CREATE ON DATABASE decision_ci TO cirvanna_decision_audit_schema_owner;
+          SET ROLE cirvanna_decision_audit_schema_owner;
+          \i migrations/0001_catacaci_decision_receipts.sql
+          \i migrations/0002_catacaci_governance_store.sql
+          RESET ROLE;
+          SQL
+          psql -v ON_ERROR_STOP=1 -c "SET ROLE cirvanna_decision_audit; INSERT INTO decision_private.catacaci_decision_receipts (receipt_id,request_id,candidate_id,verdict,may_display,eepl_policy_id,eepl_policy_version,cal_policy_id,cal_policy_version,minimum_fit_confidence,maximum_fit_confidence_disagreement,arbitration_contract_version,pipeline_contract_version,candidate_snapshot_sha256,catalog_version,evaluated_signals,reasons,receipt_sha256,created_at) VALUES (gen_random_uuid(),'ci-migration-probe','ci-candidate','REVIEW',false,'eepl-ci','1','cal-ci','1',0.70,0.10,'ci-arbitration-v1','ci-pipeline-v1',repeat('a',64),1,'{}'::jsonb,'[]'::jsonb,repeat('b',64),now()); RESET ROLE"
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          -- Exercise the append-only triggers as the privileged database owner.
+          -- The application runtime role's lack of UPDATE/DELETE/TRUNCATE is asserted separately below.
+          DO $test$
+          BEGIN
+            BEGIN
+              UPDATE decision_private.catacaci_decision_receipts SET verdict='BLOCK' WHERE request_id='ci-migration-probe';
+              RAISE EXCEPTION 'append-only UPDATE unexpectedly succeeded';
+            EXCEPTION WHEN SQLSTATE '55000' THEN
+              RAISE NOTICE 'append-only UPDATE correctly blocked';
+            END;
+            BEGIN
+              DELETE FROM decision_private.catacaci_decision_receipts WHERE request_id='ci-migration-probe';
+              RAISE EXCEPTION 'append-only DELETE unexpectedly succeeded';
+            EXCEPTION WHEN SQLSTATE '55000' THEN
+              RAISE NOTICE 'append-only DELETE correctly blocked';
+            END;
+          END
+          $test$;
+          SQL
+          psql -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','SELECT') AS can_select, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','INSERT') AS can_insert, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','UPDATE') AS can_update, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','DELETE') AS can_delete, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','TRUNCATE') AS can_truncate, has_schema_privilege('cirvanna_decision_audit','decision_private','CREATE') AS can_create_schema_objects"
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $assert$
+          BEGIN
+            IF has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','SELECT')
+              AND has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','INSERT')
+              AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','UPDATE')
+              AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','DELETE')
+              AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','TRUNCATE')
+              AND NOT has_schema_privilege('cirvanna_decision_audit','decision_private','CREATE') THEN
+              RAISE NOTICE 'least-privilege-ok';
+            ELSE
+              RAISE EXCEPTION 'decision audit runtime role has excessive or missing privileges';
+            END IF;
+          END
+          $assert$;
+          SQL
       - name: Run decision API contract tests
         env:
           DECISION_SERVICE_TOKEN: decision-service-ci-token-minimum-32-bytes

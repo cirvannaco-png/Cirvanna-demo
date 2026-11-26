@@ -61,50 +61,53 @@ def test_no_public_media_publication_or_restore_route_bypasses_privacy_gate():
     """Any future public media surface must explicitly wire the masking attestation gate."""
     unguarded = []
     scanned = 0
-    for source_path in sorted(SERVICES.rglob("*.py")):
-        relative_parts = source_path.relative_to(SERVICES).parts
-        if {"tests", "migrations", "__pycache__"}.intersection(relative_parts):
-            continue
-        source = source_path.read_text(encoding="utf-8")
-        scanned += 1
-        for method, route, handler in _route_definitions(source, source_path):
-            if route.startswith("/internal/") or method == "DELETE":
-                # Deletion/removal endpoints reduce exposure; they do not publish an asset.
+    # Scan every Python application source root, not only microservices.
+    # A future FastAPI app under apps/ can expose media just as a service can.
+    for source_root in (SERVICES, ROOT / "apps"):
+        for source_path in sorted(source_root.rglob("*.py")):
+            relative_parts = source_path.relative_to(source_root).parts
+            if {"tests", "migrations", "__pycache__", "node_modules"}.intersection(relative_parts):
                 continue
-            segments = {part.casefold() for part in route.split("/") if part}
-            handler_media_name = any(term in handler.name.casefold() for term in (
-                "publish", "restore", "share", "syndicat", "upload",
-                "serve_image", "serve_photo", "serve_media", "avatar",
-                "gallery", "lookbook",
-            ))
-            if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS) and not handler_media_name:
-                continue
-            # Inbound private processing and text-only share routes are not public
-            # binary-media publication. Their exact implementations are guarded below.
-            source_relative = source_path.relative_to(ROOT).as_posix()
-            route_key = (source_relative, method, route, handler.name)
-            if route_key in NON_PUBLICATION_ROUTE_EXCEPTIONS:
-                continue
-            # This dependency name is the integration contract every publisher must import.
-            private_vton_worker_response = (
-                source_relative == "services/virtual-try-on/model-worker/app/main.py"
-                and route == "/v1/render"
-                and any(
-                    isinstance(item, ast.Name) and item.id == "require_worker_auth"
+            source = source_path.read_text(encoding="utf-8")
+            scanned += 1
+            for method, route, handler in _route_definitions(source, source_path):
+                if route.startswith("/internal/") or method == "DELETE":
+                    # Deletion/removal endpoints reduce exposure; they do not publish an asset.
+                    continue
+                segments = {part.casefold() for part in route.split("/") if part}
+                handler_media_name = any(term in handler.name.casefold() for term in (
+                    "publish", "restore", "share", "syndicat", "upload",
+                    "serve_image", "serve_photo", "serve_media", "avatar",
+                    "gallery", "lookbook",
+                ))
+                if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS) and not handler_media_name:
+                    continue
+                # Inbound private processing and text-only share routes are not public
+                # binary-media publication. Their exact implementations are guarded below.
+                source_relative = source_path.relative_to(ROOT).as_posix()
+                route_key = (source_relative, method, route, handler.name)
+                if route_key in NON_PUBLICATION_ROUTE_EXCEPTIONS:
+                    continue
+                # This dependency name is the integration contract every publisher must import.
+                private_vton_worker_response = (
+                    source_relative == "services/virtual-try-on/model-worker/app/main.py"
+                    and route == "/v1/render"
+                    and any(
+                        isinstance(item, ast.Name) and item.id == "require_worker_auth"
+                        for item in ast.walk(handler)
+                    )
+                    and '"input_persistence": False' in source
+                    and '"output_persistence": False' in source
+                    and '"Cache-Control": "no-store, private"' in source
+                )
+                if private_vton_worker_response:
+                    continue
+                guarded = any(
+                    isinstance(item, ast.Name) and item.id == "require_publication_gate"
                     for item in ast.walk(handler)
                 )
-                and '"input_persistence": False' in source
-                and '"output_persistence": False' in source
-                and '"Cache-Control": "no-store, private"' in source
-            )
-            if private_vton_worker_response:
-                continue
-            guarded = any(
-                isinstance(item, ast.Name) and item.id == "require_publication_gate"
-                for item in ast.walk(handler)
-            )
-            if not guarded:
-                unguarded.append(f"{source_relative}:{handler.name} {method} {route}")
+                if not guarded:
+                    unguarded.append(f"{source_relative}:{handler.name} {method} {route}")
     assert scanned > 0
     assert not unguarded, (
         "Public media routes must call require_publication_gate before returning or "
@@ -535,3 +538,70 @@ def test_marketplace_browser_does_not_render_api_supplied_media_urls():
     assert "p.image_urls[0]" not in source
     assert 'src="\'+escapeHtml(p.image_urls[0])' not in source
 
+
+
+def test_internal_asset_publication_approval_is_privacy_gate_bound_and_private_reads_are_no_store():
+    """Internal asset routes are not public, but their publication state is a public-media control plane."""
+    asset_path = ROOT / "services" / "asset-service" / "app" / "main.py"
+    source = asset_path.read_text(encoding="utf-8")
+    routes = _route_definitions(source, asset_path)
+
+    approval_routes = [
+        item for item in routes
+        if item[0] == "POST" and item[1] == "/internal/v1/assets/{asset_id}/publication/approve"
+    ]
+    assert len(approval_routes) == 1
+    _method, _route, approval = approval_routes[0]
+    approval_body = ast.get_source_segment(source, approval) or ""
+    approval_decorator = next(
+        item for item in approval.decorator_list
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "post"
+        and item.args
+        and isinstance(item.args[0], ast.Constant)
+        and item.args[0].value == "/internal/v1/assets/{asset_id}/publication/approve"
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Depends"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "require_internal_token"
+        for node in ast.walk(approval_decorator)
+    )
+    assert "_evaluate_publication_with_privacy_governance" in approval_body
+    assert approval_body.index("_evaluate_publication_with_privacy_governance") < approval_body.index('row.publication_state = "approved"')
+    for token in (
+        '"asset_sha256": row.sha256',
+        '"consent_resource_id") == row.asset_id',
+        '"masking_attestation_id") == attestation_id',
+        '"target_surface") == surface',
+        '"human_privacy_review_passed") is True',
+        "masking_model_sha256",
+        "human_privacy_review_receipt_id",
+        "human_privacy_reviewer_ref",
+    ):
+        assert token in approval_body
+
+    revoke_routes = [
+        item for item in routes
+        if item[0] == "POST" and item[1] == "/internal/v1/assets/{asset_id}/publication/revoke"
+    ]
+    assert len(revoke_routes) == 1
+    revoke_body = ast.get_source_segment(source, revoke_routes[0][2]) or ""
+    assert 'row.publication_scope = "private_only"' in revoke_body
+    assert 'row.publication_state = "revoked"' in revoke_body
+    assert "row.revoked_at = datetime.now(timezone.utc)" in revoke_body
+
+    content_routes = [
+        item for item in routes
+        if item[0] == "GET" and item[1] == "/internal/v1/assets/{asset_id}/content"
+    ]
+    assert len(content_routes) == 1
+    content_body = ast.get_source_segment(source, content_routes[0][2]) or ""
+    assert "_owned_asset(db, asset_id, subject_id, purpose, parent_id)" in content_body
+    assert "hashlib.sha256(data).hexdigest() != row.sha256" in content_body
+    assert '"Cache-Control": "no-store, private"' in source
+    assert '"X-Content-Type-Options": "nosniff"' in source

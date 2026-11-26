@@ -507,3 +507,34 @@ def test_expanded_wardrobe_accessories_are_classified_as_look_complements():
     ):
         assert _kind({"category": category, "attributes": []}) == "accessory"
 
+
+
+def test_old_money_theme_is_explained_and_returns_three_distinct_wardrobe_looks():
+    result = build_daily_looks(
+        request_id="occasion-old-money-001",
+        user_id="user-123",
+        wardrobe_items=wardrobe(),
+        local_date="2026-11-23",
+        occasion="old money themed party",
+        climate="temperate",
+    )
+    guide = result["theme_guide"]
+    assert guide["status"] == "recognized"
+    assert guide["theme_id"] == "old_money"
+    assert "understated" in guide["explanation"]
+    assert "large visible logos" in guide["avoid"]
+    assert result["look_count"] == 3
+    assert len({frozenset(look["item_ids"]) for look in result["looks"] if look["status"] == "ready"}) == result["ready_count"]
+    assert [look["direction"] for look in result["looks"]] == ["Relaxed heritage", "Classic tailoring", "Polished evening"]
+    assert all(look["virtual_twin_preview"]["status"] == "unavailable" for look in result["looks"])
+
+
+def test_unknown_theme_is_not_fabricated():
+    result = build_daily_looks(
+        request_id="occasion-unknown-001",
+        user_id="user-123",
+        wardrobe_items=wardrobe(),
+        local_date="2026-11-23",
+        occasion="moonlight cyber garden gala",
+    )
+    assert result["theme_guide"] is None

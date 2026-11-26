@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-11-25",
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "pull_request": 338,
+  "source_commit_with_full_ci": "db2395f3ab6015ef0a53dce4be52ddaad1a1712c",
+  "ci": {
+    "workflow_count": 24,
+    "passed": 24,
+    "failed": 0,
+    "container_image_count": 22,
+    "container_workflow_run_id": 45671786170,
+    "commerce_workflow_run_id": 45671786380,
+    "source_lineage_workflow_run_id": 45671786259,
+    "commerce_migration_artifact_id": 15048853501,
+    "strict_source_lineage_audit": "passed",
+    "image_ids_scope": "CI-local image IDs only; no registry push or deployed immutable image digests"
+  },
+  "supabase": {
+    "project_name": "cirvanna-staging",
+    "project_ref": "opmfudcofezmatqqsfho",
+    "region": "eu-central-1",
+    "postgres_version": "17.12",
+    "migrations_applied": [
+      "identity-learning-service:0016_age_session_request_idempotency",
+      "identity-learning-service:0017_private_service_rls",
+      "twin-registry:0005_private_service_rls",
+      "marketplace-bff:0001_auth_private_sessions"
+    ],
+    "private_tables_with_rls_enabled": 16,
+    "security_advisor_lints": 0,
+    "anon_and_authenticated_schema_usage": false,
+    "postgres_role_denial_tests": [
+      {
+        "role": "anon",
+        "schema": "identity_private",
+        "result": "permission_denied"
+      },
+      {
+        "role": "authenticated",
+        "schema": "identity_private",
+        "result": "permission_denied"
+      },
+      {
+        "role": "anon",
+        "schema": "twin_private",
+        "result": "permission_denied"
+      },
+      {
+        "role": "authenticated",
+        "schema": "twin_private",
+        "result": "permission_denied"
+      },
+      {
+        "role": "anon",
+        "schema": "auth_private",
+        "result": "permission_denied"
+      },
+      {
+        "role": "authenticated",
+        "schema": "auth_private",
+        "result": "permission_denied"
+      }
+    ],
+    "service_app_principals": [
+      {
+        "role": "identity_learning_app",
+        "group_role": "identity_learning_service",
+        "login_enabled": false,
+        "non_superuser": true,
+        "bypass_rls": false,
+        "least_privilege_grants_verified": true
+      },
+      {
+        "role": "twin_registry_app",
+        "group_role": "twin_registry_service",
+        "login_enabled": false,
+        "non_superuser": true,
+        "bypass_rls": false,
+        "least_privilege_grants_verified": true
+      },
+      {
+        "role": "cirvanna_bff_auth_app",
+        "group_role": "cirvanna_bff_auth",
+        "login_enabled": false,
+        "non_superuser": true,
+        "bypass_rls": false,
+        "least_privilege_grants_verified": true
+      }
+    ],
+    "http_data_api_negative_tests": "not_run",
+    "production_deployment": false
+  },
+  "neon": {
+    "project_name": "cirvanna-catalog-staging",
+    "project_id": "twilight-leaf-50209271",
+    "region": "aws-eu-central-1",
+    "primary_branch": "br-empty-unit-bhpa7igy",
+    "postgres_version": 17,
+    "endpoint_suspend_timeout_seconds": 0,
+    "auto_suspend_configured": false,
+    "databases": {
+      "cirvanna_catalog": {
+        "migrations": "20261104_0002",
+        "migration_method": "source Alembic revisions translated to SQL and applied; alembic_version row recorded",
+        "runtime_role": "cirvanna_catalog_runtime",
+        "migration_owner_role": "cirvanna_catalog_owner",
+        "runtime_dml_smoke_test": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      },
+      "cirvanna_commerce": {
+        "migrations": "20261121_0016",
+        "migration_method": "offline PostgreSQL SQL generated from exact PR CI artifact and applied revision-by-revision",
+        "runtime_role": "cirvanna_commerce_runtime",
+        "schema_owner_role": "cirvanna_commerce_schema_owner",
+        "audit_probe_role": "cirvanna_commerce_audit_probe",
+        "runtime_dml_privileges_verified": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false,
+        "audit_update_delete_truncate_trigger_tests": "blocked with SQLSTATE 55000",
+        "synthetic_immutable_audit_rows_retained": 1
+      },
+      "cirvanna_npl": {
+        "migrations": [
+          "0001_initial.sql",
+          "0002_deletion_receipts.sql"
+        ],
+        "runtime_role": "cirvanna_npl_runtime",
+        "schema_owner_role": "cirvanna_npl_schema_owner",
+        "runtime_dml_smoke_test": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      },
+      "cirvanna_cultural_identity": {
+        "migrations": [
+          "0001_initial.sql"
+        ],
+        "runtime_role": "cirvanna_cultural_identity_runtime",
+        "schema_owner_role": "cirvanna_cultural_identity_schema_owner",
+        "runtime_dml_smoke_test": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      },
+      "cirvanna_wardrobe": {
+        "migrations": [
+          "0001_initial.sql",
+          "0002_wardrobe_learning_events.sql",
+          "0003_saved_outfits.sql",
+          "0004_rotation_state.sql",
+          "0005_verified_purchase_ownership.sql",
+          "0006_outfit_wear_history.sql",
+          "0007_purchase_refund_snapshots.sql",
+          "0008_refund_provider_identity.sql"
+        ],
+        "runtime_role": "cirvanna_wardrobe_runtime",
+        "schema_owner_role": "cirvanna_wardrobe_schema_owner",
+        "runtime_dml_smoke_test": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      },
+      "cirvanna_privacy_governance": {
+        "migrations": [
+          "0001_privacy_governance.sql"
+        ],
+        "runtime_role": "cirvanna_privacy_governance_runtime",
+        "schema_owner_role": "cirvanna_privacy_governance_schema_owner",
+        "runtime_dml_smoke_test": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      },
+      "cirvanna_appearance": {
+        "migrations": [
+          "0001_appearance_look_sessions.sql",
+          "0002_appearance_consent_events.sql",
+          "0003_appearance_deletion_outbox.sql"
+        ],
+        "runtime_role": "cirvanna_appearance_runtime",
+        "schema_owner_role": "cirvanna_appearance_schema_owner",
+        "runtime_dml_smoke_test": true,
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      },
+      "cirvanna_asset": {
+        "migrations": [
+          "0001_asset_objects.sql",
+          "0002_asset_lifecycle_provenance.sql"
+        ],
+        "runtime_role": "cirvanna_asset_runtime",
+        "schema_owner_role": "cirvanna_asset_schema_owner",
+        "runtime_dml_smoke_test": true,
+        "unsafe_publication_transition_without_evidence": "blocked_by_database_constraint",
+        "runtime_schema_create": false,
+        "runtime_truncate": false
+      }
+    },
+    "provider_backup_restore_drill": "not_run"
+  },
+  "render": {
+    "workspace_id": "tea-d8p2p04vikkc7396a9jg",
+    "blueprint_id": "exs-dc3hqlhksfps73a4kg50",
+    "configured_service_count": 1,
+    "private_service_plan": "starter",
+    "plan_status": "blocked_need_payment_info",
+    "resources_created": false,
+    "deployment_created": false,
+    "full_stack_blueprint_complete": false
+  },
+  "stripe": {
+    "test_mode_account_connected": true,
+    "livemode": false,
+    "charges_enabled": false,
+    "tax_settings_status": "pending",
+    "products": 0,
+    "webhook_endpoints": 0,
+    "checkout_test_status": "not_run",
+    "live_mode_calls": false
+  },
+  "asset_storage": {
+    "provider": "not_configured",
+    "supabase_storage_s3_compatibility": "not_qualified_for_current_asset_service",
+    "reason": "Supabase S3 compatibility documents S3 versioning as unsupported and omits GetBucketEncryption and GetBucketLifecycleConfiguration; Asset Service readiness requires provider controls that can be queried and verified",
+    "required_next": "private AWS S3 bucket, versioning never enabled, bucket-scoped IAM access, encryption and lifecycle controls"
+  },
+  "privacy": {
+    "click_it_public_route": "disabled_fail_closed",
+    "click_it_nonfinite_mask_confidence": "rejected",
+    "look_it": "separate internal image-search path",
+    "global_publication_route_audit": "not_independently_certified",
+    "independent_security_privacy_assessment": "not_commissioned"
+  },
+  "production": {
+    "total_release_gates": 23,
+    "blocked_release_gates": 23,
+    "deployed_commit": null,
+    "production_deployment": false,
+    "main_modified": false,
+    "supabase_branch_created": false,
+    "neon_restore_branch_created": false
+  }
+}

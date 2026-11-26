@@ -148,10 +148,15 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client, monkeypat
     monkeypatch.delenv("MARKETPLACE_ENVIRONMENT", raising=False)
     response = client.get("/")
     assert response.status_code == 200
-    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:false});' in response.text
+    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});' in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
     assert "bootstrap.publicOffersBase" in response.text
-    assert 'window.dispatchEvent(new CustomEvent("cirvanna:session-ready"' in response.text
-    assert "accessToken:token" in response.text
+    assert 'data-auth-provider="google"' in response.text
+    assert 'data-auth-provider="apple"' in response.text
+    assert 'data-auth-provider="microsoft"' in response.text
+    assert 'id="emailOtpForm"' in response.text
+    assert 'id="commerceToken"' not in response.text
     assert "connect-src 'self'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "no-referrer"
@@ -2231,10 +2236,18 @@ def test_wardrobe_try_on_derives_subject_and_uses_exact_owned_private_garment(cl
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
     monkeypatch.setenv("VIRTUAL_TRY_ON_API_URL", "https://tryon.example.test")
     monkeypatch.setenv("VIRTUAL_TRY_ON_API_TOKEN", "virtual-try-on-internal-token-more-than-32-bytes")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-more-than-32-bytes")
     garment_asset = "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
     output_asset = "7e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+    person_asset = "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "authorized": True, "active": True, "subject_id": "signed-user-42",
+            "twin_id": "persistent-twin-42", "representation_type": "full_body_mesh",
+            "source_image_asset_ids": [person_asset], "consent_id": "registry-consent-1234",
+        }),
         FakeResponse({"item": {
             "owner_user_id": "signed-user-42", "item_id": "closet-item-1",
             "status": "active", "category": "dress", "image_asset_id": garment_asset,
@@ -2252,8 +2265,6 @@ def test_wardrobe_try_on_derives_subject_and_uses_exact_owned_private_garment(cl
         json={
             "wardrobe_item_id": "closet-item-1",
             "twin_id": "persistent-twin-42",
-            "person_image_asset_id": "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
-            "consent_id": "consent-receipt-1234",
             "consent_image_processing": True,
             "consent_virtual_try_on": True,
             "request_id": "request-tryon-1234",
@@ -2262,9 +2273,10 @@ def test_wardrobe_try_on_derives_subject_and_uses_exact_owned_private_garment(cl
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["output_asset_id"] == output_asset
-    assert [call[0] for call in fake.calls] == ["GET", "GET", "POST"]
-    assert fake.calls[1][2]["params"]["owner_user_id"] == "signed-user-42"
-    forwarded = fake.calls[2][2]["json"]
+    assert [call[0] for call in fake.calls] == ["GET", "POST", "GET", "POST"]
+    assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+    assert fake.calls[1][1] == "https://registry.example.test/internal/v1/twins/authorize"
+    forwarded = fake.calls[3][2]["json"]
     assert forwarded["subject_id"] == "signed-user-42"
     assert forwarded["product_id"] == "wardrobe:closet-item-1"
     assert forwarded["garment_image_asset_id"] == garment_asset
@@ -2272,6 +2284,7 @@ def test_wardrobe_try_on_derives_subject_and_uses_exact_owned_private_garment(cl
     assert forwarded["garment_photo_type"] == "flat-lay"
     assert forwarded["garment_asset_parent_id"] == "closet-item-1"
     assert forwarded["garment_category"] == "dress"
+    assert forwarded["consent"]["consent_id"] == "registry-consent-1234"
     assert forwarded["consent"]["retention_policy"] == "ephemeral"
 
 
@@ -2281,8 +2294,16 @@ def test_wardrobe_try_on_rejects_cross_subject_item_before_renderer_call(client,
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
     monkeypatch.setenv("VIRTUAL_TRY_ON_API_URL", "https://tryon.example.test")
     monkeypatch.setenv("VIRTUAL_TRY_ON_API_TOKEN", "virtual-try-on-internal-token-more-than-32-bytes")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-more-than-32-bytes")
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "authorized": True, "active": True, "subject_id": "signed-user-42",
+            "twin_id": "persistent-twin-42", "representation_type": "full_body_mesh",
+            "source_image_asset_ids": ["5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"],
+            "consent_id": "registry-consent-1234",
+        }),
         FakeResponse({"item": {
             "owner_user_id": "another-user", "item_id": "foreign-item",
             "status": "active", "category": "dress",
@@ -2296,14 +2317,12 @@ def test_wardrobe_try_on_rejects_cross_subject_item_before_renderer_call(client,
         headers={"Authorization": "Bearer signed-session"},
         json={
             "wardrobe_item_id": "foreign-item", "twin_id": "persistent-twin-42",
-            "person_image_asset_id": "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
-            "consent_id": "consent-receipt-1234",
             "consent_image_processing": True, "consent_virtual_try_on": True,
         },
     )
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "WARDROBE_ITEM_SCOPE_MISMATCH"
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 3
 
 
 def test_wardrobe_try_on_requires_both_explicit_consent_flags_before_upstream(client, monkeypatch):
@@ -2315,8 +2334,6 @@ def test_wardrobe_try_on_requires_both_explicit_consent_flags_before_upstream(cl
         headers={"Authorization": "Bearer signed-session"},
         json={
             "wardrobe_item_id": "closet-item-1", "twin_id": "persistent-twin-42",
-            "person_image_asset_id": "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
-            "consent_id": "consent-receipt-1234",
             "consent_image_processing": False, "consent_virtual_try_on": True,
         },
     )
@@ -2866,8 +2883,8 @@ def test_wardrobe_ui_is_packaged_in_the_marketplace_bff_image(client):
 
     root = Path(__file__).resolve().parents[3]
     dockerfile = (root / "services/marketplace-bff/Dockerfile").read_text()
-    assert "COPY apps/demo-web/wardrobe.html /app/wardrobe.html" in dockerfile
-    assert "WARDROBE_HTML_PATH=/app/wardrobe.html" in dockerfile
+    assert "COPY apps/demo-web /app/apps/demo-web" in dockerfile
+    assert "WARDROBE_HTML_PATH=/app/apps/demo-web/wardrobe.html" in dockerfile
     response = client.get("/wardrobe")
     assert response.status_code == 200
     assert "/api/wardrobe/pnelly/preferences" in response.text
@@ -4085,22 +4102,28 @@ def test_appearance_source_renewal_requires_explicit_source_storage_acceptance(c
     assert len(fake.calls) == 2
 
 
-def test_developer_token_entry_requires_explicit_nonproduction_opt_in(client, monkeypatch):
+def test_developer_token_entry_is_removed_even_when_nonproduction_opt_in_is_set(client, monkeypatch):
     monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "development")
     monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
     response = client.get("/")
     assert response.status_code == 200
-    assert 'allowDeveloperTokenInput:true' in response.text
-    assert "Signed customer test token" in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
+    assert 'data-auth-provider="google"' in response.text
+    assert 'data-auth-provider="apple"' in response.text
+    assert 'data-auth-provider="microsoft"' in response.text
+    assert 'id="emailOtpForm"' in response.text
+
 
 def test_production_never_renders_developer_token_entry_even_when_opted_in(client, monkeypatch):
     monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "production")
     monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
     response = client.get("/")
     assert response.status_code == 200
-    assert 'allowDeveloperTokenInput:false' in response.text
-    assert "Signed customer test token" in response.text
-    assert "Account sign-in is unavailable" in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
+    assert 'data-auth-provider="apple"' in response.text
+
 
 def test_cart_proxy_requires_bearer_before_cal_readiness_probe(client, monkeypatch):
     configure_upstreams(monkeypatch)
@@ -4151,13 +4174,21 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
+    age_headers = {
+        "X-Cirvanna-Age-Attestation": json.dumps({
+            "subject_id": "signed-user-42", "request_id": "checkout-age-001",
+            "purpose": "shopper_eligibility", "jti": "opaque-jti",
+        }),
+        "X-Cirvanna-Age-Attestation-Signature": "a" * 64,
+        "X-Cirvanna-Age-Evidence-Request-ID": "checkout-age-001",
+    }
     variant = "123e4567-e89b-12d3-a456-426614174000"
 
     responses = [
         client.get("/api/commerce/cart", headers=headers),
         client.post("/api/commerce/cart/items", headers=headers, json={"variant_id": variant, "quantity": 1}),
         client.patch(f"/api/commerce/cart/items/{variant}", headers=headers, json={"quantity": 2}),
-        client.post("/api/commerce/checkout", headers={**headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
+        client.post("/api/commerce/checkout", headers={**headers, **age_headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
     ]
     assert [response.status_code for response in responses] == [200, 200, 200, 200]
     assert [call[0] for call in fake.calls] == [
@@ -4192,6 +4223,10 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         "https://commerce.example.test/checkout",
     }]
     assert all(call[2]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
+    checkout_forward = next(call for call in forwarded if call[1] == "https://commerce.example.test/checkout")
+    assert checkout_forward[2]["headers"]["x-cirvanna-age-attestation-signature"] == "a" * 64
+    assert checkout_forward[2]["headers"]["x-cirvanna-age-evidence-request-id"] == "checkout-age-001"
+    assert all("X-Cirvanna-Age-Attestation-Signature" not in call[2]["headers"] for call in forwarded if call is not checkout_forward)
 
 
 def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(client, monkeypatch):
@@ -4624,3 +4659,184 @@ def test_cal_discovery_envelope_requires_authority_request_id_and_complete_count
             main._validate_cal_discovery_envelope(payload, error_code="INVALID")
         assert exc.value.status_code == 502
         assert exc.value.detail["code"] == "INVALID"
+
+
+def test_age_evidence_request_fields_require_signed_subject_and_request_binding():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "buyer-1", "request_id": "age-request-123",
+        "purpose": "shopper_eligibility", "jti": "opaque-jti",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"age-request-123"),
+        ],
+    })
+    fields = main._age_evidence_request_fields(request, "buyer-1")
+    assert fields["request_id"] == "age-request-123"
+    assert fields["age_attestation"] == attestation
+    assert fields["age_attestation_signature"] == "a" * 64
+
+
+def test_age_evidence_request_fields_reject_wrong_subject():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "other-buyer", "request_id": "age-request-123",
+        "purpose": "shopper_eligibility",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"age-request-123"),
+        ],
+    })
+    with pytest.raises(Exception):
+        main._age_evidence_request_fields(request, "buyer-1")
+
+
+def test_wardrobe_try_on_rejects_client_asset_not_in_authorized_twin(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-more-than-32-bytes")
+    person_asset = "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "authorized": True, "active": True, "subject_id": "signed-user-42",
+            "twin_id": "persistent-twin-42", "representation_type": "full_body_mesh",
+            "source_image_asset_ids": [person_asset], "consent_id": "registry-consent-1234",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items/closet-item-1/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "closet-item-1", "twin_id": "persistent-twin-42",
+            "person_image_asset_id": "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            "consent_image_processing": True, "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CLIENT_PERSON_ASSET_DOES_NOT_MATCH_TWIN"
+    assert len(fake.calls) == 2
+
+
+def test_wardrobe_try_on_fails_closed_when_twin_registry_denies_owner(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-more-than-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"detail": {"code": "TWIN_ACCESS_DENIED"}}, status_code=403),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items/closet-item-1/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "closet-item-1", "twin_id": "foreign-twin-0001",
+            "consent_image_processing": True, "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"
+    assert len(fake.calls) == 2
+
+
+def test_wardrobe_try_on_rejects_ambiguous_multi_image_twin_source(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-more-than-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "authorized": True, "active": True, "subject_id": "signed-user-42",
+            "twin_id": "persistent-twin-42", "representation_type": "full_body_mesh",
+            "source_image_asset_ids": [
+                "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+                "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            ],
+            "consent_id": "registry-consent-1234",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items/closet-item-1/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "closet-item-1", "twin_id": "persistent-twin-42",
+            "consent_image_processing": True, "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TWIN_NOT_AUTHORIZED_FOR_TRY_ON"
+    assert len(fake.calls) == 2
+
+
+def test_cookie_authenticated_writes_reject_cross_origin_requests(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_URL", "https://bff.example.com/auth/callback")
+    response = client.post(
+        "/auth/refresh",
+        cookies={main.COOKIE_NAME: "opaque-session"},
+        headers={"Origin": "https://attacker.example"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AUTH_CSRF_ORIGIN_REJECTED"
+    assert "no-store" in response.headers["cache-control"].casefold()
+
+
+def test_cookie_authenticated_writes_accept_exact_application_origin(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_URL", "https://bff.example.com/auth/callback")
+    response = client.post(
+        "/auth/refresh",
+        cookies={main.COOKIE_NAME: "opaque-session"},
+        headers={"Origin": "https://bff.example.com"},
+    )
+    # The origin guard passes; the request then fails closed because this test
+    # intentionally has no production session database configured.
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "AUTH_SESSION_DATABASE_URL_NOT_CONFIGURED"
+
+
+def test_bff_readiness_fails_closed_until_auth_dependencies_are_ready(client, monkeypatch):
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setattr(main, "_upstream_ready", lambda base: True)
+
+    async def auth_blocked():
+        return {
+            "configured": True,
+            "database_ready": True,
+            "jwks_ready": False,
+            "providers": {"google": True, "apple": True, "microsoft": True},
+            "email_delivery_verified": True,
+            "ready": False,
+        }
+
+    async def auth_ready():
+        return {
+            "configured": True,
+            "database_ready": True,
+            "jwks_ready": True,
+            "providers": {"google": True, "apple": True, "microsoft": True},
+            "email_delivery_verified": True,
+            "ready": True,
+        }
+
+    monkeypatch.setattr(main, "auth_readiness", auth_blocked)
+    blocked = client.get("/ready")
+    assert blocked.status_code == 503
+    assert blocked.json()["detail"]["auth"]["jwks_ready"] is False
+
+    monkeypatch.setattr(main, "auth_readiness", auth_ready)
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json()["auth"]["ready"] is True

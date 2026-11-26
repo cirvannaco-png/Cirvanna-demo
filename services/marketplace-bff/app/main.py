@@ -23,6 +23,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.auth_sessions import COOKIE_NAME, auth_readiness, router as auth_router, close_auth_pool, session_access_token
+
 from app.observability import install_observability
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
@@ -76,17 +78,47 @@ app = FastAPI(
 )
 
 install_observability(app, SERVICE)
+app.include_router(auth_router)
+
+
+@app.on_event("shutdown")
+async def close_auth_session_pool() -> None:
+    await close_auth_pool()
 
 app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    unsafe_method = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+    auth_write = request.url.path.startswith("/auth/") and unsafe_method and request.url.path != "/auth/ios/apple"
+    cookie_api_write = request.url.path.startswith("/api/") and unsafe_method and bool(request.cookies.get(COOKIE_NAME))
+    if auth_write or cookie_api_write:
+        callback = urlsplit(os.getenv("AUTH_CALLBACK_URL", ""))
+        expected_origin = f"{callback.scheme}://{callback.netloc}" if callback.scheme and callback.netloc else ""
+        private_headers = {"Cache-Control": "no-store, private", "Pragma": "no-cache", "Expires": "0"}
+        if not expected_origin:
+            return JSONResponse(status_code=503, content={"detail": {"code": "AUTH_ORIGIN_NOT_CONFIGURED"}}, headers=private_headers)
+        if request.headers.get("origin") != expected_origin:
+            return JSONResponse(status_code=403, content={"detail": {"code": "AUTH_CSRF_ORIGIN_REJECTED"}}, headers=private_headers)
     response = await call_next(request)
+    refreshed_cookie_age = getattr(request.state, "auth_session_refresh_max_age", None)
+    if isinstance(refreshed_cookie_age, int) and refreshed_cookie_age > 0:
+        session_handle = request.cookies.get(COOKIE_NAME)
+        if session_handle:
+            response.set_cookie(
+                COOKIE_NAME,
+                session_handle,
+                max_age=refreshed_cookie_age,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path="/",
+            )
     # Every API response, including framework-generated 4xx/5xx errors, can
     # contain account- or authorization-dependent state. Route-level headers
     # are easy to omit on exceptional paths, so enforce the cache boundary here.
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith(("/api/", "/auth/")):
         cache_control = response.headers.get("Cache-Control", "").casefold()
         if "no-store" not in cache_control:
             response.headers["Cache-Control"] = "no-store, private"
@@ -195,6 +227,12 @@ def _pnelly_internal_service() -> tuple[str, str]:
     if len(token.encode("utf-8")) < 32:
         raise HTTPException(status_code=503, detail={"code": "PNELLY_API_TOKEN_NOT_CONFIGURED"})
     return base, token
+
+
+class AgeEvidenceSessionStartIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    purpose: Literal["shopper_eligibility"] = "shopper_eligibility"
 
 
 class ComplementerRequestIn(BaseModel):
@@ -397,6 +435,70 @@ async def _safe_json_post(
     if not isinstance(data, dict) or data.get("status") != "complete" or not isinstance(data.get("candidates"), list):
         raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_RESPONSE"})
     return data
+
+
+@app.post("/api/age-evidence/sessions")
+async def start_age_evidence_session(payload: AgeEvidenceSessionStartIn, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        try:
+            response = await client.post(
+                base + "/v1/me/age-evidence/sessions",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=payload.model_dump(),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SESSION_START_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(response.status_code if response.status_code < 500 else 503, detail={"code": "AGE_EVIDENCE_SESSION_START_FAILED"})
+    return JSONResponse(response.json(), headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/age-evidence/sessions/{session_id}/poll")
+async def poll_age_evidence_session(session_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        try:
+            response = await client.post(
+                base + f"/v1/me/age-evidence/sessions/{session_id}/poll",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SESSION_POLL_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(response.status_code if response.status_code < 500 else 503, detail={"code": "AGE_EVIDENCE_SESSION_POLL_FAILED"})
+    return JSONResponse(response.json(), headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/age-evidence/sessions/{session_id}/revoke")
+async def revoke_age_evidence_session(session_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        try:
+            response = await client.post(
+                base + f"/v1/me/age-evidence/sessions/{session_id}/revoke",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "AGE_EVIDENCE_SESSION_REVOKE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(response.status_code if response.status_code < 500 else 503, detail={"code": "AGE_EVIDENCE_SESSION_REVOKE_FAILED"})
+    return JSONResponse(response.json(), headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/api/vision/marketplace-search")
@@ -715,8 +817,11 @@ class WardrobeTryOnIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     wardrobe_item_id: str = Field(min_length=3, max_length=128)
     twin_id: str = Field(min_length=8, max_length=128)
-    person_image_asset_id: str = Field(min_length=36, max_length=36)
-    consent_id: str = Field(min_length=8, max_length=160)
+    # Optional legacy hints are accepted for compatibility but never trusted;
+    # the canonical Twin Registry supplies the owner-authorized source asset
+    # and consent bundle for every render request.
+    person_image_asset_id: str | None = Field(default=None, min_length=36, max_length=36)
+    consent_id: str | None = Field(default=None, min_length=8, max_length=160)
     consent_image_processing: bool
     consent_virtual_try_on: bool
     request_id: str | None = Field(default=None, min_length=8, max_length=128)
@@ -726,7 +831,9 @@ class WardrobeTryOnIn(BaseModel):
 
     @field_validator("person_image_asset_id")
     @classmethod
-    def valid_person_asset_id(cls, value: str) -> str:
+    def valid_person_asset_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip().lower()
         if not UUID_RE.fullmatch(normalized):
             raise ValueError("person_image_asset_id must be an opaque UUID")
@@ -740,13 +847,20 @@ class WardrobeTryOnIn(BaseModel):
             raise ValueError("look versions require look_id")
         return self
 
-
-
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not user_token.strip():
-        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if scheme.lower() == "bearer" and user_token.strip() and user_token.strip() != "server-cookie-session":
+        user_token = user_token.strip()
+    else:
+        # Preserve the established API error contract for anonymous callers.
+        # Cookie-backed browser sessions are resolved only when the opaque cookie
+        # is actually present; a sentinel header never substitutes for a cookie.
+        if not request.cookies.get(COOKIE_NAME) and not (
+            scheme.lower() == "bearer" and user_token.strip() == "server-cookie-session"
+        ):
+            raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
+        user_token = await session_access_token(request)
     commerce_base = _upstream_base("COMMERCE_API_URL")
     try:
         identity = await client.get(
@@ -769,6 +883,32 @@ async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request
     if not isinstance(subject, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}", subject.strip()):
         raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
     return subject.strip(), user_token.strip()
+
+def _age_evidence_request_fields(request: Request, subject: str) -> dict[str, Any]:
+    """Forward only a signed, request/subject-bound Yoti attestation from the browser."""
+    raw = request.headers.get("x-cirvanna-age-attestation")
+    signature = request.headers.get("x-cirvanna-age-attestation-signature")
+    request_id = request.headers.get("x-cirvanna-age-evidence-request-id")
+    if raw is None and signature is None and request_id is None:
+        return {}
+    if not raw or len(raw) > 8192 or not signature or len(signature) < 64 or not request_id:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_HEADERS_INCOMPLETE"})
+    try:
+        attestation = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_HEADER_INVALID"}) from exc
+    if (
+        not isinstance(attestation, dict)
+        or attestation.get("subject_id") != subject
+        or attestation.get("request_id") != request_id
+        or attestation.get("purpose") != "shopper_eligibility"
+    ):
+        raise HTTPException(403, detail={"code": "AGE_EVIDENCE_SUBJECT_OR_REQUEST_MISMATCH"})
+    return {
+        "request_id": request_id,
+        "age_attestation": attestation,
+        "age_attestation_signature": signature,
+    }
 
 
 def _wardrobe_service() -> tuple[str, str]:
@@ -1238,6 +1378,53 @@ async def my_virtual_twins(request: Request) -> Response:
     return _private_json_response({"twins": safe_records, "count": len(safe_records)})
 
 
+async def _authorized_twin_try_on_context(
+    client: httpx.AsyncClient, *, subject_id: str, twin_id: str,
+) -> tuple[str, str]:
+    """Resolve private person asset and consent only from the canonical registry."""
+    registry_base, registry_token = _internal_service(
+        "TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN"
+    )
+    try:
+        response = await client.post(
+            registry_base + "/internal/v1/twins/authorize",
+            headers={
+                "Authorization": "Bearer " + registry_token,
+                "Accept": "application/json",
+                "Cache-Control": "no-store",
+            },
+            json={"subject_id": subject_id, "twin_id": twin_id},
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "TWIN_REGISTRY_AUTHORIZE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+    try:
+        twin = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"}) from exc
+    source_ids = twin.get("source_image_asset_ids") if isinstance(twin, dict) else None
+    consent_id = twin.get("consent_id") if isinstance(twin, dict) else None
+    if not (
+        isinstance(twin, dict)
+        and twin.get("authorized") is True
+        and twin.get("active") is True
+        and twin.get("subject_id") == subject_id
+        and twin.get("twin_id") == twin_id
+        and twin.get("representation_type") == "full_body_mesh"
+        and isinstance(consent_id, str) and len(consent_id.strip()) >= 8
+        # The current VTON person-image contract accepts one source image only.
+        # Never pick an arbitrary member of a multi-image Twin source set.
+        and isinstance(source_ids, list) and len(source_ids) == 1
+        and all(isinstance(asset_id, str) and UUID_RE.fullmatch(asset_id) for asset_id in source_ids)
+    ):
+        raise HTTPException(403, detail={"code": "TWIN_NOT_AUTHORIZED_FOR_TRY_ON"})
+    return sorted(source_ids)[0], consent_id
+
 @app.post("/api/wardrobe/items/{item_id}/try-on")
 async def try_on_wardrobe_item(item_id: str, request: Request, payload: WardrobeTryOnIn) -> Response:
     """Start a private Twin render for an exact, active, user-owned wardrobe image."""
@@ -1250,6 +1437,13 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
         timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False
     ) as client:
         subject, _ = await _verified_commerce_subject(client, request)
+        person_asset_id, consent_id = await _authorized_twin_try_on_context(
+            client, subject_id=subject, twin_id=payload.twin_id.strip()
+        )
+        if payload.person_image_asset_id and payload.person_image_asset_id.lower() != person_asset_id:
+            raise HTTPException(403, detail={"code": "CLIENT_PERSON_ASSET_DOES_NOT_MATCH_TWIN"})
+        if payload.consent_id and payload.consent_id.strip() != consent_id:
+            raise HTTPException(403, detail={"code": "CLIENT_CONSENT_DOES_NOT_MATCH_TWIN"})
         wardrobe_base, wardrobe_token = _wardrobe_service()
         try:
             item_response = await client.get(
@@ -1305,7 +1499,7 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
             "subject_id": subject,
             "twin_id": payload.twin_id.strip(),
             "product_id": "wardrobe:" + item_id,
-            "person_image_asset_id": payload.person_image_asset_id,
+            "person_image_asset_id": person_asset_id,
             "garment_image_asset_id": garment_asset_id.lower(),
             "garment_asset_purpose": "wardrobe_garment_flat_lay",
             "garment_photo_type": "flat-lay",
@@ -1315,7 +1509,7 @@ async def try_on_wardrobe_item(item_id: str, request: Request, payload: Wardrobe
             "look_version": payload.look_version,
             "wardrobe_snapshot_version": payload.wardrobe_snapshot_version,
             "consent": {
-                "consent_id": payload.consent_id.strip(),
+                "consent_id": consent_id,
                 "image_processing": True,
                 "virtual_try_on": True,
                 "retention_policy": "ephemeral",
@@ -3504,25 +3698,14 @@ async def marketplace_click_it(request: Request) -> Response:
     )
 
 
-def _developer_token_input_allowed() -> bool:
-    """Allow manual bearer entry only in an explicitly opted-in non-production environment."""
-    environment = os.getenv("MARKETPLACE_ENVIRONMENT", "").strip().lower()
-    if environment in {"production", "prod"}:
-        return False
-    return os.getenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "false").strip().lower() == "true"
-
-
 def _page_html() -> str:
     try:
         html = HTML_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
     marker = "<script>\n(() => {"
-    developer_token_input = "true" if _developer_token_input_allowed() else "false"
     bootstrap = (
-        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:'
-        + developer_token_input
-        + '});</script>\n'
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
         + "<script>\n(() => {"
     )
     if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
@@ -3538,7 +3721,7 @@ def health() -> dict[str, str]:
 
 
 @app.get("/ready")
-def readiness() -> dict:
+async def readiness() -> dict:
     catalog_configured = bool(os.getenv("CATALOG_API_URL"))
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
     catalog_ready = False
@@ -3554,7 +3737,8 @@ def readiness() -> dict:
         commerce_ready = _upstream_ready(commerce_base)
     except HTTPException:
         commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    auth_status = await auth_readiness()
+    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready and auth_status["ready"]
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
@@ -3562,6 +3746,7 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "auth": auth_status,
         "ready": ready,
     }
     if not ready:
@@ -3611,6 +3796,7 @@ async def public_offers(
             "limit": min(limit, 25),
             "use_wardrobe_context": False,
             "exclude_owned_products": True,
+            **_age_evidence_request_fields(request, subject),
         }
         try:
             response = await client.post(
@@ -3820,6 +4006,14 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     for key in ("content-type", "idempotency-key"):
         if request.headers.get(key):
             headers[key] = request.headers[key]
+    if is_purchase_path:
+        for key in (
+            "x-cirvanna-age-attestation",
+            "x-cirvanna-age-attestation-signature",
+            "x-cirvanna-age-evidence-request-id",
+        ):
+            if request.headers.get(key):
+                headers[key] = request.headers[key]
     body = await request.body()
 
     if is_purchase_path:
@@ -4360,6 +4554,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
             "context": context,
             "use_wardrobe_context": True,
             "exclude_owned_products": effective["exclude_owned_products"],
+            **_age_evidence_request_fields(request, subject),
         }
         try:
             response = await client.post(

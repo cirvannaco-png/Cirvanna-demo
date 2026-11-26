@@ -602,18 +602,32 @@ footer{
   $("savedBtn").addEventListener("click",()=>openDrawer("Saved pieces",saved.length?saved.map(x=>'<div class="drawer-row"><div>'+escapeHtml(x.name)+'<small>'+(mode==="commerce"?"Saved to your account":escapeHtml(money(x)))+'</small></div><button class="btn" '+(mode==="commerce"?'data-remove-saved="'+escapeHtml(x.product_id)+'"':'data-remove="'+escapeHtml(x.product_id)+'"')+'>Remove</button></div>').join(""):'<p class="config-note">Your saved pieces will appear here.</p>'));
   $("cartBtn").addEventListener("click",()=>{const rows=cart.map(x=>'<div class="drawer-row"><div>'+escapeHtml(x.name||x.product_name)+'<small>Qty '+x.quantity+' · '+escapeHtml(money(x))+' each</small></div><button class="btn" '+(mode==="commerce"?'data-remove-cart="'+escapeHtml(x.variant_id||x.product_id)+'"':'data-remove="'+escapeHtml(x.product_id)+'"')+'>Remove</button></div>').join("");const note=mode==="commerce"?purchaseMessage+' Stock is reserved only during a successful checkout.':'The bag is browser-local. No stock is reserved and no order is created.';const action=mode==="commerce"?(purchaseEnabled?'<button class="btn primary" id="checkoutBtn">Continue to secure checkout</button>':'<button class="btn" disabled>Checkout paused — CAL authorization unavailable</button>'):'<button class="btn" disabled>Checkout unavailable</button>';const empty=mode==="commerce"&&!purchaseEnabled?'<p class="config-note">'+escapeHtml(purchaseMessage)+' Your account cart has not been changed.</p>':'<p class="config-note">Your bag is empty.</p>';openDrawer("Your bag",cart.length?rows+'<p class="config-note">'+escapeHtml(note)+'</p>'+action:empty)});
   $("drawerRoot").addEventListener("click",e=>{const b=e.target.closest("button[data-remove],button[data-remove-saved],button[data-remove-cart]");if(!b)return;const title=$("drawerRoot").querySelector("aside h2")?.textContent||"Saved pieces";if(mode==="commerce"){const savedId=b.dataset.removeSaved,variantId=b.dataset.removeCart,url=savedId?config.commerceBase+"/saved-products/"+encodeURIComponent(savedId):config.commerceBase+"/cart/items/"+encodeURIComponent(variantId||"");fetch(url,{method:"DELETE",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"}}).then(r=>{if(!r.ok)throw new Error("Remove request returned HTTP "+r.status+".");return load()}).then(()=>{if(title==="Your bag")$("cartBtn").click();else $("savedBtn").click()}).catch(err=>setStatus(err.message||"Could not remove item.",true));return}const id=b.dataset.remove;if(!id)return;saved=saved.filter(x=>x.product_id!==id);cart=cart.filter(x=>x.product_id!==id);writeStore();if(title==="Your bag")$("cartBtn").click();else $("savedBtn").click();render()});
-  const accountAuthPanel=bootstrap.allowDeveloperTokenInput===true
-    ? '<p class="config-note">Developer-only integration mode. Paste a short-lived signed customer test token only on a non-production environment where the operator explicitly enabled this input. Never use an admin, merchant or service token. The token stays in page memory.</p><div class="config"><label class="wide">Signed customer test token<input id="commerceToken" type="password" autocomplete="off" placeholder="Short-lived customer test token"></label></div><button class="btn primary wide" id="commerceConnectBtn">Connect test customer session</button>'
-    : '<p class="config-note">Account sign-in is unavailable until the approved Cirvanna OIDC browser session is configured. This page does not accept pasted access tokens in this environment.</p>';
+  const accountAuthPanel='<p class="config-note">Sign in securely. Tokens stay server-side; this page receives only an authenticated session status.</p><div class="config"><button class="btn primary wide" data-auth-provider="google">Continue with Google</button><button class="btn wide" data-auth-provider="apple">Continue with Apple</button><button class="btn wide" data-auth-provider="microsoft">Continue with Microsoft</button></div><form id="emailOtpForm" class="config"><label class="wide">Email address<input id="authEmail" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></label><button class="btn primary wide" type="submit">Email me a sign-in link</button><p id="authEmailStatus" class="config-note" role="status"></p></form><button class="btn wide" data-auth-logout>Sign out</button><p class="config-note">On iPhone and iPad, use native Sign in with Apple in the Cirvanna iOS app. Web fallback is available above. Microsoft sign-in uses Microsoft Entra ID.</p>' ;
   $("settingsBtn").addEventListener("click",()=>openDrawer("Connect Cirvanna account",accountAuthPanel+'<p class="config-note">Local demo mode uses sample products and browser-local saves and bag. It cannot reserve stock, create orders or process payment.</p><button class="btn wide" id="demoBtn">Use local demo data</button>'));
+  $("drawerRoot").addEventListener("submit",async e=>{
+    if(e.target.id!=="emailOtpForm")return;
+    e.preventDefault();
+    const email=$("authEmail").value.trim();
+    $("authEmailStatus").textContent="Sending a secure sign-in link…";
+    try{
+      const response=await fetch("/auth/email/start",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({email,create_user:true}),cache:"no-store"});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||"Email sign-in could not be started.");
+      $("authEmailStatus").textContent="Check your inbox for your one-time sign-in link.";
+    }catch(err){$("authEmailStatus").textContent=err.message||"Email sign-in is unavailable."}
+  });
   $("drawerRoot").addEventListener("click",e=>{
-    if(e.target.id==="commerceConnectBtn"){
-      if(bootstrap.allowDeveloperTokenInput!==true){setStatus("Pasted access tokens are disabled in this environment.",true);return}
-      const token=$("commerceToken").value.trim();
-      if(!token){alert("Enter your signed Cirvanna user session token.");return}
-      if(!bootstrap.publicOffersBase){setStatus("The same-origin Cirvanna Marketplace BFF is not configured on this page.",true);alert("The same-origin Cirvanna Marketplace BFF is not configured.");return}
-      closeDrawer();
-      window.dispatchEvent(new CustomEvent("cirvanna:session-ready",{detail:{accessToken:token,source:"marketplace"}}));
+    const logoutButton=e.target.closest("[data-auth-logout]");
+    if(logoutButton){
+      fetch("/auth/logout",{method:"POST",credentials:"same-origin",cache:"no-store"}).finally(()=>{config={base:"",token:"",commerceBase:"",userToken:""};items=[];saved=[];cart=[];total=0;purchaseEnabled=false;mode="demo";pnellyConversationId=null;pnellyConversationStateVersion=null;pnellyConversationExpiresAt=null;updateCounts();render();setStatus("You have been signed out of Cirvanna.")});
+      closeDrawer();return;
+    }
+    const providerButton=e.target.closest("[data-auth-provider]");
+    if(providerButton){
+      const provider=providerButton.dataset.authProvider;
+      if(!["google","apple","microsoft"].includes(provider))return;
+      window.location.assign("/auth/login/"+provider);
+      return;
     }
     if(e.target.id==="checkoutBtn"){
       if(mode!=="commerce"||!config.commerceBase||!config.userToken||!purchaseEnabled){setStatus(purchaseMessage,true);return}
@@ -732,8 +746,12 @@ footer{
     return false;
   }
   async function acceptMarketplaceSession(token){
-    if(typeof token!=="string"||token.trim().length<12)return false;
-    const nextToken=token.trim();
+    if(token!=="server-cookie-session")return false;
+    const sessionResponse=await fetch("/auth/session",{headers:{Accept:"application/json"},cache:"no-store",credentials:"same-origin"});
+    if(!sessionResponse.ok)return false;
+    const sessionProfile=await sessionResponse.json().catch(()=>({}));
+    if(sessionProfile.authenticated!==true)return false;
+    const nextToken="server-cookie-session";
     if(!bootstrap.publicOffersBase){
       setStatus("The same-origin Cirvanna Marketplace BFF is not configured; the signed-in session was not attached.",true);
       return false;
@@ -779,12 +797,17 @@ footer{
     load();
     return true;
   }
-  // The host OIDC/session bootstrap and the developer-only test connector use
-  // the same same-origin, server-verified customer-token handoff.
+  // Only a server-verified HttpOnly cookie session can activate live commerce.
+  // JavaScript receives a fixed sentinel, never an access or refresh token.
   window.addEventListener("cirvanna:session-ready",event=>{
     const detail=event&&event.detail;
     if(detail)void acceptMarketplaceSession(detail.accessToken);
   });
+  // Restore the opaque HttpOnly BFF session without reading access or refresh tokens.
+  void fetch("/auth/session",{headers:{Accept:"application/json"},cache:"no-store",credentials:"same-origin"})
+    .then(response=>response.ok?response.json():null)
+    .then(profile=>{if(profile&&profile.authenticated===true)void acceptMarketplaceSession("server-cookie-session")})
+    .catch(()=>{});
   async function startPnellyConversation(){
     const creatingToken=config.userToken;
     const creatingGeneration=marketplaceSessionGeneration;

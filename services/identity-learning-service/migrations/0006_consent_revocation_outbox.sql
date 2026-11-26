@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- Durable handoff from consent withdrawal to owner-scoped Twin asset deletion.
 -- The outbox stores opaque identifiers only; asset bytes remain in Asset Service.
 BEGIN;

@@ -139,6 +139,21 @@ def test_low_confidence_face_detection_fails_closed(monkeypatch, tmp_path):
     assert error.value.detail["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
 
 
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"), -0.01, 1.01])
+def test_non_finite_or_out_of_range_detector_confidence_fails_closed(monkeypatch, tmp_path, score):
+    fake_mediapipe(monkeypatch)
+    asset = tmp_path / "face_detector.task"
+    payload = b"test-model-bytes"
+    asset.write_bytes(payload)
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_PATH", str(asset))
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_SHA256", hashlib.sha256(payload).hexdigest())
+    monkeypatch.setattr(privacy, "_face_detector", lambda: FakeDetector([detection((20, 20, 30, 30), score)]))
+    with pytest.raises(HTTPException) as error:
+        privacy.anonymize_click_it_image(Image.new("RGB", (120, 120), "white"))
+    assert error.value.status_code == 503
+    assert error.value.detail["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
 def test_detector_runtime_exception_fails_closed(monkeypatch, tmp_path):
     fake_mediapipe(monkeypatch)
     asset = tmp_path / "face_detector.task"

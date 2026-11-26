@@ -63,6 +63,13 @@ def _database_url() -> str:
 
 
 def _build_engine(database_url: str):
+    # The Catalog image installs psycopg v3 (psycopg[binary]), not psycopg2.
+    # Normalize provider-standard PostgreSQL URLs so SQLAlchemy selects the
+    # installed driver instead of its psycopg2 default.
+    if database_url.startswith("postgresql://"):
+        database_url = "postgresql+psycopg://" + database_url[len("postgresql://"):]
+    elif database_url.startswith("postgres://"):
+        database_url = "postgresql+psycopg://" + database_url[len("postgres://"):]
     options: dict[str, Any] = {"pool_pre_ping": True}
     if database_url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
@@ -465,6 +472,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_production_docs_disabled = _catalog_production_mode()
 app = FastAPI(
     title="Cirvanna Catalog Service",
     version="0.1.0",
@@ -472,6 +480,9 @@ app = FastAPI(
         "Canonical product identity and metadata. This is not a checkout, "
         "payment, fit-prediction, personalized-ranking, or try-on service."
     ),
+    docs_url=None if _production_docs_disabled else "/docs",
+    redoc_url=None if _production_docs_disabled else "/redoc",
+    openapi_url=None if _production_docs_disabled else "/openapi.json",
     lifespan=lifespan,
 )
 
@@ -621,8 +632,8 @@ def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE_NAME}
 
 
-@app.get("/ready", response_model=ReadinessOut, tags=["operations"])
-def readiness(db: Annotated[Session, Depends(get_db)]) -> ReadinessOut:
+@app.get("/ready", tags=["operations"])
+def readiness(db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
     """Readiness requires a reachable DB, expected schema and deployment auth config."""
     configured = _catalog_auth_configured()
     migrations_required = os.getenv("CATALOG_AUTO_CREATE_SCHEMA", "true").lower() != "true"
@@ -662,11 +673,20 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> ReadinessOut:
         ready=is_ready,
     )
     if not is_ready:
+        if _catalog_production_mode():
+            raise HTTPException(status_code=503, detail="Catalog service is not ready")
         raise HTTPException(status_code=503, detail=result.model_dump())
-    return result
+    if _catalog_production_mode():
+        # Public platform health checks receive no schema, database, or auth diagnostics.
+        return {"status": "ready", "service": SERVICE_NAME}
+    return result.model_dump()
 
 
-@app.get("/capabilities", tags=["operations"])
+@app.get(
+    "/capabilities",
+    tags=["operations"],
+    dependencies=[Depends(require_catalog_read_token)],
+)
 def capabilities() -> dict[str, Any]:
     return {
         "service": SERVICE_NAME,

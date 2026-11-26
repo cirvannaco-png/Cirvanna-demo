@@ -1,0 +1,68 @@
+name: Cirvanna release-gate contract tests
+
+on:
+  pull_request:
+    paths:
+      - "packages/identity-intelligence/age_evidence/**"
+      - "packages/identity-intelligence/eepl/**"
+      - "packages/identity-intelligence/catacaci/**"
+      - "services/decision-service/migrations/**"
+      - "services/decision-service/app/policy_registry.py"
+      - "services/decision-service/app/main.py"
+      - "services/decision-service/tests/test_age_evidence.py"
+      - "services/decision-service/tests/test_api.py"
+      - "services/decision-service/requirements.txt"
+      - "services/identity-learning-service/**"
+      - "tools/cal_staging_matrix/**"
+      - "tools/click_it_privacy_eval/**"
+      - "tests/architecture/test_cal_staging_matrix.py"
+      - "tests/architecture/test_click_it_privacy_eval.py"
+      - "tests/architecture/test_click_it_rights_smoke.py"
+      - ".github/workflows/cirvanna-release-gates.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate-contracts:
+    name: Age evidence, CAL and Click It contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/decision-service/requirements.txt
+
+      - name: Install service test dependencies
+        run: python -m pip install -r services/decision-service/requirements.txt
+
+      - name: Install identity service test dependencies
+        run: python -m pip install -r services/identity-learning-service/requirements.txt
+
+      - name: Test durable age evidence lifecycle and redemption API
+        working-directory: services/identity-learning-service
+        run: python -m pytest -q tests/test_age_evidence_store.py tests/test_age_evidence_api.py
+
+      - name: Test CAL staging matrix contract
+        run: python -m unittest discover -s tests/architecture -p "test_cal_staging_matrix.py" -v
+
+      - name: Test Click It masking evaluation
+        run: python -m unittest discover -s tests/architecture -p "test_click_it_privacy_eval.py" -v
+
+      - name: Test Click It rights intake contract
+        run: python -m unittest discover -s tests/architecture -p "test_click_it_rights_smoke.py" -v
+
+      - name: Test age-evidence and Yoti adapter
+        working-directory: services/decision-service
+        run: python -m unittest discover -s tests -p "test_age_evidence.py" -v
+
+      - name: Test Decision Service age-evidence integration
+        working-directory: services/decision-service
+        run: python -m pytest -q tests/test_api.py

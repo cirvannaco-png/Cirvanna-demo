@@ -145,11 +145,11 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <section class="panel hidden" id="pnellyPanel">
 <div class="eyebrow">PNELLY · daily look intelligence</div>
 <h2>Three ways to wear what you own</h2>
-<p class="small">PNELLY creates an Everyday, Elevated and Explore look from your active wardrobe. EEPL checks current, explicitly declared location, occasion and climate before composing looks. Missing, stale or policy-blocked context is routed to REVIEW or BLOCK; it is never silently treated as a pass.</p>
+<p class="small">Tell PNELLY what the invitation says, even if you do not understand the dress code. It explains recognized themes, builds three distinct combinations from your active wardrobe, and offers optional Complementer refinements. EEPL checks current, explicitly declared location, occasion and climate before composing looks. Missing, stale or policy-blocked context is routed to REVIEW or BLOCK; it is never silently treated as a pass.</p>
 <form id="pnellyForm">
 <div class="grid">
 <div class="field"><label for="pnellyLocation">Today's location (required by current context policy)</label><input id="pnellyLocation" maxlength="120" placeholder="e.g. Nairobi, Kenya"></div>
-<div class="field"><label for="pnellyOccasion">Today's occasion</label><select id="pnellyOccasion"><option value="">Not specified</option><option value="everyday">Everyday</option><option value="work">Work</option><option value="meeting">Meeting</option><option value="evening">Evening</option><option value="formal">Formal</option><option value="travel">Travel</option><option value="special occasion">Special occasion</option></select></div>
+<div class="field"><label for="pnellyOccasion">Occasion or theme</label><input id="pnellyOccasion" maxlength="120" placeholder="e.g. old money themed party, wedding, black tie"></div>
 <div class="field"><label for="pnellyClimate">Climate</label><select id="pnellyClimate"><option value="">Not specified</option><option value="hot_humid">Hot and humid</option><option value="hot_dry">Hot and dry</option><option value="temperate">Temperate</option><option value="cool">Cool</option></select></div>
 <div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="generatePNELLY">Generate today's three looks</button></div>
 </div>
@@ -1214,6 +1214,33 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     root.replaceChildren();
     const recommendation = data.recommendation || {};
     const eligibility = data.eligibility || {};
+    const themeGuide = recommendation.theme_guide;
+    if (themeGuide && themeGuide.status === "recognized") {
+      const guide = document.createElement("section");
+      guide.className = "pnelly-card";
+      guide.style.gridColumn = "1 / -1";
+      guide.append(text("div", "PNELLY · dress-code decoded", "eyebrow"));
+      guide.append(text("h3", themeGuide.label + " theme"));
+      guide.append(text("p", themeGuide.explanation, "pnelly-note"));
+      const guideRows = [
+        ["Palette", themeGuide.palette], ["Fabrics", themeGuide.fabrics],
+        ["Silhouettes", themeGuide.silhouettes], ["Finishing touches", themeGuide.finishing],
+        ["Usually avoid", themeGuide.avoid]
+      ];
+      for (const [label, values] of guideRows) {
+        if (Array.isArray(values) && values.length) guide.append(text("p", label + ": " + values.join(" · "), "pnelly-note"));
+      }
+      guide.append(text("p", "You do not need to buy anything first. PNELLY has matched the looks below to items already in your wardrobe.", "pnelly-note"));
+      root.append(guide);
+    } else if ($("pnellyOccasion").value.trim()) {
+      const guide = document.createElement("section");
+      guide.className = "pnelly-card";
+      guide.style.gridColumn = "1 / -1";
+      guide.append(text("div", "PNELLY · one more clue", "eyebrow"));
+      guide.append(text("h3", "Let's decode this invitation"));
+      guide.append(text("p", "I don't have a reliable definition for this exact theme yet, so I won't guess and misdress you. Share the invitation's wording or a reference look, and PNELLY can narrow the styling direction. Any wardrobe combinations below are general options, not verified matches for this theme.", "pnelly-note"));
+      root.append(guide);
+    }
     if (eligibility.verdict !== "PASS") {
       const heading = eligibility.verdict === "BLOCK" ? "EEPL blocked this context." : "EEPL review required before looks can be generated.";
       root.append(text("p", heading, "pnelly-note"));
@@ -1224,7 +1251,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       const card = document.createElement("article");
       card.className = "pnelly-card";
       card.append(text("div", look.status === "ready" ? "Ready from your wardrobe" : "More wardrobe items needed", "eyebrow"));
-      card.append(text("h3", look.role));
+      card.append(text("h3", look.direction || look.role));
+      card.append(text("p", "Try-on " + ((recommendation.looks || []).indexOf(look) + 1) + " of 3", "eyebrow"));
       if (look.status === "ready") {
         for (const item of (look.items || [])) {
           const piece = document.createElement("div");
@@ -1238,7 +1266,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         card.append(text("p", "To complete this look, add: " + (look.missing || []).join(", "), "pnelly-note"));
       }
       card.append(text("p", look.reason || "", "pnelly-note"));
-      card.append(text("p", "Virtual Twin preview: unavailable until your persistent Twin and a validated renderer are connected.", "pnelly-note"));
+      card.append(text("p", "Virtual Twin try-on: not yet available. This card is one of the three reserved look previews; Cirvanna will only show a try-on after your persistent Twin, purpose-specific consent, private asset authorization and a validated renderer are operational.", "pnelly-note"));
       if (look.status === "ready") {
         const advisory = document.createElement("section");
         advisory.className = "pnelly-advisory";
@@ -1320,7 +1348,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   $("pnellyForm").addEventListener("submit", async event => {
     event.preventDefault();
     $("generatePNELLY").disabled = true;
-    status("pnellyStatus", "Building three distinct looks from your active wardrobe…");
+    status("pnellyStatus", "Decoding the occasion and building three distinct looks from your active wardrobe…");
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       const data = await api("/api/wardrobe/pnelly/daily-looks", {
@@ -1340,7 +1368,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         return;
       }
       const ready = data.recommendation?.ready_count || 0;
-      status("pnellyStatus", ready + " of 3 looks can be assembled from your current active wardrobe. EEPL passed context policy; this is not a CAL product-display authorization. No virtual try-on image was generated.", ready === 3 ? "good" : "");
+      const theme = data.recommendation?.theme_guide?.label;
+      status("pnellyStatus", (theme ? theme + " decoded. " : "") + ready + " of 3 looks can be assembled from your current active wardrobe. Complementer can refine each look on request. EEPL passed context policy; this is not a CAL product-display authorization. No virtual try-on image was generated.", ready === 3 ? "good" : "");
     } catch (error) {
       status("pnellyStatus", error.message, "error");
     } finally {

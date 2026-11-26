@@ -19,7 +19,6 @@ on:
   push:
     branches:
       - main
-      - "integration/**"
       - "engineering/**"
       - "feature/**"
     paths:
@@ -52,6 +51,22 @@ jobs:
       - name: Test same-origin marketplace gateway
         working-directory: services/marketplace-bff
         run: python -m pytest -q
+      - name: Start isolated PostgreSQL 17 for auth schema migration tests
+        run: |
+          docker run -d --name cirvanna-bff-auth-pg -e POSTGRES_USER=cirvanna -e POSTGRES_PASSWORD=test-secret-auth -e POSTGRES_DB=cirvanna_auth -p 5433:5432 postgres:17
+          for attempt in {1..40}; do
+            if docker exec cirvanna-bff-auth-pg pg_isready -U cirvanna -d cirvanna_auth; then break; fi
+            sleep 1
+          done
+          docker exec cirvanna-bff-auth-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_auth -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN EXECUTE 'CREATE ROLE anon NOLOGIN'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN EXECUTE 'CREATE ROLE authenticated NOLOGIN'; END IF; END \$\$;"
+      - name: Apply private auth schema and verify RLS, grants and rollback
+        shell: bash
+        run: |
+          docker exec -i cirvanna-bff-auth-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_auth < services/marketplace-bff/migrations/0001_auth_private_sessions.sql
+          docker exec cirvanna-bff-auth-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_auth -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth_private' AND c.relname='sessions' AND c.relrowsecurity) OR NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth_private' AND c.relname='pending_auth' AND c.relrowsecurity) THEN RAISE EXCEPTION 'auth_private RLS is not enabled'; END IF; IF has_schema_privilege('anon','auth_private','USAGE') OR has_schema_privilege('authenticated','auth_private','USAGE') THEN RAISE EXCEPTION 'client role can use auth_private schema'; END IF; IF has_table_privilege('anon','auth_private.sessions','SELECT') OR has_table_privilege('authenticated','auth_private.sessions','SELECT') OR has_table_privilege('anon','auth_private.pending_auth','SELECT') OR has_table_privilege('authenticated','auth_private.pending_auth','SELECT') THEN RAISE EXCEPTION 'client role can read auth_private'; END IF; IF NOT has_table_privilege('cirvanna_bff_auth','auth_private.sessions','SELECT') OR NOT has_table_privilege('cirvanna_bff_auth','auth_private.pending_auth','INSERT') THEN RAISE EXCEPTION 'BFF service role is missing required grants'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='auth_private' AND tablename='sessions' AND policyname='auth_private_bff_service_all') OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='auth_private' AND tablename='pending_auth' AND policyname='auth_private_bff_service_all') THEN RAISE EXCEPTION 'service-only RLS policies are missing'; END IF; END \$\$;"
+          docker exec -i cirvanna-bff-auth-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_auth < services/marketplace-bff/migrations/0001_auth_private_sessions.down.sql
+          docker exec -i cirvanna-bff-auth-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_auth < services/marketplace-bff/migrations/0001_auth_private_sessions.sql
+          docker exec cirvanna-bff-auth-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_auth -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='auth_private' AND c.relname='sessions' AND c.relrowsecurity) THEN RAISE EXCEPTION 'auth migration re-upgrade failed'; END IF; END \$\$;"
       - name: Compile BFF Python
         run: python -m compileall -q services/marketplace-bff/app
       - name: Validate shared appearance browser bundle

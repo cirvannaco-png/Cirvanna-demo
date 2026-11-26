@@ -18,3 +18,8 @@ python scripts/validate_architecture.py
 ```
 
 Production promotion still requires policy-owner review, versioned rule distribution, consent and data-minimization review, API contract tests, and end-to-end display-gate integration.
+
+
+## Threshold-only age evidence
+
+The pure EEPL context now supports `minimum_age_threshold` plus `minimum_age_threshold_met` for a trusted adapter that has already verified the provider attestation's signature, subject, request, purpose, policy ID/version, threshold and expiry. This is a boolean threshold proof; it is not a synthetic age and must never be populated from client input. It is accepted only when the attested threshold exactly matches the policy's `minimum_age` and no `maximum_age` rule is configured. A minimum-threshold proof cannot establish compliance with an upper age bound; that case remains REVIEW until a separate, supported upper-bound attestation contract is implemented and verified. Existing positional `EEPLContext` construction remains compatible.

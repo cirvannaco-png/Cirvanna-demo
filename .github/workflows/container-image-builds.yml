@@ -12,7 +12,22 @@ on:
       - "packages/appearance_intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
+      - "services/identity-learning-service/**"
+      - "services/vision-intelligence/**"
+      - "packages/identity-intelligence/age_evidence/**"
       - "services/api-gateway/**"
+      - "services/dermalsight/**"
+      - "services/twin-mesh-validator/**"
+      - "services/twin-registry/**"
+      - "services/virtual-try-on/**"
+      - "services/virtual-twin/**"
+      - "services/skincare-routine-service/**"
+      - "services/recommendation-service/**"
+      - "services/npl-service/**"
+      - "services/cultural-identity-service/**"
+      - "services/wardrobe-service/**"
+      - "services/xari/**"
+      - "render.yaml"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -23,10 +38,23 @@ on:
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
       - "services/appearance-intelligence-service/**"
-      - "packages/appearance_intelligence/**"
       - "services/vision-intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
+      - "services/identity-learning-service/**"
+      - "services/api-gateway/**"
+      - "services/dermalsight/**"
+      - "services/twin-mesh-validator/**"
+      - "services/twin-registry/**"
+      - "services/virtual-try-on/**"
+      - "services/virtual-twin/**"
+      - "services/skincare-routine-service/**"
+      - "services/recommendation-service/**"
+      - "services/npl-service/**"
+      - "services/cultural-identity-service/**"
+      - "services/wardrobe-service/**"
+      - "services/xari/**"
+      - "render.yaml"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
@@ -36,7 +64,7 @@ permissions:
 jobs:
   build-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build Catalog service image
@@ -57,5 +85,78 @@ jobs:
         run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
       - name: Build Cirvanna Intelligence Service image
         run: docker build -f services/intelligence-service/Dockerfile -t cirvanna-intelligence:ci services/intelligence-service
+      - name: Build Identity Learning service image
+        run: docker build -f services/identity-learning-service/Dockerfile -t cirvanna-identity-learning:ci .
       - name: Build API Gateway image
         run: docker build -f services/api-gateway/Dockerfile -t cirvanna-api-gateway:ci .
+      - name: Build DermalSight service image
+        run: docker build -f services/dermalsight/Dockerfile -t cirvanna-dermalsight:ci services/dermalsight
+      - name: Build Twin Mesh Validator image
+        run: docker build -f services/twin-mesh-validator/Dockerfile -t cirvanna-twin-mesh-validator:ci services/twin-mesh-validator
+      - name: Build Twin Registry image
+        run: docker build -f services/twin-registry/Dockerfile -t cirvanna-twin-registry:ci .
+      - name: Build Virtual Try-On API image
+        run: docker build -f services/virtual-try-on/Dockerfile -t cirvanna-virtual-try-on:ci .
+      - name: Build Virtual Twin image
+        run: docker build -f services/virtual-twin/Dockerfile -t cirvanna-virtual-twin:ci services/virtual-twin
+      - name: Build Skincare Routine service image
+        run: docker build -f services/skincare-routine-service/Dockerfile -t cirvanna-skincare-routine:ci .
+      - name: Build Recommendation service image
+        run: docker build -f services/recommendation-service/Dockerfile -t cirvanna-recommendation:ci services/recommendation-service
+      - name: Build NPL service image
+        run: docker build -f services/npl-service/Dockerfile -t cirvanna-npl:ci .
+      - name: Build Cultural Identity service image
+        run: docker build -f services/cultural-identity-service/Dockerfile -t cirvanna-cultural-identity:ci .
+      - name: Build Wardrobe service image
+        run: docker build -f services/wardrobe-service/Dockerfile -t cirvanna-wardrobe:ci .
+      - name: Build PNELLY service image
+        run: docker build -f services/xari/Dockerfile -t cirvanna-pnelly:ci .
+
+      # The FASHN model worker is a separately qualified GPU workload. It is
+      # intentionally not deployed to Render's CPU service fleet; its pinned
+      # source and model-weight/licence/runtime qualification is tracked separately.
+
+      - name: Record exact-candidate local image IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit-artifacts
+          {
+            echo "candidate_commit=${GITHUB_SHA}"
+            echo "built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for image in \
+              cirvanna-catalog:ci \
+              cirvanna-commerce:ci \
+              cirvanna-decision:ci \
+              cirvanna-marketplace-bff:ci \
+              cirvanna-asset-service:ci \
+              cirvanna-appearance-intelligence:ci \
+              cirvanna-vision-intelligence:ci \
+              cirvanna-privacy-governance:ci \
+              cirvanna-intelligence:ci \
+              cirvanna-identity-learning:ci \
+              cirvanna-api-gateway:ci \
+              cirvanna-dermalsight:ci \
+              cirvanna-twin-mesh-validator:ci \
+              cirvanna-twin-registry:ci \
+              cirvanna-virtual-try-on:ci \
+              cirvanna-virtual-twin:ci \
+              cirvanna-skincare-routine:ci \
+              cirvanna-recommendation:ci \
+              cirvanna-npl:ci \
+              cirvanna-cultural-identity:ci \
+              cirvanna-wardrobe:ci \
+              cirvanna-pnelly:ci; do
+              printf '%s ' "${image}"
+              docker image inspect --format '{{.Id}}' "${image}"
+            done
+          } | tee audit-artifacts/container-image-local-ids.txt
+
+      - name: Preserve container build manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cirvanna-container-image-local-ids
+          path: audit-artifacts/container-image-local-ids.txt
+          if-no-files-found: warn
+          retention-days: 30

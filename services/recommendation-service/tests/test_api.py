@@ -72,3 +72,26 @@ def test_unknown_fragrance_family_is_rejected(client):
     body = request_body()
     body["preferences"]["favorite_fragrance_families"] = ["magic"]
     assert client.post("/v1/complementer/recommend", headers=auth(), json=body).status_code == 422
+
+
+def test_pnelly_occasion_guide_is_general_education_and_does_not_need_user_data(client):
+    response = client.post(
+        "/v1/pnelly/occasion-guide",
+        headers=auth(),
+        json={"occasion": "old money themed party"},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["capability"] == "pnelly_occasion_intelligence"
+    assert result["theme_guide"]["theme_id"] == "old_money"
+    assert result["theme_guide"]["purchase_required"] is False
+
+
+def test_pnelly_occasion_guide_abstains_on_unknown_theme(client):
+    response = client.post(
+        "/v1/pnelly/occasion-guide",
+        headers=auth(),
+        json={"occasion": "moonlight cyber garden gala"},
+    )
+    assert response.status_code == 200
+    assert response.json()["theme_guide"] is None

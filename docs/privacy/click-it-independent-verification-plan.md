@@ -91,3 +91,10 @@ Do not populate the template with synthetic hashes, mock results, or an internal
 ## 7. Enablement rule
 
 Click It stays disabled until detector, consent, jurisdiction, guardian, rights-authority, content-lifecycle, private-storage and masking-attestation providers are actually deployed; the full independent evaluation and route/storage audit passes; operational on-call and incident processes are live; and REL-14 is passed with evidence tied to the exact commit. This proposal does not authorize activation.
+
+
+## Independent metric scorer
+
+The repository now includes `tools/click_it_privacy_eval/score.py`, a standard-library scorer for an independent evaluator's annotation export. It reports per-stratum face false-negative rates and 95% Wilson upper bounds, sample counts, residual unmasked faces, and prohibited identity/age feature calls. It fails closed on insufficient per-stratum sample counts, threshold misses, residual unmasked faces, uncertain outputs, child-media processing/publication, or any identity/age-analysis call. The acceptance thresholds must be preregistered by the independent evaluator before the dataset is examined; the script intentionally supplies no default pass threshold.
+
+The scorer does not detect faces, inspect images, create a dataset, or certify a model. It cannot replace independent review of the exact detector artifact, masked bytes, memory/temp/log behavior, or production ingress and egress. No evaluation dataset or independent report is included in this repository yet, so no false-negative performance claim is made.

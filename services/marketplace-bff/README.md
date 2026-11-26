@@ -18,6 +18,7 @@ This is the server-side browser boundary for marketplace browsing, visual discov
 - `/api/wardrobe/outfits` lists and creates saved looks; piece-level add/replace/remove operations are proxied to the Wardrobe service. The BFF derives the owner from Commerce `/me`, generates outfit/slot identifiers, and rejects cross-subject responses.
 - `GET /sanctuary.html` serves the Primal Atelier × Living Couture entry experience; `GET /twin-onboarding.html` serves the capability-gated Twin journey. Both are no-store presentation pages and share repository-owned static assets.
 - `GET /api/virtual-twin/me` derives the subject from the signed Commerce session, calls the internal Twin Registry owner-scoped list route, validates the returned schema, and exposes only Twin lifecycle/model metadata. It never returns source/mesh asset IDs, object keys or media URLs. The registry rechecks active consent and private-asset ownership before listing an active record. Configure `TWIN_REGISTRY_API_URL` and `TWIN_REGISTRY_API_TOKEN` as server-side secrets; do not put either in the browser.
+- `POST /api/wardrobe/items/{item_id}/try-on` now derives the person-image asset and consent bundle from a fresh owner-scoped `POST /internal/v1/twins/authorize` response. Browser-supplied asset/consent IDs are compatibility hints only and must match the canonical record; they are never trusted as authority. The BFF verifies the exact active wardrobe item and its private image-storage consent, then forwards opaque IDs to the Virtual Try-On orchestrator, which independently verifies the `virtual_try_on` purpose scope, Twin ownership/version and asset bindings before and after inference. Public Twin list responses continue to omit all asset and consent identifiers. This endpoint renders one supported garment image per request; it is not a multi-garment full-outfit compositor.
 - The Twin onboarding page uses the authenticated `GET /api/virtual-twin/capabilities` route only. It does not collect photos/video or create consent receipts. The current Twin API returns, at most, a single-still ephemeral pose skeleton; full-body reconstruction, persistent generation, independent validation, owner-scoped Twin status, private image persistence and a complete capture workflow remain unavailable. The page must keep capture locked until these dependencies are delivered and verified.
 - The Wardrobe page exposes a per-look Complementer action. It sends only the user-invoked look summary and bounded garment descriptions; the response is rendered as request-scoped advice. Generic Helpful / Not for me reactions remain TAL observations. A separate user-selected value from the bounded aesthetic taxonomy can be saved to USI only with the exact active `profile_storage` receipt; it is tagged with request provenance and can influence later daily looks as a soft positive preference. Users can inspect, replace and deactivate PNELLY-owned preferences; each mutation is consent-bound and uses optimistic profile-version checks.
 - `/api/style/color-profile` reads and writes the user's structured liked/disliked/best-version colour preferences through USI/TAL. The BFF derives the subject from Commerce `/me`; profile-storage consent is enforced by Identity Learning. The route does not perform objective complexion or undertone analysis.\n- Account operations require the user's bearer token and are forwarded to Commerce. Commerce remains responsible for signature, issuer, audience, role, ownership, stock, checkout and payment validation.
@@ -74,3 +75,53 @@ PNELLY's description and Look It responses contain candidate matches, not displa
 ## CAL purchase-proxy kill switch
 
 Set `COMMERCE_CAL_PURCHASE_PROXY_ENABLED=false` by default. Enable only in a controlled non-production environment after candidate-bound purchase-receipt verification and audit persistence have passed. A missing flag, failed readiness probe, missing receipt signer, stale migration or disabled CAL Gateway keeps cart mutation and checkout fail-closed.
+
+
+## Yoti age verification for shopper discovery
+
+The same-origin BFF exposes `POST /api/age-evidence/sessions`, `POST /api/age-evidence/sessions/{session_id}/poll`, and `POST /api/age-evidence/sessions/{session_id}/revoke`. The BFF resolves the authenticated Commerce subject and proxies through the internal Decision Gateway; it never holds the Identity Learning orchestrator credential.
+
+After a verified poll, the browser may attach the returned signed attestation to marketplace or Wardrobe discovery using headers `X-Cirvanna-Age-Attestation` (JSON), `X-Cirvanna-Age-Attestation-Signature`, and `X-Cirvanna-Age-Evidence-Request-ID`. The BFF checks subject, purpose and request binding before forwarding; the Gateway then verifies the signature and consumes the one-time JTI. Do not reuse an attestation for another request or shopper. The same three headers are forwarded by the BFF Commerce proxy only on cart/checkout purchase paths. One purchase authorization can cover up to 25 unique Catalog products; larger carts require separate requests and fresh attestations. If the attestation is absent, expired, revoked, replayed, or mismatched, age-restricted candidates remain withheld.
+
+## Supabase browser authentication and iOS
+
+The BFF authentication router provides:
+- `GET /auth/login/google`, `/auth/login/apple`, and `/auth/login/microsoft` for provider redirects. Microsoft maps to Supabase's `azure` provider. OAuth authorization uses a server-generated PKCE verifier and state; pending verifiers are encrypted and consumed once. The short-lived `__Host-cirvanna_oauth_state` HttpOnly/Secure/SameSite=Lax cookie binds the callback to the browser that initiated the OAuth flow; email magic links are separately protected by their one-time mailbox token and may be opened on another device.
+- `POST /auth/email/start` for a one-time email sign-in link. Configure the Supabase email template and redirect allowlist so the one-time `token_hash` returns to `/auth/callback`; the BFF exchanges it server-side.
+- `GET /auth/callback` for one-time code/token confirmation and session creation.
+- `GET /auth/session`, `POST /auth/refresh`, and `POST /auth/logout` for session introspection, serialized refresh-token rotation, and local Supabase session revocation.
+- `POST /auth/ios/apple` for native iOS Sign in with Apple ID-token exchange. The iOS client must create a cryptographic nonce, send its SHA-256 hash to Apple, and submit the original nonce with Apple's ID token. Register the iOS bundle ID in Supabase's Apple Client IDs. The BFF returns only an opaque HttpOnly cookie, never the Supabase tokens.
+- `GET /auth/providers` advertises supported sign-in methods.
+
+Access and refresh tokens are encrypted using a dedicated Fernet key and stored in the private `auth_private.sessions` schema. Browser cookies contain only a random opaque session handle, are HttpOnly/Secure/SameSite=Lax and host-only, and use a 30-day sliding server-side session lifetime by default. Cookie-authenticated writes enforce an exact same-origin Origin check; cross-origin POST/PUT/PATCH/DELETE requests fail closed. Refresh requests lock the session row before using the rotating refresh token. The BFF verifies every access token against the configured JWKS and requires the configured issuer, audience, expiry, issued-at and subject claims; only ES256/RS256 are accepted. `app_role` is the application role claim; Supabase's reserved `role=authenticated` is not an app role.
+
+### Required BFF secrets and database grants
+
+Set these only in the approved deployment secret manager after provisioning a dedicated database login:
+- `SUPABASE_URL=https://opmfudcofezmatqqsfho.supabase.co`
+- `SUPABASE_PUBLISHABLE_KEY` (publishable/anon API key; never service_role)
+- `SUPABASE_JWKS_URL=https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json`
+- `SUPABASE_JWT_ISSUER=https://opmfudcofezmatqqsfho.supabase.co/auth/v1`
+- `SUPABASE_JWT_AUDIENCE=authenticated`
+- `AUTH_CALLBACK_URL=https://<approved-bff-host>/auth/callback`
+- `AUTH_SESSION_DATABASE_URL` (dedicated BFF LOGIN user, member of `cirvanna_bff_auth`; never use the Supabase postgres owner credential)
+- `AUTH_SESSION_ENCRYPTION_KEY` (Fernet key generated out-of-band; keep identical across BFF instances)
+- `AUTH_EMAIL_DELIVERY_VERIFIED=true` only after a real staging email-link delivery and callback test has been completed.
+- Optional `AUTH_SESSION_TTL_SECONDS` (default 2592000; permitted 3600–7776000)
+- Optional `AUTH_POST_LOGIN_REDIRECT=/`
+
+Apply `services/marketplace-bff/migrations/0001_auth_private_sessions.sql`, then create a separate LOGIN role and grant it membership in `cirvanna_bff_auth`. Do not expose `auth_private` through the Supabase Data API. Do not enable the custom access-token hook until its live-issued JWT claims are confirmed.
+
+### Provider setup required outside the repository
+
+- Google: create a Google OAuth web client; add `https://opmfudcofezmatqqsfho.supabase.co/auth/v1/callback` to its authorized redirect URIs; configure its client ID and secret in Supabase Auth.
+- Apple web: configure an Apple Services ID, associated App ID, domain and callback `https://opmfudcofezmatqqsfho.supabase.co/auth/v1/callback`. Apple OAuth client secrets require rotation every six months. For native iOS, enable Sign in with Apple on the App ID and add the bundle ID to Supabase's Apple Client IDs. If both web and native are enabled, place the Services ID first in the Client IDs list.
+- Microsoft: register an application in Microsoft Entra ID, add `https://opmfudcofezmatqqsfho.supabase.co/auth/v1/callback`, choose supported account types deliberately, and configure the client ID/secret in Supabase's Azure provider.
+- Email: verify SMTP delivery, configure the BFF Site URL and callback redirect allowlist `https://<bff-host>/auth/callback?state=*`, and set the magic-link template to `<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email&next={{ .RedirectTo }}">Sign in</a>`. The BFF validates the nested `next` origin/path and consumes the associated one-time state before verifying the token hash.
+- iOS app: use AuthenticationServices for native Apple sign-in, generate a per-request nonce, and use the bundle ID configured above. The repository currently contains the BFF integration contract; a native iOS app target, bundle identifier, Apple Developer credentials and device QA still need to be supplied before claiming a shipped iOS client. See `docs/mobile/ios-authentication.md` for the native Swift integration contract and device release checklist.
+
+The BFF `/ready` endpoint now fails closed unless the auth database role can access both private tables, the exact staging JWKS returns an ES256/RS256 signing key, Supabase Auth `/settings` reports Google, Apple and Azure enabled, and email delivery has been explicitly smoke-tested. It also requires healthy Commerce and Catalog upstreams. Do not deploy the public BFF until real provider credentials, callback allowlists, the auth database login, encryption key, live JWT verification, upstream services and independent security review are all in place.
+
+### Authentication abuse controls required before production
+
+Configure rate limits at the approved edge/WAF for `/auth/login/*`, `/auth/email/start`, `/auth/refresh` and callback endpoints. Enforce per-IP and per-normalized-email limits, provider-specific quotas, abuse alerts and temporary backoff. Supabase Auth's own throttling is a second layer, not a substitute for edge controls. Verify 429 responses and recovery behaviour with an approved staging provider before enabling public sign-in. Do not log raw email addresses, OTP tokens, authorization codes, access tokens or refresh tokens.

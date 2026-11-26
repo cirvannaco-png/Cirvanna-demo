@@ -161,7 +161,8 @@ def test_eepl_wardrobe_context_requires_explicit_timestamp_and_source():
     assert normalized.location is None
     assert normalized.occasion is None
     assert normalized.climate is None
-    assert all(item["status"] == "missing_value_or_provenance" for item in evidence.values())
+    assert all(evidence[field]["status"] == "missing_value_or_provenance" for field in ("location", "occasion", "climate"))
+    assert evidence["age"]["status"] == "missing"
 
 
 def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(client, monkeypatch):
@@ -533,3 +534,23 @@ def test_cal_discovery_response_requires_a_nonempty_request_id():
             _decision_response(_decision(P1, 1), request_id=" "), {P1: 1}
         )
     assert invalid.value.detail["code"] == "CAL_DISCOVERY_RESPONSE_INVALID"
+
+
+def test_eepl_does_not_treat_client_supplied_age_as_verified_evidence():
+    context = main.ContextInput(
+        age_years=17,
+        location="Nairobi",
+        occasion="everyday",
+        climate="warm",
+        location_source="user_declared",
+        location_observed_at=datetime.now(timezone.utc).isoformat(),
+        occasion_source="user_declared",
+        occasion_observed_at=datetime.now(timezone.utc).isoformat(),
+        climate_source="user_declared",
+        climate_observed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    normalized, evidence = main._fresh_context_for_eepl(context, strict=True)
+    assert normalized.age_years is None
+    assert evidence["age"]["status"] == "unverified_client_value"
+    assert evidence["age"]["source"] is None
+    assert evidence["age"]["observed_at"] is None

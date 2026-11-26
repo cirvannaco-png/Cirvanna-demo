@@ -53,6 +53,11 @@ def request_body(**overrides):
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("CATACACI_POLICY_ID", "cal-test")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", '{"cal-test":{"policy_version":"cal-test-v1","minimum_fit_confidence":0.7,"maximum_fit_confidence_disagreement":0.1,"minimum_alignment_score":0.6}}')
+
     # Legacy request-scoped profile tests explicitly opt into local/demo mode.
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
     monkeypatch.setattr(main, "_assess_cil_product_serving", lambda _product, purpose="commercial_recommendation": {"product_id": PRODUCT_ID, "catalog_version": 3, "purpose": purpose, "decisions": [], "all_eligible": True})
@@ -1168,3 +1173,193 @@ def test_discovery_rejects_subject_mismatch_before_catalog_retrieval(client, mon
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
+
+
+
+def _eepl_registry(minimum_age=None, allowed_climates=("warm",)):
+    import json
+    return json.dumps({
+        "adult-market": {
+            "policy_version": "adult-v4", "minimum_age": minimum_age, "maximum_age": None,
+            "allowed_locations": ["Nairobi", "KE"], "allowed_occasions": ["everyday"],
+            "allowed_climates": list(allowed_climates), "required_context": ["location", "occasion", "climate"],
+        },
+        "less-restrictive-market": {
+            "policy_version": "youth-v1", "minimum_age": 13, "maximum_age": None,
+            "allowed_locations": [], "allowed_occasions": [],
+            "allowed_climates": [], "required_context": [],
+        },
+    })
+
+
+def test_gateway_resolves_the_shared_active_eepl_policy(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    policy = main._policy()
+    assert policy.policy_id == "adult-market"
+    assert policy.policy_version == "adult-v4"
+    assert policy.minimum_age is None
+    assert policy.allowed_locations == ("Nairobi", "KE")
+
+
+def test_gateway_does_not_accept_self_declared_age_as_eligibility(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
+    signal = main._legal_signal(
+        main.ContextInput(age_years=42),
+        product(attributes={"minimum_age": 18}),
+        policy=main._policy(),
+    )
+    assert signal.state == main.SignalState.UNKNOWN
+    assert signal.reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
+
+
+def test_gateway_yoti_attestation_is_bound_to_active_policy_and_redeemed(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "unit-test-age-evidence-key-with-32-bytes")
+    request_id = "shopper-request-2026-11-23-001"
+    attestation = {
+        "jti": "123e4567-e89b-42d3-a456-426614174000",
+        "subject_id": "user-test-1", "request_id": request_id,
+        "purpose": "shopper_eligibility", "policy_id": "adult-market",
+        "policy_version": "adult-v4", "threshold": 18, "threshold_met": True,
+    }
+    calls = []
+    monkeypatch.setattr(main, "verify_threshold_attestation", lambda *args, **kwargs: True)
+    monkeypatch.setattr(main, "_redeem_age_attestation", lambda payload, signature: calls.append((payload, signature)))
+    payload = main.DecisionRequest(
+        user_id="user-test-1", product_ids=[PRODUCT_ID], request_id=request_id,
+        age_attestation=attestation, age_attestation_signature="a" * 64,
+    )
+    result = main._verified_age_threshold(payload, request_id, main._policy())
+    assert result == (18, True)
+    assert calls == [(attestation, "a" * 64)]
+
+
+def test_gateway_rejects_yoti_attestation_for_non_active_policy(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "unit-test-age-evidence-key-with-32-bytes")
+    payload = main.DecisionRequest(
+        user_id="user-test-1", product_ids=[PRODUCT_ID],
+        request_id="shopper-request-2026-11-23-002",
+        age_attestation={
+            "jti": "123e4567-e89b-42d3-a456-426614174000",
+            "subject_id": "user-test-1", "request_id": "shopper-request-2026-11-23-002",
+            "purpose": "shopper_eligibility", "policy_id": "less-restrictive-market",
+            "policy_version": "youth-v1", "threshold": 13, "threshold_met": True,
+        },
+        age_attestation_signature="a" * 64,
+    )
+    monkeypatch.setattr(main, "verify_threshold_attestation", lambda *args, **kwargs: True)
+    with pytest.raises(Exception):
+        main._verified_age_threshold(payload, payload.request_id, main._policy())
+
+
+def test_gateway_uses_server_owned_cal_thresholds(monkeypatch):
+    import json
+    monkeypatch.setenv("CATACACI_POLICY_ID", "cal-adult")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", json.dumps({
+        "cal-adult": {
+            "policy_version": "cal-adult-v7",
+            "minimum_fit_confidence": 0.88,
+            "maximum_fit_confidence_disagreement": 0.04,
+            "minimum_alignment_score": 0.72,
+        },
+        "cal-youth": {
+            "policy_version": "cal-youth-v1",
+            "minimum_fit_confidence": 0.5,
+            "maximum_fit_confidence_disagreement": 0.5,
+            "minimum_alignment_score": 0.2,
+        },
+    }))
+    resolved = main.resolve_configured_cal_policy()
+    assert resolved.policy_id == "cal-adult"
+    assert resolved.policy_version == "cal-adult-v7"
+    assert resolved.minimum_fit_confidence == 0.88
+    assert resolved.minimum_alignment_score == 0.72
+
+
+def test_gateway_yoti_session_proxy_uses_commerce_verified_subject(monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "verified-user-1")
+    calls = []
+    monkeypatch.setattr(main, "_age_evidence_proxy", lambda path, subject, body: (
+        calls.append((path, subject, body)) or {
+            "session_id": str(uuid.uuid4()), "state": "pending",
+            "verification_url": "https://verify.yoti.com/session/opaque",
+            "expires_at": "2026-11-23T22:00:00Z",
+        }
+    ))
+    payload = main.AgeEvidenceSessionStartInput(request_id="shopper-age-request-001")
+    result = main.create_my_age_evidence_session(payload, "Bearer commerce-user-token")
+    assert result["provider"] == "yoti"
+    assert result["request_id"] == "shopper-age-request-001"
+    assert calls == [("sessions", "verified-user-1", {
+        "request_id": "shopper-age-request-001", "purpose": "shopper_eligibility",
+    })]
+
+
+def test_gateway_yoti_poll_rejects_attestation_for_another_subject(monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "verified-user-1")
+    monkeypatch.setattr(main, "_age_evidence_proxy", lambda *args: {
+        "session_id": str(uuid.uuid4()), "state": "verified",
+        "attestation": {"subject_id": "another-user"},
+        "signature": "a" * 64,
+    })
+    with pytest.raises(Exception):
+        main.poll_my_age_evidence_session(str(uuid.uuid4()), "Bearer commerce-user-token")
+
+
+def test_decision_route_does_not_use_client_age_for_eepl_or_legal_gate(monkeypatch, tmp_path):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry(minimum_age=18))
+    monkeypatch.setenv("CATACACI_POLICY_ID", "cal-test")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", '{"cal-test":{"policy_version":"cal-test-v1","minimum_fit_confidence":0.7,"maximum_fit_confidence_disagreement":0.1,"minimum_alignment_score":0.6}}')
+    monkeypatch.setattr(main, "fetch_product", lambda _product_id: product())
+    monkeypatch.setattr(main, "_load_cil_feedback_decisions", lambda *_args: {})
+    monkeypatch.setattr(main, "_load_persisted_cultural_requirements", lambda **_kwargs: ())
+    monkeypatch.setattr(
+        main, "_load_safety_signal",
+        lambda *_args, **_kwargs: main.DecisionSignal(
+            signal_id="test-safety-pass", kind=main.SignalKind.SAFETY,
+            state=main.SignalState.PASS, reason_code="TEST_SAFETY_PASS",
+            explanation="Test fixture only.", source_version="test",
+        ),
+    )
+    monkeypatch.setattr(main, "_user_constraint_signals", lambda *_args: ())
+    monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
+    monkeypatch.setattr(main, "_load_fci_estimate", lambda *_args: None)
+    monkeypatch.setattr(main, "_fit_evidence_fields", lambda _estimate: ((), ()))
+    captured = {}
+
+    original_legal_signal = main._legal_signal
+    def capture_legal_signal(context, candidate, **kwargs):
+        captured["legal_context_age"] = context.age_years
+        captured["legal_signal"] = original_legal_signal(context, candidate, **kwargs)
+        return captured["legal_signal"]
+    monkeypatch.setattr(main, "_legal_signal", capture_legal_signal)
+
+    class StopAfterContextCapture(Exception):
+        pass
+
+    def capture_pipeline_context(**kwargs):
+        captured["eepl_context_age"] = kwargs["context"].age_years
+        raise StopAfterContextCapture()
+    monkeypatch.setattr(main, "evaluate_candidate", capture_pipeline_context)
+
+    test_client = TestClient(main.app, raise_server_exceptions=False)
+    body = request_body(context={
+        "age_years": 17, "location": "Nairobi",
+        "occasion": "everyday", "climate": "warm",
+    })
+    response = test_client.post("/v1/decisions", json=body, headers=auth_headers())
+    assert response.status_code == 500
+    assert captured["legal_context_age"] is None
+    assert captured["eepl_context_age"] is None
+    assert captured["legal_signal"].state is main.SignalState.UNKNOWN
+    assert captured["legal_signal"].reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
+    assert "no redeemed, request-bound Yoti evidence is available" in captured["legal_signal"].explanation

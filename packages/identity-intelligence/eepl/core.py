@@ -32,6 +32,10 @@ class EEPLContext:
     location: str | None = None
     occasion: str | None = None
     climate: str | None = None
+    # Trusted, signature-verified threshold result. It contains no raw age or DOB.
+    # Appended to preserve the existing positional constructor contract.
+    minimum_age_threshold: int | None = None
+    minimum_age_threshold_met: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +108,29 @@ def evaluate(policy: EEPLPolicy, context: EEPLContext, candidate_id: str) -> EEP
         not isinstance(context.age_years, int) or isinstance(context.age_years, bool) or context.age_years < 0
     ):
         raise ValueError("context.age_years must be a non-negative integer or None")
+    if (context.minimum_age_threshold is None) != (context.minimum_age_threshold_met is None):
+        raise ValueError("minimum age threshold and result must be supplied together")
+    if context.minimum_age_threshold is not None:
+        if (
+            not isinstance(context.minimum_age_threshold, int)
+            or isinstance(context.minimum_age_threshold, bool)
+            or not 0 <= context.minimum_age_threshold <= 125
+        ):
+            raise ValueError("context.minimum_age_threshold must be an integer from 0 to 125")
+        if not isinstance(context.minimum_age_threshold_met, bool):
+            raise ValueError("context.minimum_age_threshold_met must be a boolean")
+        if context.age_years is not None:
+            raise ValueError("raw age and threshold-only age evidence cannot be supplied together")
+
+    threshold_evidence_matches = (
+        policy.minimum_age is not None
+        and context.minimum_age_threshold == policy.minimum_age
+        and context.minimum_age_threshold_met is not None
+    )
+    # A minimum-only attestation cannot prove compliance with a maximum-age rule.
+    age_context_available = context.age_years is not None or (
+        threshold_evidence_matches and policy.maximum_age is None
+    )
 
     required = set(policy.required_context)
     if policy.minimum_age is not None or policy.maximum_age is not None:
@@ -116,7 +143,9 @@ def evaluate(policy: EEPLPolicy, context: EEPLContext, candidate_id: str) -> EEP
         required.add(ContextField.CLIMATE)
 
     values = {
-        ContextField.AGE: context.age_years,
+        ContextField.AGE: context.age_years if context.age_years is not None else (
+            context.minimum_age_threshold if threshold_evidence_matches else None
+        ),
         ContextField.LOCATION: context.location,
         ContextField.OCCASION: context.occasion,
         ContextField.CLIMATE: context.climate,
@@ -124,7 +153,10 @@ def evaluate(policy: EEPLPolicy, context: EEPLContext, candidate_id: str) -> EEP
     reasons: list[tuple[str, str, GateVerdict]] = []
     for field in sorted(required, key=lambda item: item.value):
         value = values[field]
-        missing = value is None or (isinstance(value, str) and not value.strip())
+        missing = (
+            not age_context_available if field is ContextField.AGE
+            else value is None or (isinstance(value, str) and not value.strip())
+        )
         if missing:
             reasons.append((
                 f"EEPL_REQUIRED_CONTEXT_MISSING_{field.value.upper()}",
@@ -137,6 +169,12 @@ def evaluate(policy: EEPLPolicy, context: EEPLContext, candidate_id: str) -> EEP
             reasons.append(("EEPL_MINIMUM_AGE_NOT_MET", "User age is below the policy minimum.", GateVerdict.BLOCK))
         if policy.maximum_age is not None and context.age_years > policy.maximum_age:
             reasons.append(("EEPL_MAXIMUM_AGE_EXCEEDED", "User age exceeds the policy maximum.", GateVerdict.BLOCK))
+    elif threshold_evidence_matches and context.minimum_age_threshold_met is False:
+        reasons.append((
+            "EEPL_MINIMUM_AGE_NOT_MET",
+            "Verified age-threshold evidence does not meet the policy minimum.",
+            GateVerdict.BLOCK,
+        ))
 
     comparisons = (
         (ContextField.LOCATION, policy.allowed_locations, "EEPL_LOCATION_NOT_ALLOWED"),

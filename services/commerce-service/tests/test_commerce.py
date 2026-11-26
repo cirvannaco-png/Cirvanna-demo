@@ -7,12 +7,13 @@ import time
 import uuid
 
 import jwt as pyjwt
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 os.environ.setdefault("COMMERCE_DATABASE_URL", "sqlite:///./test-commerce-import.db")
 os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
@@ -101,6 +102,7 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_ROLE_CLAIM", raising=False)
+    monkeypatch.setenv("COMMERCE_JWT_ROLE_CLAIM", "role")
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "true")
     monkeypatch.delenv("CATALOG_API_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
@@ -5233,3 +5235,89 @@ def test_shopify_staged_products_are_private_and_scoped_to_approved_merchant_own
     # Anonymous shopper traffic is rejected before any staging data is queried.
     anonymous_response = client.get("/integrations/shopify/staged-products")
     assert anonymous_response.status_code == 401
+
+
+def test_commerce_purchase_age_evidence_headers_are_subject_and_request_bound():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "buyer-age-1", "request_id": "checkout-age-001",
+        "purpose": "shopper_eligibility", "jti": str(uuid.uuid4()),
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"checkout-age-001"),
+        ],
+    })
+    fields = main._commerce_age_evidence_fields(request, "buyer-age-1")
+    assert fields["request_id"] == "checkout-age-001"
+    assert fields["age_attestation"] == attestation
+    assert fields["age_attestation_signature"] == "a" * 64
+
+
+def test_commerce_purchase_age_evidence_rejects_wrong_subject():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "another-buyer", "request_id": "checkout-age-002",
+        "purpose": "shopper_eligibility",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"checkout-age-002"),
+        ],
+    })
+    with pytest.raises(HTTPException):
+        main._commerce_age_evidence_fields(request, "buyer-age-1")
+
+
+def test_commerce_purchase_age_evidence_rejects_partial_headers():
+    from starlette.requests import Request
+    request = Request({
+        "type": "http",
+        "headers": [(b"x-cirvanna-age-attestation-signature", b"a" * 64)],
+    })
+    with pytest.raises(HTTPException):
+        main._commerce_age_evidence_fields(request, "buyer-age-1")
+
+
+def test_oidc_jwks_mode_verifies_es256_supabase_tokens(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_AUTH_MODE", "oidc_jwks")
+    monkeypatch.setenv("COMMERCE_JWT_JWKS_URL", "https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json")
+    monkeypatch.setenv("COMMERCE_JWT_ISSUER", "https://opmfudcofezmatqqsfho.supabase.co/auth/v1")
+    monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "authenticated")
+    monkeypatch.setenv("COMMERCE_JWT_ROLE_CLAIM", "app_role")
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+
+    class SigningKey:
+        key = public_key
+
+    class FakeJwksClient:
+        def get_signing_key_from_jwt(self, token):
+            return SigningKey()
+
+    monkeypatch.setattr(main, "_jwks_client", lambda url: FakeJwksClient())
+    claims = {
+        "sub": "supabase-customer-1",
+        "role": "authenticated",
+        "app_role": "customer",
+        "iss": "https://opmfudcofezmatqqsfho.supabase.co/auth/v1",
+        "aud": "authenticated",
+        "exp": int(time.time()) + 300,
+        "iat": int(time.time()),
+    }
+    token = pyjwt.encode(claims, private_key, algorithm="ES256", headers={"kid": "supabase-es256-test"})
+    actor = main.decode_actor(token)
+    assert actor.user_id == "supabase-customer-1"
+    assert actor.role == "customer"
+
+    forged_role = {**claims, "app_role": "root"}
+    bad_token = pyjwt.encode(forged_role, private_key, algorithm="ES256", headers={"kid": "supabase-es256-test"})
+    rejected = client.get("/cart", headers={"Authorization": "Bearer " + bad_token})
+    assert rejected.status_code == 401

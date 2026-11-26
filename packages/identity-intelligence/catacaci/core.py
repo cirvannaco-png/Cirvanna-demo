@@ -86,9 +86,16 @@ class DecisionSignal:
             raise ValueError("reason_code must not be empty")
         if not isinstance(self.explanation, str) or not self.explanation.strip():
             raise ValueError("explanation must not be empty")
+        if not isinstance(self.required, bool):
+            raise ValueError("required must be a boolean")
         if self.confidence is not None:
-            if not isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
-                raise ValueError("confidence must be finite and between 0 and 1")
+            if (
+                isinstance(self.confidence, bool)
+                or not isinstance(self.confidence, (int, float))
+                or not isfinite(self.confidence)
+                or not 0.0 <= self.confidence <= 1.0
+            ):
+                raise ValueError("confidence must be a finite numeric value between 0 and 1")
         if not isinstance(self.source_version, str) or not self.source_version.strip():
             raise ValueError("source_version must not be empty")
 
@@ -113,18 +120,27 @@ class ArbitrationRequest:
             raise ValueError("policy_version must not be empty")
         if not isinstance(self.signals, tuple):
             raise ValueError("signals must be a tuple")
+        if any(not isinstance(signal, DecisionSignal) for signal in self.signals):
+            raise ValueError("signals must contain only DecisionSignal values")
         if not isinstance(self.required_kinds, tuple):
             raise ValueError("required_kinds must be a tuple")
         if any(not isinstance(kind, SignalKind) for kind in self.required_kinds):
             raise ValueError("required_kinds must contain only SignalKind values")
         if len(self.required_kinds) != len(set(self.required_kinds)):
             raise ValueError("required_kinds must not contain duplicates")
-        if not isfinite(self.minimum_fit_confidence) or not 0 <= self.minimum_fit_confidence <= 1:
-            raise ValueError("minimum_fit_confidence must be finite and between 0 and 1")
+        if (
+            isinstance(self.minimum_fit_confidence, bool)
+            or not isinstance(self.minimum_fit_confidence, (int, float))
+            or not isfinite(self.minimum_fit_confidence)
+            or not 0 <= self.minimum_fit_confidence <= 1
+        ):
+            raise ValueError("minimum_fit_confidence must be a finite numeric value between 0 and 1")
         if not isinstance(self.require_fit_confidence, bool):
             raise ValueError("require_fit_confidence must be a boolean")
         if (
-            not isfinite(self.maximum_fit_confidence_disagreement)
+            isinstance(self.maximum_fit_confidence_disagreement, bool)
+            or not isinstance(self.maximum_fit_confidence_disagreement, (int, float))
+            or not isfinite(self.maximum_fit_confidence_disagreement)
             or not 0 <= self.maximum_fit_confidence_disagreement <= 1
         ):
             raise ValueError(
@@ -151,6 +167,7 @@ class ArbitrationResult:
     reasons: tuple[ArbitrationReason, ...]
     evaluated_signal_ids: tuple[str, ...]
     policy_version: str
+    evaluated_signals: tuple[DecisionSignal, ...] = ()
 
     @property
     def may_display(self) -> bool:
@@ -318,4 +335,5 @@ def _result(
         reasons=tuple(reasons),
         evaluated_signal_ids=tuple(signal.signal_id for signal in signals),
         policy_version=request.policy_version,
+        evaluated_signals=tuple(signals),
     )
