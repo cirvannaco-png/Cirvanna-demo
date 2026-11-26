@@ -157,6 +157,26 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   <div id="pnellyPreferencesList"></div>
 </section>
 
+<section class="panel hidden" id="culturalPolicyPanel">
+  <div class="eyebrow">Cultural Identity · explicit policy</div>
+  <h2>Non-negotiable coverage requirements</h2>
+  <p class="small">This is separate from your soft styling preferences. Select only requirements you want Cirvanna to enforce as hard constraints. A candidate must carry matching, complete product metadata; missing evidence is sent to review, never assumed to comply. Nothing is inferred from your appearance, name or location.</p>
+  <div class="grid">
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:covered-shoulders" style="width:auto;min-width:auto"> Shoulders must be covered</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:long-sleeves" style="width:auto;min-width:auto"> Long sleeves required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:knee-length-or-longer" style="width:auto;min-width:auto"> Knee length or longer</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:ankle-length" style="width:auto;min-width:auto"> Ankle length required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:high-neckline" style="width:auto;min-width:auto"> High neckline required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:loose-fit" style="width:auto;min-width:auto"> Loose fit required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:opaque-fabric" style="width:auto;min-width:auto"> Opaque fabric required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:head-covering-if-selected" style="width:auto;min-width:auto"> Head covering required when selected</label>
+  </div>
+  <label class="small" style="display:block;margin:14px 0"><input id="confirmHardRequirements" type="checkbox" style="width:auto;min-width:auto"> I confirm these are my explicit, non-negotiable requirements and want them applied as hard policy constraints.</label>
+  <button class="btn primary" id="saveHardRequirements" type="button">Save hard requirements</button>
+  <div class="status" id="culturalPolicyStatus" role="status">Connect your account to manage explicit requirements.</div>
+  <div id="culturalDeclarationsList"></div>
+</section>
+
 <section class="panel hidden" id="pnellyPanel">
 <div class="eyebrow">PNELLY · daily look intelligence</div>
 <h2>Three ways to wear what you own</h2>
@@ -214,6 +234,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   let colorProfileVersion = 0;
   let pnellyPreferenceVersion = 0;
   let pnellyPreferences = [];
+  let culturalDeclarations = [];
   let pnellyData = null;
   let items = [];
   const api = async (path, options = {}) => {
@@ -562,6 +583,93 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       root.append(card);
     }
   };
+  const renderCulturalDeclarations = () => {
+    const root = $("culturalDeclarationsList");
+    root.replaceChildren();
+    if (!culturalDeclarations.length) {
+      root.append(text("p", "No active hard cultural or coverage declarations.", "small"));
+      return;
+    }
+    for (const declaration of culturalDeclarations) {
+      const card = document.createElement("div");
+      card.className = "consent";
+      const info = document.createElement("div");
+      const title = text("strong", "Declaration · " + declaration.declaration_id);
+      const details = text("div", (declaration.requirements || []).map(item => item.attribute + " · " + item.kind).join("; "), "small");
+      info.append(title, details);
+      const retract = text("button", "Retract", "btn danger");
+      retract.type = "button";
+      retract.addEventListener("click", async () => {
+        retract.disabled = true;
+        try {
+          await api("/api/wardrobe/pnelly/cultural-declarations/" + encodeURIComponent(declaration.declaration_id) + "/retract", {
+            method: "POST",
+            body: JSON.stringify({request_id: preferenceRequestId("cultural-retract-"), user_confirmation: true})
+          });
+          await loadCulturalDeclarations();
+          status("culturalPolicyStatus", "Declaration retracted. It will no longer constrain subsequent candidate decisions.", "good");
+        } catch (error) {
+          status("culturalPolicyStatus", error.message, "error");
+          retract.disabled = false;
+        }
+      });
+      card.append(info, retract);
+      root.append(card);
+    }
+  };
+  const loadCulturalDeclarations = async () => {
+    const data = await api("/api/wardrobe/pnelly/cultural-declarations");
+    if (!Array.isArray(data.declarations)) throw new Error("CULTURAL_DECLARATION_RESPONSE_INVALID");
+    culturalDeclarations = data.declarations.filter(item => item && item.status === "active");
+    renderCulturalDeclarations();
+    status("culturalPolicyStatus", culturalDeclarations.length + " active hard declaration(s) loaded from Cultural Identity.", "good");
+  };
+  const saveCulturalDeclarations = async () => {
+    const attributes = [...document.querySelectorAll(".hardCoverage:checked")].map(node => node.value);
+    if (!attributes.length) {
+      status("culturalPolicyStatus", "Select at least one hard requirement. No changes were made.", "error");
+      return;
+    }
+    if (!$("confirmHardRequirements").checked) {
+      status("culturalPolicyStatus", "Confirm that these are non-negotiable requirements before saving.", "error");
+      return;
+    }
+    const existing = new Set(culturalDeclarations.flatMap(item => (item.requirements || []).map(req => req.attribute)));
+    const newAttributes = attributes.filter(attribute => !existing.has(attribute));
+    if (!newAttributes.length) {
+      status("culturalPolicyStatus", "Every selected hard requirement is already active.");
+      return;
+    }
+    const button = $("saveHardRequirements");
+    button.disabled = true;
+    try {
+      const data = await api("/api/wardrobe/pnelly/cultural-declarations", {
+        method: "POST",
+        body: JSON.stringify({
+          request_id: preferenceRequestId("cultural-hard-"),
+          confirmation_version: "cultural-hard-requirements-v1",
+          user_confirmation: true,
+          requirements: newAttributes.map((attribute, index) => ({
+            requirement_id: "coverage-" + index + "-" + attribute.replace(/[^a-z0-9]+/gi, "-").toLowerCase(),
+            attribute,
+            kind: "required_attribute",
+            hard: true
+          }))
+        })
+      });
+      if (data.status !== "active" || data.hard_requirements !== true) throw new Error("CULTURAL_DECLARATION_PERSISTENCE_UNCONFIRMED");
+      await loadCulturalDeclarations();
+      document.querySelectorAll(".hardCoverage").forEach(node => { node.checked = false; });
+      $("confirmHardRequirements").checked = false;
+      status("culturalPolicyStatus", "Hard requirements saved through Cultural Identity. They are enforced only against explicit, auditable candidate metadata; missing metadata routes to review.", "good");
+    } catch (error) {
+      status("culturalPolicyStatus", error.message + ". Verify the active declaration list before retrying.", "error");
+      try { await loadCulturalDeclarations(); } catch (_) {}
+    } finally {
+      button.disabled = false;
+    }
+  };
+  $("saveHardRequirements").addEventListener("click", saveCulturalDeclarations);
   const loadPnellyPreferences = async () => {
     if (!profileReceipt) {
       pnellyPreferences = [];
@@ -794,6 +902,9 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("twinPanel").classList.remove("hidden");
     await loadTwinCapabilities();
     $("learningPanel").classList.remove("hidden");
+    $("culturalPolicyPanel").classList.remove("hidden");
+    try { await loadCulturalDeclarations(); }
+    catch (error) { status("culturalPolicyStatus", "Cultural Identity service is unavailable; hard requirements were not saved or assumed: " + error.message, "error"); }
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
     $("connectPanel").classList.add("hidden");
