@@ -114,7 +114,9 @@ def test_health_is_liveness_only(client):
 
 
 def test_capabilities_are_explicit_about_missing_commerce_features(client):
-    capabilities = client.get("/capabilities").json()
+    response = client.get("/capabilities", headers=auth_headers())
+    assert response.status_code == 200
+    capabilities = response.json()
     assert capabilities["canonical_product_identity"] is True
     assert capabilities["catalog_persistence"] is True
     assert capabilities["product_version_history"] is True
@@ -122,6 +124,11 @@ def test_capabilities_are_explicit_about_missing_commerce_features(client):
     assert capabilities["payments"] is False
     assert capabilities["fit_prediction"] is False
     assert capabilities["click_it_reconstruction"] is False
+
+
+def test_capabilities_require_read_scope(client):
+    assert client.get("/capabilities").status_code == 401
+    assert client.get("/capabilities", headers={"Authorization": "Bearer invalid"}).status_code == 401
 
 
 def test_all_catalog_mutations_require_authentication(client):
@@ -299,6 +306,30 @@ def test_readiness_requires_current_migration_and_auth_config(client, monkeypatc
     not_ready = client.get("/ready")
     assert not_ready.status_code == 503
     assert not_ready.json()["detail"]["ready"] is False
+
+
+def test_production_readiness_exposes_no_internal_diagnostics(client, monkeypatch):
+    monkeypatch.setenv("CATALOG_ENVIRONMENT", "production")
+    monkeypatch.setenv("CATALOG_READ_TOKEN", "catalog-read-secret")
+    monkeypatch.setenv("CATALOG_WRITE_TOKEN", "catalog-write-secret")
+    monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Catalog service is not ready"}
+    assert "schema_revision" not in response.text
+    assert "authentication_configured" not in response.text
+
+
+def test_production_capabilities_require_read_scope(client, monkeypatch):
+    monkeypatch.setenv("CATALOG_ENVIRONMENT", "production")
+    monkeypatch.setenv("CATALOG_READ_TOKEN", "catalog-read-secret")
+    monkeypatch.setenv("CATALOG_WRITE_TOKEN", "catalog-write-secret")
+    monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
+
+    assert client.get("/capabilities").status_code == 401
+    assert client.get("/capabilities", headers={"Authorization": "Bearer catalog-write-secret"}).status_code == 401
+    assert client.get("/capabilities", headers={"Authorization": "Bearer catalog-read-secret"}).status_code == 200
 
 
 def test_product_intelligence_metadata_is_validated_and_versioned(client):
