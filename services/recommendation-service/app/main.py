@@ -140,6 +140,7 @@ class LookIn(StrictModel):
     hairstyle: Literal["up", "down", "short", "braids", "locs", "protected_style", "unknown"] = "unknown"
     climate: Literal["hot_humid", "hot_dry", "cool", "temperate", "unknown"] = "unknown"
     occasion: str | None = Field(default=None, max_length=80)
+    location: str | None = Field(default=None, max_length=120)
 
     @field_validator("outfit_colors", "makeup_colors", "jewellery_colors", "accessory_colors")
     @classmethod
