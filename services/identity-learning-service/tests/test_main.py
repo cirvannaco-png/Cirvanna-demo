@@ -2464,9 +2464,10 @@ def test_cil_and_twin_cleanup_dispatch_batch_more_than_one_hundred_commands(monk
 
 
 def test_usi_accepts_only_explicitly_allowlisted_new_style_dimensions(client):
-    accepted = client.put("/v1/profiles/user-style-axes", headers=auth(), json={
+    assert consent(client, scope="profile_storage", receipt="receipt-style-axis-0001").status_code == 200
+    accepted = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
         "expected_version": 0,
-        "consent_receipt_id": "profile-receipt-0001",
+        "consent_receipt_id": "receipt-style-axis-0001",
         "preferences": [{
             "preference_id": "pnelly-style-axis-0001",
             "attribute": "culture:contemporary-african-luxury",
@@ -2477,9 +2478,9 @@ def test_usi_accepts_only_explicitly_allowlisted_new_style_dimensions(client):
         }],
     })
     assert accepted.status_code == 200, accepted.text
-    rejected = client.put("/v1/profiles/user-style-axes-invalid", headers=auth(), json={
-        "expected_version": 0,
-        "consent_receipt_id": "profile-receipt-0001",
+    rejected = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 1,
+        "consent_receipt_id": "receipt-style-axis-0001",
         "preferences": [{
             "preference_id": "pnelly-style-axis-0002",
             "attribute": "culture:unreviewed-free-text",
