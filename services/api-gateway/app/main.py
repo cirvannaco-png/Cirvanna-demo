@@ -958,11 +958,6 @@ def _load_persisted_npl_preferences(
     secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "")
     configured = (bool(base), len(token.encode("utf-8")) >= 32, len(secret.encode("utf-8")) >= 32)
     if not any(configured):
-        if _cultural_identity_enforcement_required():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"code": "CULTURAL_IDENTITY_PROVIDER_REQUIRED"},
-            )
         return ()
     if not all(configured) or not _trusted_internal_base_url(base):
         raise HTTPException(
@@ -1049,6 +1044,11 @@ def _load_persisted_cultural_requirements(
     secret = os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "")
     configured = (bool(base), len(token.encode("utf-8")) >= 32, len(secret.encode("utf-8")) >= 32)
     if not any(configured):
+        if _cultural_identity_enforcement_required():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "CULTURAL_IDENTITY_PROVIDER_REQUIRED"},
+            )
         return ()
     if not all(configured) or not _trusted_internal_base_url(base):
         raise HTTPException(
