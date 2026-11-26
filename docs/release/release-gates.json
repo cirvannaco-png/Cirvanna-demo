@@ -149,7 +149,9 @@
       "status": "blocked",
       "owner_role": "Security / privacy owner",
       "acceptance": "Click It remains disabled until real purpose-bound consent and revocation, trusted jurisdiction policy, licensed pinned face-masking attestation, fail-closed uncertainty, zero public unmasked-face exposure, retention/purge and deletion propagation, photographed-person rights intake/review/quarantine, guardian verification where required, minor-specific restrictions and every public publish/restore/syndication/share/media-delivery route are exercised against real staging providers and immutable asset digests. An independent assessor verifies the exact deployed route inventory, detector artifact/dataset digest, subgroup false-negative confidence intervals, source-to-mask ordering, zero unmasked-media escape, consent revocation, urgent quarantine and deletion across source, derivatives, replicas, backups where applicable, caches, CDN, merchant surfaces and shared links. The assessor report is digest-bound to the release commit.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-click-it-look-it-route-containment.md"
+      ],
       "verified_commit": null
     },
     {
@@ -191,7 +193,9 @@
       "status": "blocked",
       "owner_role": "Marketplace / Identity / Privacy / Decision owner",
       "acceptance": "The same-origin BFF derives the subject from a verified Commerce session, records a short-lived resource-bound image_processing + look_it bundle in the canonical Identity Consent authority, verifies exact subject/bundle/resource/scopes/version/expiry, invokes PNELLY which independently re-verifies, and revokes the bundle after processing. If revocation fails, no search result is returned. Image bytes are not persisted in BFF/Xari/Vision. Look It returns only aggregate candidate counts and validated outfit-component descriptions; no product, merchant, price, stock or image details leave the retrieval path until CAL SHOW. Optional external outfit decomposition requires separately reviewed provider privacy/retention approval, pinned model/revision/report, and real staging verification. Click It remains independently disabled.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-click-it-look-it-route-containment.md"
+      ],
       "verified_commit": null
     },
     {
