@@ -507,13 +507,37 @@ def _score(
     score += sum(3 for term in climate_rules["positive"] if term in text)
     score -= sum(3 for term in climate_rules["negative"] if term in text)
 
-    # USI attributes are explicit positive fashion preference strings; they
-    # are ranking hints only and never inferred traits or hard exclusions.
-    style_matches = sum(2 for signal in style_signals if signal and signal.split(":", 1)[-1] in text)
+    # Keep each explicitly selected dimension independent. A large number of
+    # values in one axis cannot erase a match from another axis.
+    axis_matches = {
+        "cultural_expression": 0,
+        "personal_aesthetic": 0,
+        "occasion": 0,
+        "personal_preferences": 0,
+    }
+    for signal in style_signals:
+        if not signal or ":" not in signal:
+            continue
+        namespace, value = signal.split(":", 1)
+        if value not in text:
+            continue
+        if namespace == "culture":
+            axis_matches["cultural_expression"] += 2
+        elif namespace in {"style", "aesthetic"}:
+            axis_matches["personal_aesthetic"] += 2
+        elif namespace == "occasion":
+            axis_matches["occasion"] += 2
+        elif namespace in {"color", "colour", "silhouette", "material", "pattern", "coverage"}:
+            axis_matches["personal_preferences"] += 2
+    score += min(4, axis_matches["cultural_expression"])
+    score += min(4, axis_matches["personal_aesthetic"])
+    score += min(4, axis_matches["occasion"])
+    score += min(8, axis_matches["personal_preferences"])
+
     feedback_matches = sum(1 for signal in feedback_signals if signal and signal.split(":", 1)[-1] in text)
     # Keep learned feedback advisory and bounded so a noisy event history
     # cannot overwhelm the declared day context or hard policy boundaries.
-    score += min(8, style_matches) + min(4, feedback_matches)
+    score += min(4, feedback_matches)
     return score
 
 
