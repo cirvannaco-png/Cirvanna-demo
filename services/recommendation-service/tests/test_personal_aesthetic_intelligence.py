@@ -174,6 +174,7 @@ def test_independent_style_dimensions_compose_without_collapsing():
     payload = rich_payload()
     payload["preferences"].update({
         "aesthetics": ["classic", "editorial"],
+        "occasion_preferences": ["wedding"],
         "cultural_contexts": ["contemporary African luxury", "Kitenge textile reference"],
         "favorite_colors": ["emerald", "burgundy"],
         "preferred_silhouettes": ["tailored"],
@@ -191,7 +192,8 @@ def test_independent_style_dimensions_compose_without_collapsing():
         "contemporary African luxury", "Kitenge textile reference"
     ]
     assert dimensions["personal_aesthetic"]["values"] == ["classic", "editorial"]
-    assert dimensions["occasion"]["value"] == "wedding"
+    assert dimensions["occasion"]["current"] == "wedding"
+    assert dimensions["occasion"]["preferred"] == ["wedding"]
     assert dimensions["personal_preferences"]["silhouettes"] == ["tailored"]
     assert dimensions["personal_preferences"]["coverage_requirements"] == [
         "covered_shoulders", "ankle_length"
@@ -218,3 +220,23 @@ def test_regional_market_requires_iso_country_code():
         pass
     else:
         raise AssertionError("regional market must be a two-letter country code")
+
+
+
+def test_daily_look_style_score_keeps_cultural_aesthetic_and_personal_axes():
+    from app.daily_looks import _score
+    candidate = [{
+        "item_id": "look-1",
+        "display_name": "Kitenge tailored long sleeve wedding outfit",
+        "category": "dress",
+        "attributes": ["culture:kitenge", "style:classic", "coverage:long-sleeves"],
+    }]
+    score = _score(
+        candidate,
+        "elevated",
+        ("culture:kitenge", "style:classic", "coverage:long-sleeves"),
+        (),
+        "wedding",
+        None,
+    )
+    assert score >= 17
