@@ -231,12 +231,11 @@ def test_daily_look_style_score_keeps_cultural_aesthetic_and_personal_axes():
         "category": "dress",
         "attributes": ["culture:kitenge", "style:classic", "coverage:long-sleeves"],
     }]
-    score = _score(
-        candidate,
-        "elevated",
-        ("culture:kitenge", "style:classic", "coverage:long-sleeves"),
-        (),
-        "wedding",
-        None,
-    )
-    assert score >= 11
+    all_axes = ("culture:kitenge", "style:classic", "coverage:long-sleeves")
+    full_score = _score(candidate, "elevated", all_axes, (), "wedding", None)
+    without_culture = _score(candidate, "elevated", all_axes[1:], (), "wedding", None)
+    without_aesthetic = _score(candidate, "elevated", (all_axes[0], all_axes[2]), (), "wedding", None)
+    without_personal = _score(candidate, "elevated", all_axes[:2], (), "wedding", None)
+    assert full_score > without_culture
+    assert full_score > without_aesthetic
+    assert full_score > without_personal
