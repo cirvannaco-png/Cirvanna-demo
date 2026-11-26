@@ -211,3 +211,23 @@ def test_bff_and_usi_pnelly_preference_allowlists_are_identical():
     assert match is not None
     identity_attributes = set(re.findall(r'"([^"]+)"', match.group(1)))
     assert PNELLY_STYLE_ATTRIBUTES == identity_attributes
+
+
+def test_replacing_regional_market_deactivates_previous_active_market():
+    from app.pnelly_preferences import PnellyStylePreferenceIn, _build_preference_update
+
+    current = profile()
+    current["preferences"].append({
+        "preference_id": "pnelly-market-ke", "attribute": "market:KE", "weight": 0.8,
+        "active": True, "source": "pnelly_user_confirmed", "source_request_id": "request-market-ke",
+    })
+    payload = PnellyStylePreferenceIn(
+        request_id="request-market-ng", consent_receipt_id="profile-receipt-001", attribute="market:NG",
+    )
+    _, updated, status = _build_preference_update(subject="customer-42", profile=current, payload=payload)
+    assert status is None
+    assert updated is not None
+    old_market = next(item for item in updated if item["preference_id"] == "pnelly-market-ke")
+    new_market = next(item for item in updated if item["attribute"] == "market:NG")
+    assert old_market["active"] is False
+    assert new_market["active"] is True
