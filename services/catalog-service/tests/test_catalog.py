@@ -869,3 +869,18 @@ def test_cil_gateway_removes_garment_fit_when_its_evidence_is_ineligible(client,
     response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
     assert response.status_code == 200
     assert "product_intelligence" not in response.json()["attributes"]
+
+def test_build_engine_normalizes_postgresql_urls_to_installed_psycopg_v3():
+    from app.main import _build_engine
+
+    for database_url in (
+        "postgresql://runtime:secret@localhost:5432/catalog?sslmode=require",
+        "postgres://runtime:secret@localhost:5432/catalog?sslmode=require",
+    ):
+        engine = _build_engine(database_url)
+        try:
+            assert engine.dialect.name == "postgresql"
+            assert engine.dialect.driver == "psycopg"
+            assert engine.url.query["sslmode"] == "require"
+        finally:
+            engine.dispose()
