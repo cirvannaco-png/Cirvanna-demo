@@ -43,6 +43,7 @@ class PreferencesIn(StrictModel):
     preferred_materials: list[Literal["linen", "cotton", "denim", "silk", "wool", "leather", "knitwear"]] = Field(default_factory=list, max_length=8)
     preferred_patterns: list[Literal["solid", "floral", "striped", "geometric", "check", "animal-print", "abstract"]] = Field(default_factory=list, max_length=8)
     coverage_requirements: list[Literal["covered_shoulders", "long_sleeves", "knee_length_or_longer", "ankle_length", "high_neckline", "loose_fit", "opaque_fabric", "head_covering_if_selected"]] = Field(default_factory=list, max_length=8)
+    occasion_preferences: list[Literal["everyday", "work", "wedding", "celebration", "religious_occasion", "formal", "travel"]] = Field(default_factory=list, max_length=8)
     regional_market: str | None = Field(default=None, min_length=2, max_length=2)
 
     favorite_colors: list[str] = Field(default_factory=list, max_length=12)
