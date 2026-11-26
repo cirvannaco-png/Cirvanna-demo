@@ -233,7 +233,13 @@ def test_wardrobe_discovery_fails_closed_without_npl_configuration(client, monke
     monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
-    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject, **_kwargs: object())
+    from usi import USIProfile
+    monkeypatch.setattr(
+        main, "_load_verified_usi_profile",
+        lambda _subject, **_kwargs: USIProfile(
+            profile_id="profile-empty", user_id="subject-verified-1", version="1", preferences=(),
+        ),
+    )
     response = client.post("/v1/discover", headers=auth(), json={**payload(), "use_wardrobe_context": True})
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"
@@ -561,10 +567,13 @@ def test_saved_market_preference_is_used_only_when_one_active_market_is_selected
 def test_inactive_or_foreign_market_preferences_are_not_used():
     from usi import StylePreference, USIProfile
 
-    profile = USIProfile(
-        profile_id="profile-market", user_id="subject-1", version="4",
+    from types import SimpleNamespace
+    profile = SimpleNamespace(
+        user_id="subject-1",
         preferences=(
             StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=False),
+            # A corrupted/foreign preference must be ignored even if a malformed
+            # profile object reaches the resolver.
             StylePreference(preference_id="market-ng", user_id="another-user", attribute="market:NG", active=True),
         ),
     )
