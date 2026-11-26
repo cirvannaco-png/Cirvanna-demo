@@ -92,6 +92,23 @@ A rollback-only probe inserted a receipt-shaped test row, read it back, then att
 
 **Not yet complete:** `DECISION_AUDIT_DATABASE_URL` has not been bound to a deployed Decision Gateway or Decision Service. The code-level `persist_decision_receipt` integration, duplicate-request hash replay, and production readiness probe have not been exercised against this database. The previous empty `cirvanna_decision_audit` database remains unused.
 
+
+
+### Full Decision Service governance store
+
+The same `cirvanna_decision_receipts` database now also contains the eight tables from `services/decision-service/migrations/0002_catacaci_governance_store.sql`:
+- decision receipts
+- CAM counterfactual audits
+- CIL contributions and privacy budget
+- CIL aggregates
+- VSL profiles, proposals and events
+
+Append-only UPDATE/DELETE triggers are enabled on receipts, CAM audits, CIL aggregates and VSL events. The runtime principal's effective grants were checked: it can read/insert receipts, insert CAM/CIL records, delete only expired CIL contributions for retention, and update the privacy-budget/VSL control tables. It cannot update/delete receipts, create schema objects, truncate tables, bypass RLS, or create roles/databases.
+
+A privileged-owner rollback-only probe attempted to UPDATE and DELETE a decision receipt. Both were rejected by the append-only trigger, and the test row was rolled back. A separate runtime-role probe confirmed SELECT/INSERT works while UPDATE/DELETE/TRUNCATE are denied. Duplicate request/candidate insertion is constrained by the unique key; a conflicting replay did not replace the original stored hash in a rollback-only probe.
+
+This validates the PostgreSQL schema and privilege contract. It still does not validate the Python receipt-store adapter through a deployed Decision Gateway/Decision Service, because `DECISION_AUDIT_DATABASE_URL` has not yet been bound in the hosting secret manager.
+
 ## Known deployment and provider blockers
 
 - Render private Catalog service blueprint planning returns `need_payment_info`. No public/free Catalog endpoint was created because the service is internal and exposing it publicly would create an avoidable CAL bypass surface.
