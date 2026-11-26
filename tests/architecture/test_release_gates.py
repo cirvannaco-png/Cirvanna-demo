@@ -29,6 +29,9 @@ class ReleaseGateValidationTests(unittest.TestCase):
     def test_passed_gate_requires_evidence_and_exact_commit(self):
         document = copy.deepcopy(self.document)
         document["gates"][0]["status"] = "passed"
+        # Evidence refs on the real REL-01 gate are intentional; clear them here
+        # so this negative test isolates the missing-evidence validation path.
+        document["gates"][0]["evidence_refs"] = []
         errors = validate_release_gates(document)
         self.assertTrue(any("evidence_refs" in error for error in errors))
         self.assertTrue(any("verified_commit" in error for error in errors))
