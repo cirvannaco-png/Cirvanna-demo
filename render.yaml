@@ -22,6 +22,42 @@ services:
       - key: CATALOG_WRITE_TOKEN
         generateValue: true
       - key: CIL_GATEWAY_URL
-        value: ""
+        sync: false
       - key: CIL_CATALOG_SERVICE_TOKEN
         generateValue: true
+
+  - type: web
+    name: cirvanna-intelligence-staging
+    runtime: docker
+    repo: https://github.com/cirvannaco-png/Cirvanna-demo
+    branch: integration/private-identity-age-evidence-2026-11-25
+    region: frankfurt
+    plan: free
+    autoDeploy: false
+    healthCheckPath: /ready
+    dockerfilePath: services/intelligence-service/Dockerfile
+    dockerContext: services/intelligence-service
+    envVars:
+      - key: CIL_ENVIRONMENT
+        value: production
+      - key: CIL_AUTO_CREATE_SCHEMA
+        value: "false"
+      - key: CIL_DATABASE_URL
+        sync: false
+      - key: CIL_ADMIN_TOKEN
+        generateValue: true
+      - key: CIL_SERVICE_TOKEN
+        generateValue: true
+      - key: CIL_CAL_SERVICE_TOKEN
+        generateValue: true
+      - key: CIL_CONSENT_RECEIPT_KEY
+        generateValue: true
+      - key: CIL_CAL_RECEIPT_KEY
+        generateValue: true
+      - key: CIL_SKIN_ANALYSIS_CONSENT_KEY
+        generateValue: true
+      - key: CIL_CATALOG_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: cirvanna-catalog-staging
+          envVarKey: CIL_CATALOG_SERVICE_TOKEN
