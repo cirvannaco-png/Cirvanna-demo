@@ -43,3 +43,20 @@ def test_wardrobe_uses_sanctuary_visual_tokens():
     for token in ("--ink:#09080d", "--gold:#d7b36a", "--radius:18px"):
         assert token in HTML
     assert "border-radius:var(--radius)" in HTML
+
+def test_all_builder_values_are_manageable_and_allowlisted_in_the_ui():
+    options_match = re.search(
+        r"const PNELLY_PREFERENCE_OPTIONS = \\[(.*?)\\n  \\];",
+        HTML,
+        flags=re.DOTALL,
+    )
+    builder_match = re.search(
+        r'<div class="style-profile-builder".*?</div>\\s*</div>',
+        HTML,
+        flags=re.DOTALL,
+    )
+    assert options_match is not None
+    assert builder_match is not None
+    managed = set(re.findall(r'\\["((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', options_match.group(1)))
+    builder_values = set(re.findall(r'value="((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', builder_match.group(0)))
+    assert builder_values.issubset(managed)
