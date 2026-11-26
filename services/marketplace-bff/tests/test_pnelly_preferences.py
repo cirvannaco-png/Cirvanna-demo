@@ -191,3 +191,23 @@ def test_pnelly_allowlist_includes_independent_dimensions():
         "color:jewel-tones",
     }
     assert expected.issubset(PNELLY_STYLE_ATTRIBUTES)
+
+
+
+def test_bff_and_usi_pnelly_preference_allowlists_are_identical():
+    from pathlib import Path
+    import re
+    from app.pnelly_preferences import PNELLY_STYLE_ATTRIBUTES
+
+    repository_root = Path(__file__).resolve().parents[3]
+    identity_source = (
+        repository_root / "services" / "identity-learning-service" / "app" / "main.py"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        r"PNELLY_CONFIRMED_PROFILE_ATTRIBUTES\\s*=\\s*\\{(.*?)\\n\\}",
+        identity_source,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    identity_attributes = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert PNELLY_STYLE_ATTRIBUTES == identity_attributes
