@@ -18,6 +18,8 @@ PnellyStyleAttribute = Literal[
     "silhouette:relaxed", "silhouette:tailored", "silhouette:oversized", "silhouette:structured",
     "material:linen", "material:cotton", "material:denim", "material:silk",
     "pattern:solid", "pattern:floral", "pattern:striped", "pattern:geometric",
+    "material:wool", "material:leather", "material:knitwear",
+    "pattern:check", "pattern:animal-print", "pattern:abstract",
     "culture:contemporary-african-luxury",
     "culture:north-african-craft",
     "culture:latin-american-textiles",
