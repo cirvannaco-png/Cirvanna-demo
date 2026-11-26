@@ -225,7 +225,9 @@
       "status": "blocked",
       "owner_role": "Product / recommendation / identity owner",
       "acceptance": "Authenticated conversational discovery uses the active subject's wardrobe and only consented style-learning/profile signals, with current user-provided or trusted context, bounded conversation state, explicit reset/export/deletion and no cross-user memory. PNELLY's three daily looks are sourced from active wardrobe items and persistent rotation state; Complementer remains a separately authenticated advisory and cannot grant product authority. Catalog/Commerce candidates are surfaced only after CAL SHOW and CIL rights/evidence approval. Explicit look/item feedback reaches the appropriate consented Identity Learning/NPL path, and only explicit, receipt-bound suitability reports enter the CIL cohort pipeline.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-pnelly-wardrobe-code-integration.md"
+      ],
       "verified_commit": null
     },
     {
