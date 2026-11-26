@@ -2236,7 +2236,7 @@ def compose_pnelly_daily_looks(
         raise HTTPException(422, detail={"code": "PNELLY_ROTATION_STATE_SCOPE_MISMATCH"})
     # Only positive, non-sensitive fashion preference namespaces may guide ranking.
     profile = _load_verified_usi_profile(subject, allow_without_consent=True)
-    allowed_prefixes = ("style:", "color:", "colour:", "silhouette:", "material:", "pattern:")
+    allowed_prefixes = ("style:", "color:", "colour:", "silhouette:", "material:", "pattern:", "culture:", "occasion:", "coverage:")
     style_signals = [
         preference.attribute.strip()
         for preference in profile.preferences
