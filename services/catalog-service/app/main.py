@@ -63,6 +63,13 @@ def _database_url() -> str:
 
 
 def _build_engine(database_url: str):
+    # The Catalog image installs psycopg v3 (psycopg[binary]), not psycopg2.
+    # Normalize provider-standard PostgreSQL URLs so SQLAlchemy selects the
+    # installed driver instead of its psycopg2 default.
+    if database_url.startswith("postgresql://"):
+        database_url = "postgresql+psycopg://" + database_url[len("postgresql://"):]
+    elif database_url.startswith("postgres://"):
+        database_url = "postgresql+psycopg://" + database_url[len("postgres://"):]
     options: dict[str, Any] = {"pool_pre_ping": True}
     if database_url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
