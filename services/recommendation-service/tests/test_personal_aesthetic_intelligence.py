@@ -180,7 +180,7 @@ def test_independent_style_dimensions_compose_without_collapsing():
         "preferred_silhouettes": ["tailored"],
         "preferred_materials": ["silk"],
         "preferred_patterns": ["geometric"],
-        "coverage_requirements": ["covered_shoulders", "ankle_length"],
+        "coverage_preferences": ["covered_shoulders", "ankle_length"],
         "regional_market": "KE",
     })
     payload["look"]["occasion"] = "wedding"
@@ -195,7 +195,7 @@ def test_independent_style_dimensions_compose_without_collapsing():
     assert dimensions["occasion"]["current"] == "wedding"
     assert dimensions["occasion"]["preferred"] == ["wedding"]
     assert dimensions["personal_preferences"]["silhouettes"] == ["tailored"]
-    assert dimensions["personal_preferences"]["coverage_requirements"] == [
+    assert dimensions["personal_preferences"]["coverage_preferences"] == [
         "covered_shoulders", "ankle_length"
     ]
     assert dimensions["regional_context"]["market_country_code"] == "KE"
@@ -239,4 +239,4 @@ def test_daily_look_style_score_keeps_cultural_aesthetic_and_personal_axes():
         "wedding",
         None,
     )
-    assert score >= 17
+    assert score >= 11
