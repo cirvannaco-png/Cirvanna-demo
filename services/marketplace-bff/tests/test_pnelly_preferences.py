@@ -176,3 +176,18 @@ def test_replace_replays_after_success_without_mutating_profile_again():
     assert replay["status"] == "replayed"
     assert replay["preference_id"] == new_id
     assert len(replay_client.calls) == 2
+
+
+
+def test_pnelly_allowlist_includes_independent_dimensions():
+    from app.pnelly_preferences import PNELLY_STYLE_ATTRIBUTES
+    expected = {
+        "culture:contemporary-african-luxury",
+        "culture:kitenge",
+        "occasion:wedding",
+        "coverage:long-sleeves",
+        "market:KE",
+        "style:classic",
+        "color:jewel-tones",
+    }
+    assert expected.issubset(PNELLY_STYLE_ATTRIBUTES)
