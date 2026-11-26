@@ -96,6 +96,9 @@ _OCCASION_TERMS = {
     "travel": ("travel", "comfortable", "relaxed", "cotton", "linen"),
     "sport": ("sport", "active", "performance", "breathable", "sneaker"),
     "special occasion": ("formal", "elegant", "statement", "dress", "tailored"),
+    "wedding": ("wedding", "ceremony", "formal", "dress"),
+    "celebration": ("celebration", "party", "event", "formal"),
+    "religious occasion": ("religious", "ceremony", "formal"),
 }
 _CLIMATE_TERMS = {
     "hot_humid": {
