@@ -112,12 +112,39 @@ async def create_cultural_declaration(
         )
     except httpx.HTTPError as exc:
         raise HTTPException(503, detail={"code": "CULTURAL_DECLARATION_SERVICE_UNAVAILABLE"}) from exc
+    replayed = False
     if response.status_code == 409:
-        raise HTTPException(409, detail={"code": "CULTURAL_DECLARATION_CONFLICT"})
-    if response.status_code != 201:
+        # A retry after a lost response may encounter the deterministic
+        # declaration ID already committed. Confirm exact persisted content
+        # before reporting an idempotent success.
+        try:
+            existing_response = await client.get(
+                base + "/v1/declarations",
+                params={"user_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+            existing_payload = existing_response.json() if existing_response.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            existing_payload = None
+        existing = next((
+            item for item in existing_payload.get("declarations", [])
+            if isinstance(item, dict) and item.get("declaration_id") == declaration_id
+        ), None) if isinstance(existing_payload, dict) and isinstance(existing_payload.get("declarations"), list) else None
+        expected = sorted((item["attribute"], item["kind"], item["hard"]) for item in body["requirements"])
+        actual = sorted((item.get("attribute"), item.get("kind"), item.get("hard")) for item in existing.get("requirements", []) if isinstance(item, dict)) if existing else []
+        if not existing or existing.get("status") != "active" or actual != expected:
+            raise HTTPException(409, detail={"code": "CULTURAL_DECLARATION_CONFLICT"})
+        replayed = True
+        response_data = {
+            "user_id": subject, "declaration_id": declaration_id,
+            "status": "active", "requirements": existing.get("requirements", []),
+        }
+    elif response.status_code != 201:
         raise HTTPException(503, detail={"code": "CULTURAL_DECLARATION_CREATE_FAILED"})
     try:
-        data = _validate_service_response(response.json(), subject=subject)
+        data = _validate_service_response(
+            response_data if replayed else response.json(), subject=subject,
+        )
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CULTURAL_DECLARATION_RESPONSE_INVALID"}) from exc
     if data.get("declaration_id") != declaration_id or data.get("status") != "active":
@@ -128,6 +155,7 @@ async def create_cultural_declaration(
         "requirements": data.get("requirements", []),
         "policy_owner": "Cultural Identity",
         "hard_requirements": True,
+        "idempotent_replay": replayed,
     }
 
 
