@@ -167,3 +167,54 @@ def test_climate_only_sets_a_fallback_intensity_and_never_overrides_user_choice(
     assert compose_complementary_look(payload)["fragrance"]["intensity"] == "light"
     payload["preferences"]["fragrance_intensity"] = "bold"
     assert compose_complementary_look(payload)["fragrance"]["intensity"] == "bold"
+
+
+
+def test_independent_style_dimensions_compose_without_collapsing():
+    payload = rich_payload()
+    payload["preferences"].update({
+        "aesthetics": ["classic", "editorial"],
+        "cultural_contexts": ["contemporary African luxury", "Kitenge textile reference"],
+        "favorite_colors": ["emerald", "burgundy"],
+        "preferred_silhouettes": ["tailored"],
+        "preferred_materials": ["silk"],
+        "preferred_patterns": ["geometric"],
+        "coverage_requirements": ["covered_shoulders", "ankle_length"],
+        "regional_market": "KE",
+    })
+    payload["look"]["occasion"] = "wedding"
+    payload["look"]["climate"] = "hot_humid"
+    result = compose_complementary_look(payload)
+    profile = result["style_profile"]
+    dimensions = profile["dimensions"]
+    assert dimensions["cultural_expression"]["values"] == [
+        "contemporary African luxury", "Kitenge textile reference"
+    ]
+    assert dimensions["personal_aesthetic"]["values"] == ["classic", "editorial"]
+    assert dimensions["occasion"]["value"] == "wedding"
+    assert dimensions["personal_preferences"]["silhouettes"] == ["tailored"]
+    assert dimensions["personal_preferences"]["coverage_requirements"] == [
+        "covered_shoulders", "ankle_length"
+    ]
+    assert dimensions["regional_context"]["market_country_code"] == "KE"
+    assert profile["composition_policy"] == "orthogonal_dimensions"
+
+
+def test_omitted_style_dimensions_remain_unspecified():
+    from app.intelligence.style_profile import compose_style_profile
+    result = compose_style_profile({}, {})
+    assert all(
+        dimension["status"] == "not_selected"
+        for dimension in result["dimensions"].values()
+    )
+
+
+def test_regional_market_requires_iso_country_code():
+    from pydantic import ValidationError
+    from app.main import PreferencesIn
+    try:
+        PreferencesIn(regional_market="Nairobi")
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("regional market must be a two-letter country code")
