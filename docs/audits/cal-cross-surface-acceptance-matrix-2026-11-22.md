@@ -83,3 +83,28 @@ The source and database foundation has advanced, but the ten-surface **deployed*
 - No Neon restore branch was created because the project endpoint has `suspend_timeout_seconds=0` and the connected Neon account would not allow changing the suspend interval. No recurring-cost assumption is made.
 
 **Current acceptance status:** the source/CI and staging database foundations are materially improved, but issue #237 remains open. The exact ten-surface black-box matrix must run against deployed services and real staging dependencies, with redacted evidence retained. All 23 production release gates remain blocked until their individual deployed evidence and independent review requirements are met.
+
+
+## 2026-11-26 infrastructure and execution refresh
+
+The ten-surface matrix remains **BLOCKED**. The following work improves its staging foundations but does not constitute deployed cross-surface acceptance.
+
+### Current source and CI state
+- The latest source candidate is tracked in PR #338. On code commit `d79006b957fc36fa2642e63f902f8f033e7c7ff3`, 23 of 24 workflows completed successfully; the all-service container build was still running at the time of this review. The Decision Service migration/privilege/API suite now passes after fixing its PostgreSQL CI assertion. Later commits on the branch add evidence documentation and do not change service code; exact latest-head CI is still required before release.
+- The container workflow builds 22 CPU service images and records CI-local image IDs. It does not push immutable registry digests or deploy services.
+
+### Current database foundations
+- Supabase `cirvanna-staging`: Identity 0017, Twin 0005 and BFF Auth 0001 are applied; all 16 private tables have RLS enabled, service-specific policies exist, browser roles have no schema USAGE, and the security advisor reports zero lints. The three service group roles remain NOLOGIN and no dedicated LOGIN members have been verified.
+- Neon `cirvanna-catalog-staging` in Frankfurt now contains separate databases for Catalog, Commerce, CIL, Decision Audit, Asset, Appearance, Cultural Identity, NPL, Privacy Governance and Wardrobe. Nine service runtime roles were tested for login and absence of superuser, BYPASSRLS, CREATE ROLE, CREATE DATABASE, database CREATE and public-schema CREATE privileges.
+- Catalog is at Alembic revision `20261104_0002`; Commerce is at `20261121_0016`; CIL is at `20261120_0006`.
+- Commerce purchase-audit table ownership is separate from the runtime role. Its UPDATE/DELETE triggers rejected a rollback-only tamper probe, and the runtime role cannot TRUNCATE.
+- A dedicated `cirvanna_decision_receipts` database now contains the receipt and governance tables from Decision Service migrations 0001/0002. Its runtime role has SELECT/INSERT on receipts, cannot UPDATE/DELETE/TRUNCATE or create schema objects, and append-only triggers rejected a privileged rollback-only UPDATE/DELETE probe. The `DECISION_AUDIT_DATABASE_URL` is not yet bound to a deployed service.
+
+### Current deployment/provider blockers
+- Render private Catalog Blueprint planning returns `need_payment_info`. No public/free Catalog endpoint was created; Catalog must remain private to avoid an internal-service/CAL bypass.
+- Stripe sandbox is confirmed `livemode=false`; no product, Checkout Session, payment or webhook endpoint has been created. Tax settings are `pending`.
+- No deployed HTTPS service URLs or staging fixture-control endpoint exist. The ten-surface runner has not been executed.
+- Click It remains blocked before public multipart parsing. The internal orchestrator/worker path is not independently validated. Look It remains separate and request-consent-bound in code, but deployed source-image lifecycle and downstream logging/storage still need independent review.
+- No real CDN/cache revocation, live identity/session revocation, merchant/provider state transition, payment-revocation race, backup restore, operational rollback or independent assessor report has been produced.
+
+**Acceptance status:** code/CI and managed-database foundations have improved; the ten-surface black-box matrix and all 23 production gates remain blocked until exact deployed commit/image digests, real provider identities and independent evidence are available.
