@@ -533,3 +533,66 @@ def test_cal_discovery_response_requires_a_nonempty_request_id():
             _decision_response(_decision(P1, 1), request_id=" "), {P1: 1}
         )
     assert invalid.value.detail["code"] == "CAL_DISCOVERY_RESPONSE_INVALID"
+
+
+
+def test_saved_market_preference_is_used_only_when_one_active_market_is_selected():
+    from usi import StylePreference, USIProfile
+
+    profile = USIProfile(
+        profile_id="profile-market", user_id="subject-1", version="4",
+        preferences=(
+            StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=True),
+            StylePreference(preference_id="style-classic", user_id="subject-1", attribute="style:classic", active=True),
+        ),
+    )
+    assert main._profile_market_country_code(profile) == "KE"
+
+    ambiguous = USIProfile(
+        profile_id="profile-market-ambiguous", user_id="subject-1", version="5",
+        preferences=(
+            StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=True),
+            StylePreference(preference_id="market-ng", user_id="subject-1", attribute="market:NG", active=True),
+        ),
+    )
+    assert main._profile_market_country_code(ambiguous) is None
+
+
+def test_inactive_or_foreign_market_preferences_are_not_used():
+    from usi import StylePreference, USIProfile
+
+    profile = USIProfile(
+        profile_id="profile-market", user_id="subject-1", version="4",
+        preferences=(
+            StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=False),
+            StylePreference(preference_id="market-ng", user_id="another-user", attribute="market:NG", active=True),
+        ),
+    )
+    assert main._profile_market_country_code(profile) is None
+
+
+def test_cultural_identity_provider_is_mandatory_in_production(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_HMAC_SECRET", raising=False)
+
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_cultural_requirements(
+            request_id="request-123", user_id="subject-1", product_id=P1,
+            attributes=("material:linen",), attributes_complete=True,
+        )
+    assert error.value.status_code == 503
+    assert error.value.detail["code"] == "CULTURAL_IDENTITY_PROVIDER_REQUIRED"
+
+
+def test_cultural_identity_provider_remains_optional_in_local_development(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
+    monkeypatch.delenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_HMAC_SECRET", raising=False)
+    assert main._load_persisted_cultural_requirements(
+        request_id="request-123", user_id="subject-1", product_id=P1,
+        attributes=("material:linen",), attributes_complete=True,
+    ) == ()
