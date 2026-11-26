@@ -21,7 +21,9 @@
       "status": "blocked",
       "owner_role": "Platform owner / budget approver",
       "acceptance": "Approved workspace, region, paid plan/budget, service/database IDs, recovery owner, RPO/RTO, and alert recipient are recorded. No unrelated project's resources are reused.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+      ],
       "verified_commit": null
     },
     {
@@ -31,7 +33,9 @@
       "status": "blocked",
       "owner_role": "Database/reliability owner",
       "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass. CAL purchase audit evidence is database-immutable: use distinct schema-owner and Commerce runtime credentials; the runtime role must not own the audit table or be able to disable/drop immutability guards, and UPDATE/DELETE/TRUNCATE attempts must be rejected and verified in PostgreSQL after migration.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+      ],
       "verified_commit": null
     },
     {
@@ -71,7 +75,9 @@
       "status": "blocked",
       "owner_role": "Decision-platform owner",
       "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions. In production, the Gateway and Decision Service require the latest context-scoped CIL CAL feedback review; BLOCK is an additional veto, SHOW cannot override ordinary gates, and missing/malformed/unavailable review evidence fails closed. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in commerce_cal_purchase_audits. Database triggers reject audit UPDATE/DELETE and PostgreSQL TRUNCATE; the runtime role cannot disable the guards or mutate audit rows. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+      ],
       "verified_commit": null
     },
     {
@@ -91,7 +97,9 @@
       "status": "blocked",
       "owner_role": "Security/privacy owner",
       "acceptance": "Threat/security review, least-privilege service credentials, HTTPS/private networking, CORS/CSP/rate limits, secret scanning/rotation, log redaction, consent revocation, retention purge, export/deletion, tenant isolation, and privacy verification pass.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+      ],
       "verified_commit": null
     },
     {
@@ -161,7 +169,9 @@
       "status": "blocked",
       "owner_role": "Platform / SRE owner",
       "acceptance": "One approved canonical deployment is running the exact release commit with immutable image digests, the full private/public service graph, versioned schemas, approved providers, secret-manager bindings, managed databases, encrypted backups and successful isolated restores, RPO/RTO, central logs/metrics/traces, actionable alerts, on-call/contact ownership, runbooks, dependency failure drills, rollback and staging-to-production promotion evidence. Rollback evidence must prove restoration of the last-known-good per-service immutable image digests (not a rebuild), safe database compatibility or isolated restore/reconciliation, successful traffic reversal, and post-rollback identity, discovery/CAL, commerce/payment, privacy, queue and observability checks with measured RTO/RPO and zero unresolved reconciliation gaps.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+      ],
       "verified_commit": null
     },
     {
