@@ -204,7 +204,7 @@ def test_bff_and_usi_pnelly_preference_allowlists_are_identical():
         repository_root / "services" / "identity-learning-service" / "app" / "main.py"
     ).read_text(encoding="utf-8")
     match = re.search(
-        r"PNELLY_CONFIRMED_PROFILE_ATTRIBUTES\\s*=\\s*\\{(.*?)\\n\\}",
+        r"PNELLY_CONFIRMED_PROFILE_ATTRIBUTES\s*=\s*\{(.*?)\n\}",
         identity_source,
         flags=re.DOTALL,
     )
