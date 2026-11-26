@@ -1,11 +1,11 @@
 services:
-  - type: web
+  - type: pserv
     name: cirvanna-catalog-staging
     runtime: docker
     repo: https://github.com/cirvannaco-png/Cirvanna-demo
     branch: integration/private-identity-age-evidence-2026-11-25
     region: frankfurt
-    plan: free
+    plan: starter
     autoDeploy: false
     dockerfilePath: services/catalog-service/Dockerfile
     dockerContext: services/catalog-service
