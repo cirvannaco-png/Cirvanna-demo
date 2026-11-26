@@ -874,8 +874,8 @@ def test_build_engine_normalizes_postgresql_urls_to_installed_psycopg_v3():
     from app.main import _build_engine
 
     for database_url in (
-        "postgresql://runtime:secret@localhost:5432/catalog?sslmode=require",
-        "postgres://runtime:secret@localhost:5432/catalog?sslmode=require",
+        "postgresql://localhost:5432/catalog?sslmode=require",
+        "postgres://localhost:5432/catalog?sslmode=require",
     ):
         engine = _build_engine(database_url)
         try:
