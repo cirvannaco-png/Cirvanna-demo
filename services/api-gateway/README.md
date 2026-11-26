@@ -162,3 +162,5 @@ Do not claim production readiness from unit tests, signed test fixtures, a passi
 ## Consent scope expiry
 
 The `/v1/me/consents` request accepts an optional timezone-aware `expires_at`. For `skin_analysis`, the Gateway requires both a resource-bound `resource_id` and a future `expires_at`; it forwards them to Identity Learning. The browser cannot provide a CIL pseudonym, provider credential, signed provider receipt or adult-verification assertion. Those are issued only by trusted server-side services.
+
+- `CULTURAL_IDENTITY_SERVICE_URL`, `CULTURAL_IDENTITY_SERVICE_TOKEN`, `CULTURAL_IDENTITY_HMAC_SECRET`: private Cultural Identity declaration/evaluation provider, internal bearer token and candidate-bound evidence verification key. In production, the provider is mandatory; missing configuration returns 503 instead of silently evaluating candidates with an empty declaration set. `CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED=true` enables the same fail-closed rule in controlled non-production environments.
