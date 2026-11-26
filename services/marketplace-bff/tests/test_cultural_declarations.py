@@ -127,3 +127,17 @@ def test_retraction_requires_confirmation_and_uses_idempotent_correction_id():
     assert sent["user_confirmation"] is True
     assert sent["correction_event_id"].startswith("cultural-correction-")
     assert result["status"] == "retracted"
+
+
+def test_create_rejects_contradictory_required_and_forbidden_attributes():
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(create_cultural_declaration(
+            Client([]), base="https://cultural.example.test", token="internal-token",
+            subject="verified-user-42",
+            payload=create_payload(requirements=[
+                {"requirement_id": "must-cover", "attribute": "coverage:long-sleeves", "kind": "required_attribute", "hard": True},
+                {"requirement_id": "must-not-cover", "attribute": "coverage:long-sleeves", "kind": "forbidden_attribute", "hard": True},
+            ]),
+        ))
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "CONTRADICTORY_CULTURAL_REQUIREMENTS"
