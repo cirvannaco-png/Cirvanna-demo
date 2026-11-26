@@ -52,3 +52,14 @@ def test_all_builder_values_are_manageable_and_allowlisted_in_the_ui():
     managed = set(re.findall(r'"((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', options_text))
     builder_values = set(re.findall(r'value="((?:style|color|silhouette|material|pattern|culture|occasion|coverage|market):[^"]+)"', builder_text))
     assert builder_values.issubset(managed)
+
+
+def test_hard_coverage_controls_are_separate_from_soft_style_preferences():
+    assert 'id="culturalPolicyPanel"' in HTML
+    assert 'id="confirmHardRequirements"' in HTML
+    assert 'id="saveHardRequirements"' in HTML
+    assert 'api("/api/wardrobe/pnelly/cultural-declarations"' in HTML
+    assert 'kind: "required_attribute"' in HTML
+    assert 'hard: true' in HTML
+    assert "Cultural Identity" in HTML
+    assert "missing evidence is sent to review" in HTML
