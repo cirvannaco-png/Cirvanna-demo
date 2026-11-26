@@ -84,3 +84,24 @@ Unit and contract tests do not prove deployed PostgreSQL durability, production 
 ## Rollback
 
 Disable or remove the BFF preference-write route and Wardrobe preference control. No schema rollback is required. Existing profile JSON rows remain readable by the prior profile contract; the optional provenance fields can be ignored by older consumers. Do not delete existing user preferences as part of rollback.
+
+
+## Independent style dimensions (extension)
+
+**Implementation branch:** `feat/pnelly-independent-style-dimensions`
+
+PNELLY now exposes a compositional style-profile contract with five orthogonal dimensions:
+
+1. **Cultural expression** — only user-selected craft, garment and styling references. These are soft styling signals; explicit hard cultural requirements remain owned by Cultural Identity and are not inferred from identity or appearance.
+2. **Personal aesthetic** — one or more aesthetic directions, including classic / old money, minimalist, romantic, streetwear, editorial, bohemian and natural.
+3. **Occasion** — the current declared occasion, independently evaluated from aesthetic and cultural expression.
+4. **Personal preferences** — preferred and excluded colours, silhouettes, materials, patterns and coverage requirements.
+5. **Regional context** — explicitly selected market country, declared location and declared climate. Market selection is not a proxy for ethnicity, religion or style.
+
+The Complementer response adds `style_profile` while retaining the existing response fields. Each dimension reports its own selected/not-selected state. Missing dimensions remain unspecified; the composer does not fill them from demographic or visual inference. The existing USI JSON preference store remains canonical. The BFF and Identity Learning Service share the same allowlisted PNELLY attribute vocabulary, with request provenance and exact profile-storage consent unchanged.
+
+The Wardrobe experience adds a multi-axis personal-atelier selector. Saving selected values uses the existing consent-bound PNELLY BFF route one attribute at a time, so the canonical USI version check, idempotency and persistence confirmation remain in force. The interface does not claim success unless each save is confirmed.
+
+Regional availability, local designers, market pricing and fulfilment remain Catalog/Commerce responsibilities. The `market:XX` preference records a user-selected preferred market only; it does not assert product availability. All product display continues to require CAL authorization.
+
+Rollback: revert the branch. Existing USI profile JSON remains backward-compatible; newly saved attributes are ignored by older recommendation consumers unless explicitly supported. Do not delete user profile records during rollback.
