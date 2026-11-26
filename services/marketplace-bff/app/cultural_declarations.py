@@ -80,13 +80,29 @@ async def create_cultural_declaration(
         raise HTTPException(422, detail={"code": "CULTURAL_DECLARATION_ENDPOINT_ACCEPTS_HARD_REQUIREMENTS_ONLY"})
     if len({item.requirement_id for item in payload.requirements}) != len(payload.requirements):
         raise HTTPException(422, detail={"code": "DUPLICATE_CULTURAL_REQUIREMENT_ID"})
+    attribute_kinds: dict[str, set[str]] = {}
+    for item in payload.requirements:
+        attribute_kinds.setdefault(item.attribute.strip().casefold(), set()).add(item.kind)
+    if any(len(kinds) > 1 for kinds in attribute_kinds.values()):
+        raise HTTPException(422, detail={"code": "CONTRADICTORY_CULTURAL_REQUIREMENTS"})
     declaration_id = declaration_id_for(subject, payload.request_id)
     body = {
         "user_id": subject,
         "declaration_id": declaration_id,
         "confirmation_version": payload.confirmation_version,
         "user_confirmation": True,
-        "requirements": [item.model_dump() for item in payload.requirements],
+        # Requirement IDs are unique per user across all declarations. Namespace
+        # them by the deterministic declaration ID so a retracted requirement
+        # can later be re-declared without colliding with its historical row.
+        "requirements": [
+            {
+                **item.model_dump(),
+                "requirement_id": "req-" + hashlib.sha256(
+                    f"{declaration_id}|{item.requirement_id}".encode("utf-8")
+                ).hexdigest()[:32],
+            }
+            for item in payload.requirements
+        ],
     }
     try:
         response = await client.post(
