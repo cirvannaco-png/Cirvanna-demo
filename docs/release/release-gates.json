@@ -34,7 +34,8 @@
       "owner_role": "Database/reliability owner",
       "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass. CAL purchase audit evidence is database-immutable: use distinct schema-owner and Commerce runtime credentials; the runtime role must not own the audit table or be able to disable/drop immutability guards, and UPDATE/DELETE/TRUNCATE attempts must be rejected and verified in PostgreSQL after migration.",
       "evidence_refs": [
-        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md",
+        "docs/release/evidence/2026-11-26-neon-snapshot-restore-drill.md"
       ],
       "verified_commit": null
     },
@@ -77,7 +78,8 @@
       "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions. In production, the Gateway and Decision Service require the latest context-scoped CIL CAL feedback review; BLOCK is an additional veto, SHOW cannot override ordinary gates, and missing/malformed/unavailable review evidence fails closed. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in commerce_cal_purchase_audits. Database triggers reject audit UPDATE/DELETE and PostgreSQL TRUNCATE; the runtime role cannot disable the guards or mutate audit rows. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
       "evidence_refs": [
         "docs/release/evidence/2026-11-26-staging-database-security-verification.md",
-        "docs/audits/cal-cross-surface-acceptance-matrix-2026-11-22.md"
+        "docs/audits/cal-cross-surface-acceptance-matrix-2026-11-22.md",
+        "docs/release/evidence/2026-11-26-neon-snapshot-restore-drill.md"
       ],
       "verified_commit": null
     },
@@ -110,7 +112,9 @@
       "status": "blocked",
       "owner_role": "Service operations owner",
       "acceptance": "Dashboards, logs, latency/error alerts, on-call/contact ownership, support/refund/returns, fulfilment/shipping/tax procedures, incident response, backup schedule, rollback plan, timeout/dependency failure exercises, and incident/rollback drill are approved. Central metrics, structured logs and traces are collected privately for every production service; named alert routes are tested; service owners/on-call and incident commander are assigned; payment, provider, privacy and database recovery runbooks are exercised; RPO/RTO and restore evidence are recorded. The exercised rollback must be recorded in a rollback evidence record tied to exact candidate/rollback commit SHAs and per-service immutable image digests; it includes traffic-switch, schema compatibility, database strategy/backup/recovery, post-rollback critical-path, measured RTO/RPO, data-loss/reconciliation, named operator and independent-approver evidence. A runbook or unexecuted template is not evidence.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/evidence/2026-11-26-neon-snapshot-restore-drill.md"
+      ],
       "verified_commit": null
     },
     {
@@ -173,7 +177,8 @@
       "owner_role": "Platform / SRE owner",
       "acceptance": "One approved canonical deployment is running the exact release commit with immutable image digests, the full private/public service graph, versioned schemas, approved providers, secret-manager bindings, managed databases, encrypted backups and successful isolated restores, RPO/RTO, central logs/metrics/traces, actionable alerts, on-call/contact ownership, runbooks, dependency failure drills, rollback and staging-to-production promotion evidence. Rollback evidence must prove restoration of the last-known-good per-service immutable image digests (not a rebuild), safe database compatibility or isolated restore/reconciliation, successful traffic reversal, and post-rollback identity, discovery/CAL, commerce/payment, privacy, queue and observability checks with measured RTO/RPO and zero unresolved reconciliation gaps.",
       "evidence_refs": [
-        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md",
+        "docs/release/evidence/2026-11-26-neon-snapshot-restore-drill.md"
       ],
       "verified_commit": null
     },
