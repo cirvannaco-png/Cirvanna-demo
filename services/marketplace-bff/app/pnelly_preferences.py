@@ -188,6 +188,18 @@ def _build_preference_update(
         for item in preferences
     ):
         return preference_id, None, "already_present"
+    if payload.attribute.startswith("market:"):
+        # Regional market is a single-select preference. Retire the previous
+        # PNELLY market atomically when the user explicitly chooses another.
+        for item in preferences:
+            if (
+                isinstance(item, dict)
+                and item.get("source") == "pnelly_user_confirmed"
+                and item.get("active", True) is True
+                and isinstance(item.get("attribute"), str)
+                and item["attribute"].startswith("market:")
+            ):
+                item["active"] = False
     if len(preferences) >= 100:
         raise HTTPException(409, detail={"code": "USI_PROFILE_PREFERENCE_LIMIT_REACHED"})
     preferences.append({
