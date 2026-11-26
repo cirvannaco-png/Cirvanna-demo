@@ -2460,3 +2460,33 @@ def test_cil_and_twin_cleanup_dispatch_batch_more_than_one_hundred_commands(monk
     assert twin_batches == [(100, 100), (100, 100), (5, 5)]
     assert cil["delivered"] == 205 and cil["failed"] == 0 and cil["pending"] is False
     assert twin["delivered"] == 205 and twin["failed"] == 0 and twin["pending"] is False
+
+
+
+def test_usi_accepts_only_explicitly_allowlisted_new_style_dimensions(client):
+    accepted = client.put("/v1/profiles/user-style-axes", headers=auth(), json={
+        "expected_version": 0,
+        "consent_receipt_id": "profile-receipt-0001",
+        "preferences": [{
+            "preference_id": "pnelly-style-axis-0001",
+            "attribute": "culture:contemporary-african-luxury",
+            "weight": 0.8,
+            "active": True,
+            "source": "pnelly_user_confirmed",
+            "source_request_id": "pnelly-style-request-0001",
+        }],
+    })
+    assert accepted.status_code == 200, accepted.text
+    rejected = client.put("/v1/profiles/user-style-axes-invalid", headers=auth(), json={
+        "expected_version": 0,
+        "consent_receipt_id": "profile-receipt-0001",
+        "preferences": [{
+            "preference_id": "pnelly-style-axis-0002",
+            "attribute": "culture:unreviewed-free-text",
+            "weight": 0.8,
+            "active": True,
+            "source": "pnelly_user_confirmed",
+            "source_request_id": "pnelly-style-request-0002",
+        }],
+    })
+    assert rejected.status_code == 422
