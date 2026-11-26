@@ -76,7 +76,8 @@
       "owner_role": "Decision-platform owner",
       "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions. In production, the Gateway and Decision Service require the latest context-scoped CIL CAL feedback review; BLOCK is an additional veto, SHOW cannot override ordinary gates, and missing/malformed/unavailable review evidence fails closed. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in commerce_cal_purchase_audits. Database triggers reject audit UPDATE/DELETE and PostgreSQL TRUNCATE; the runtime role cannot disable the guards or mutate audit rows. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
       "evidence_refs": [
-        "docs/release/evidence/2026-11-26-staging-database-security-verification.md"
+        "docs/release/evidence/2026-11-26-staging-database-security-verification.md",
+        "docs/audits/cal-cross-surface-acceptance-matrix-2026-11-22.md"
       ],
       "verified_commit": null
     },
