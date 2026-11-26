@@ -637,3 +637,32 @@ def test_cultural_fail_closed_setting_does_not_change_npl_provider_optional_bran
         request_id="request-123", user_id="subject-1", product_id=P1,
         attributes=("material:linen",),
     ) == ()
+
+
+def test_cultural_identity_internal_http_client_disables_environment_proxies_and_redirects(monkeypatch):
+    import httpx
+
+    captured = {}
+    class FailingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def post(self, *_args, **_kwargs):
+            raise httpx.ConnectError("isolated test connection failure")
+
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_URL", "https://cultural.example.test")
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "t" * 40)
+    monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "s" * 40)
+    monkeypatch.setattr(main.httpx, "Client", FailingClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_cultural_requirements(
+            request_id="request-123", user_id="subject-1", product_id=P1,
+            attributes=("material:linen",), attributes_complete=True,
+        )
+    assert error.value.status_code == 503
+    assert captured["trust_env"] is False
+    assert captured["follow_redirects"] is False
