@@ -617,3 +617,14 @@ def test_marketplace_discovery_uses_saved_market_but_respects_explicit_override(
     resolved = main._discovery_payload_with_profile_market(explicit, profile)
     assert resolved.market_country_code == "NG"
     assert resolved is explicit
+
+
+def test_cultural_fail_closed_setting_does_not_change_npl_provider_optional_branch(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.delenv("NPL_SERVICE_URL", raising=False)
+    monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
+    assert main._load_persisted_npl_preferences(
+        request_id="request-123", user_id="subject-1", product_id=P1,
+        attributes=("material:linen",),
+    ) == ()
