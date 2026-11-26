@@ -93,7 +93,22 @@ jobs:
           $test$;
           SQL
           psql -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','SELECT') AS can_select, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','INSERT') AS can_insert, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','UPDATE') AS can_update, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','DELETE') AS can_delete, has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','TRUNCATE') AS can_truncate, has_schema_privilege('cirvanna_decision_audit','decision_private','CREATE') AS can_create_schema_objects"
-          psql -v ON_ERROR_STOP=1 -c "SELECT CASE WHEN has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','SELECT') AND has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','INSERT') AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','UPDATE') AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','DELETE') AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','TRUNCATE') AND NOT has_schema_privilege('cirvanna_decision_audit','decision_private','CREATE') THEN 'least-privilege-ok' ELSE (1/0)::text END"
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $assert$
+          BEGIN
+            IF has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','SELECT')
+              AND has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','INSERT')
+              AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','UPDATE')
+              AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','DELETE')
+              AND NOT has_table_privilege('cirvanna_decision_audit','decision_private.catacaci_decision_receipts','TRUNCATE')
+              AND NOT has_schema_privilege('cirvanna_decision_audit','decision_private','CREATE') THEN
+              RAISE NOTICE 'least-privilege-ok';
+            ELSE
+              RAISE EXCEPTION 'decision audit runtime role has excessive or missing privileges';
+            END IF;
+          END
+          $assert$;
+          SQL
       - name: Run decision API contract tests
         env:
           DECISION_SERVICE_TOKEN: decision-service-ci-token-minimum-32-bytes
