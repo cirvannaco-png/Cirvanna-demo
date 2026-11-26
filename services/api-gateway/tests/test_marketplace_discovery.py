@@ -596,3 +596,24 @@ def test_cultural_identity_provider_remains_optional_in_local_development(monkey
         request_id="request-123", user_id="subject-1", product_id=P1,
         attributes=("material:linen",), attributes_complete=True,
     ) == ()
+
+
+def test_marketplace_discovery_uses_saved_market_but_respects_explicit_override():
+    from usi import StylePreference, USIProfile
+
+    profile = USIProfile(
+        profile_id="profile-market", user_id="subject-verified-1", version="8",
+        preferences=(StylePreference(
+            preference_id="market-ke", user_id="subject-verified-1",
+            attribute="market:KE", active=True,
+        ),),
+    )
+    request = main.DiscoveryRequest(user_id="subject-verified-1", query="linen")
+    assert main._discovery_payload_with_profile_market(request, profile).market_country_code == "KE"
+
+    explicit = main.DiscoveryRequest(
+        user_id="subject-verified-1", query="linen", market_country_code="NG",
+    )
+    resolved = main._discovery_payload_with_profile_market(explicit, profile)
+    assert resolved.market_country_code == "NG"
+    assert resolved is explicit
