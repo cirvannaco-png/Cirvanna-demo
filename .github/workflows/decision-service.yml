@@ -65,18 +65,17 @@ jobs:
           psql -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE cirvanna_decision_audit_schema_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
           CREATE ROLE cirvanna_decision_audit NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-          CREATE ROLE decision_audit_probe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
           GRANT CREATE ON DATABASE decision_ci TO cirvanna_decision_audit_schema_owner;
           SET ROLE cirvanna_decision_audit_schema_owner;
           \i migrations/0001_catacaci_decision_receipts.sql
           \i migrations/0002_catacaci_governance_store.sql
           RESET ROLE;
           SQL
-          psql -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA decision_private TO decision_audit_probe"
-          psql -v ON_ERROR_STOP=1 -c "GRANT UPDATE, DELETE ON decision_private.catacaci_decision_receipts TO decision_audit_probe"
           psql -v ON_ERROR_STOP=1 -c "SET ROLE cirvanna_decision_audit; INSERT INTO decision_private.catacaci_decision_receipts (receipt_id,request_id,candidate_id,verdict,may_display,eepl_policy_id,eepl_policy_version,cal_policy_id,cal_policy_version,minimum_fit_confidence,maximum_fit_confidence_disagreement,arbitration_contract_version,pipeline_contract_version,candidate_snapshot_sha256,catalog_version,evaluated_signals,reasons,receipt_sha256,created_at) VALUES (gen_random_uuid(),'ci-migration-probe','ci-candidate','REVIEW',false,'eepl-ci','1','cal-ci','1',0.70,0.10,'ci-arbitration-v1','ci-pipeline-v1',repeat('a',64),1,'{}'::jsonb,'[]'::jsonb,repeat('b',64),now()); RESET ROLE"
           psql -v ON_ERROR_STOP=1 <<'SQL'
-          SET ROLE decision_audit_probe;
+          -- Exercise the append-only trigger as the table owner, which has UPDATE/DELETE privileges.
+          -- The runtime role's lack of those privileges is asserted separately below.
+          SET ROLE cirvanna_decision_audit_schema_owner;
           DO $test$
           BEGIN
             BEGIN
