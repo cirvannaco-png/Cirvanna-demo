@@ -1245,6 +1245,17 @@ def _profile_market_country_code(profile: USIProfile) -> str | None:
     return next(iter(markets)) if len(markets) == 1 else None
 
 
+def _discovery_payload_with_profile_market(
+    payload: DiscoveryRequest, profile: USIProfile,
+) -> DiscoveryRequest:
+    """Apply a single saved market only when the current search did not specify one."""
+    if payload.market_country_code:
+        return payload
+    return payload.model_copy(update={
+        "market_country_code": _profile_market_country_code(profile),
+    })
+
+
 
 def _load_verified_wardrobe(subject_id: str) -> list[dict[str, Any]]:
     """Load only active items for the Commerce-verified subject."""
@@ -2690,10 +2701,7 @@ def discover_marketplace(
                if payload.use_wardrobe_context else _load_verified_usi_profile(subject))
     # An explicit request market wins. Otherwise use one unambiguous, active
     # user-confirmed USI market preference; never infer a market from location.
-    saved_market = _profile_market_country_code(profile)
-    discovery_payload = payload.model_copy(update={
-        "market_country_code": payload.market_country_code or saved_market,
-    })
+    discovery_payload = _discovery_payload_with_profile_market(payload, profile)
     wardrobe_items: list[dict[str, Any]] = []
     positive_wardrobe_feedback: dict[str, float] = {}
     if payload.use_wardrobe_context:
