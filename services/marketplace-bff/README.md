@@ -74,3 +74,5 @@ PNELLY's description and Look It responses contain candidate matches, not displa
 ## CAL purchase-proxy kill switch
 
 Set `COMMERCE_CAL_PURCHASE_PROXY_ENABLED=false` by default. Enable only in a controlled non-production environment after candidate-bound purchase-receipt verification and audit persistence have passed. A missing flag, failed readiness probe, missing receipt signer, stale migration or disabled CAL Gateway keeps cart mutation and checkout fail-closed.
+
+- `CULTURAL_IDENTITY_SERVICE_URL` and `CULTURAL_IDENTITY_SERVICE_TOKEN`: private Cultural Identity service URL and dedicated internal bearer credential (at least 32 bytes). The BFF binds every declaration, list and retraction request to the Commerce-verified subject; browser-supplied user IDs are never accepted. Hard coverage declarations require explicit confirmation and are stored by Cultural Identity, not in the USI style-preference profile.
