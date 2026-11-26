@@ -958,6 +958,11 @@ def _load_persisted_npl_preferences(
     secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "")
     configured = (bool(base), len(token.encode("utf-8")) >= 32, len(secret.encode("utf-8")) >= 32)
     if not any(configured):
+        if _cultural_identity_enforcement_required():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "CULTURAL_IDENTITY_PROVIDER_REQUIRED"},
+            )
         return ()
     if not all(configured) or not _trusted_internal_base_url(base):
         raise HTTPException(
@@ -1024,6 +1029,14 @@ def _load_persisted_npl_preferences(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "NPL_PROVIDER_UNAVAILABLE"},
         ) from exc
+
+
+def _cultural_identity_enforcement_required() -> bool:
+    environment = os.getenv(
+        "CIRVANNA_ENVIRONMENT", os.getenv("COMMERCE_ENVIRONMENT", "development")
+    ).strip().lower()
+    configured = os.getenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "false").strip().lower()
+    return environment == "production" or configured == "true"
 
 
 def _load_persisted_cultural_requirements(
@@ -1219,6 +1232,17 @@ def _load_verified_usi_profile(subject_id: str, *, allow_without_consent: bool =
         preferences=tuple(preferences),
     )
 
+
+def _profile_market_country_code(profile: USIProfile) -> str | None:
+    """Resolve a saved market only when exactly one active user-owned market is selected."""
+    markets: set[str] = set()
+    for preference in profile.preferences:
+        if preference.user_id != profile.user_id or not preference.active:
+            continue
+        match = re.fullmatch(r"market:([A-Z]{2})", preference.attribute.strip())
+        if match:
+            markets.add(match.group(1))
+    return next(iter(markets)) if len(markets) == 1 else None
 
 
 
@@ -2664,6 +2688,12 @@ def discover_marketplace(
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
     profile = (_load_verified_usi_profile(subject, allow_without_consent=True)
                if payload.use_wardrobe_context else _load_verified_usi_profile(subject))
+    # An explicit request market wins. Otherwise use one unambiguous, active
+    # user-confirmed USI market preference; never infer a market from location.
+    saved_market = _profile_market_country_code(profile)
+    discovery_payload = payload.model_copy(update={
+        "market_country_code": payload.market_country_code or saved_market,
+    })
     wardrobe_items: list[dict[str, Any]] = []
     positive_wardrobe_feedback: dict[str, float] = {}
     if payload.use_wardrobe_context:
@@ -2681,7 +2711,7 @@ def discover_marketplace(
     eepl_context, context_evidence = _fresh_context_for_eepl(
         payload.context, strict=payload.use_wardrobe_context
     )
-    products, offers = _discover_catalog_and_offers(payload)
+    products, offers = _discover_catalog_and_offers(discovery_payload)
     by_product: dict[str, dict[str, Any]] = {}
     for product in products:
         product_id = product.get("product_id") if isinstance(product, dict) else None
