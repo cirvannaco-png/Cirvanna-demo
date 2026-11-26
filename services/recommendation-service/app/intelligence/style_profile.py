@@ -23,7 +23,8 @@ def compose_style_profile(preferences: dict[str, Any], look: dict[str, Any]) -> 
     """Return independent style axes; never infer an omitted dimension."""
     cultural = _values(preferences.get("cultural_contexts"))
     aesthetics = _values(preferences.get("aesthetics"))
-    occasion = look.get("occasion") if isinstance(look.get("occasion"), str) else None
+    current_occasion = look.get("occasion") if isinstance(look.get("occasion"), str) else None
+    preferred_occasions = _values(preferences.get("occasion_preferences"))
     personal = {
         "favourite_colours": _values(preferences.get("favorite_colors")),
         "excluded_colours": _values(preferences.get("avoid_colors")),
@@ -40,7 +41,7 @@ def compose_style_profile(preferences: dict[str, Any], look: dict[str, Any]) -> 
     dimensions = {
         "cultural_expression": {"status": "selected" if cultural else "not_selected", "values": cultural},
         "personal_aesthetic": {"status": "selected" if aesthetics else "not_selected", "values": aesthetics},
-        "occasion": {"status": "selected" if occasion else "not_selected", "value": occasion},
+        "occasion": {"status": "selected" if current_occasion or preferred_occasions else "not_selected", "current": current_occasion, "preferred": preferred_occasions},
         "personal_preferences": {
             "status": "selected" if any(personal.values()) else "not_selected",
             **personal,
