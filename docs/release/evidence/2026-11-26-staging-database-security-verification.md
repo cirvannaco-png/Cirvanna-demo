@@ -71,6 +71,27 @@ Outstanding:
 - Real service credential delivery, application-level negative-access tests, and deployed identity/session lifecycle tests remain unproven.
 - RLS is enabled but `FORCE ROW LEVEL SECURITY` is false; owner/bypass-role behavior still requires an explicit service-role access test.
 
+
+
+## Durable CAL decision-receipt store
+
+A separate database `cirvanna_decision_receipts` was created in the same Cirvanna-only Neon project. It contains the exact table contract from `services/decision-service/migrations/0001_catacaci_decision_receipts.sql`:
+
+- `decision_private.catacaci_decision_receipts`
+- Unique request/candidate constraint
+- Verdict and `may_display` consistency constraint
+- Policy, contract, signal, reason and candidate snapshot digest fields
+- Candidate/verdict time indexes
+
+The dedicated runtime principal is `cirvanna_decision_receipts_runtime`. Database privilege checks confirmed:
+- schema USAGE: allowed; schema CREATE: denied
+- table SELECT/INSERT: allowed
+- table UPDATE/DELETE/TRUNCATE: denied
+
+A rollback-only probe inserted a receipt-shaped test row, read it back, then attempted UPDATE, DELETE and TRUNCATE. All mutation attempts were denied. The probe rolled back and the follow-up count was zero.
+
+**Not yet complete:** `DECISION_AUDIT_DATABASE_URL` has not been bound to a deployed Decision Gateway or Decision Service. The code-level `persist_decision_receipt` integration, duplicate-request hash replay, and production readiness probe have not been exercised against this database. The previous empty `cirvanna_decision_audit` database remains unused.
+
 ## Known deployment and provider blockers
 
 - Render private Catalog service blueprint planning returns `need_payment_info`. No public/free Catalog endpoint was created because the service is internal and exposing it publicly would create an avoidable CAL bypass surface.
