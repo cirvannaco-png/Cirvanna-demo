@@ -1027,11 +1027,16 @@ def _load_persisted_npl_preferences(
 
 
 def _cultural_identity_enforcement_required() -> bool:
-    environment = os.getenv(
-        "CIRVANNA_ENVIRONMENT", os.getenv("COMMERCE_ENVIRONMENT", "development")
+    """Return whether the opt-in declaration feature is enabled for this deployment.
+
+    Production alone must not impose cultural policy on shoppers. The feature is
+    enabled explicitly by deployment configuration; within the enabled feature,
+    only active declarations belonging to the verified shopper are enforced.
+    """
+    configured = os.getenv(
+        "CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "false"
     ).strip().lower()
-    configured = os.getenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "false").strip().lower()
-    return environment == "production" or configured == "true"
+    return configured == "true"
 
 
 def _load_persisted_cultural_requirements(
