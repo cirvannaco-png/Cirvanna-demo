@@ -9,6 +9,7 @@ on:
       - "integration/**"
     paths:
       - "services/api-gateway/**"
+      - "packages/http_observability/**"
       - "services/recommendation-service/**"
       - "services/identity-learning-service/**"
       - "services/virtual-try-on/**"
@@ -17,9 +18,9 @@ on:
       - "packages/fit-intelligence/**"
       - ".github/workflows/decision-gateway.yml"
   pull_request:
-    branches: [main]
     paths:
       - "services/api-gateway/**"
+      - "packages/http_observability/**"
       - "services/recommendation-service/**"
       - "services/identity-learning-service/**"
       - "packages/identity-intelligence/**"
