@@ -6,7 +6,7 @@
 
 Click It is a separate product surface from PNELLY Look It. It must not perform face recognition, identity search, face embeddings, naming, age estimation, identity matching or behavioral profiling. The only permitted face operation is locating regions for conservative masking.
 
-Look It remains a separate consent and retrieval workflow. Its Vision route now reuses the face-detection-only masking primitive before quality analysis, image embedding and optional outfit decomposition. This shared privacy primitive does not merge the products, scopes or enablement decisions. The real detector artifact, deployed runtime, false-negative evaluation and independent privacy assessment remain release blockers for both image workflows.
+Look It remains a separate consent and retrieval workflow. Its BFF creates short-lived image_processing + look_it consent receipts plus a declaration-specific receipt; the PNELLY boundary re-verifies all three scopes. Only no_people and adults_only declarations are accepted; missing declarations and minor-containing images are rejected. For adults_only, a zero-face detector result fails closed. Its Vision route reuses the face-detection-only masking primitive before quality analysis, image embedding and optional outfit decomposition. This shared privacy primitive does not merge the products, scopes or enablement decisions. The real detector artifact, deployed runtime, false-negative evaluation and independent privacy assessment remain release blockers for both image workflows.
 
 The current code establishes useful fail-closed boundaries:
 
