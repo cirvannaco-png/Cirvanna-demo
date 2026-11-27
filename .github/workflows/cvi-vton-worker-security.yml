@@ -1,0 +1,48 @@
+name: CVI Try-On GPU worker security contracts
+
+on:
+  pull_request:
+    paths:
+      - "services/virtual-try-on/cvi-worker/**"
+      - "tools/model_training/virtual_try_on/model.py"
+      - ".github/workflows/cvi-vton-worker-security.yml"
+  push:
+    branches: [main, "feat/vton-warp-refine-training-2026-11-27"]
+    paths:
+      - "services/virtual-try-on/cvi-worker/**"
+      - "tools/model_training/virtual_try_on/model.py"
+      - ".github/workflows/cvi-vton-worker-security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  worker-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install worker security test dependencies
+        run: python -m pip install --upgrade pip -r services/virtual-try-on/cvi-worker/requirements-test.txt pyyaml
+      - name: Compile worker and artifact tooling
+        run: python -m compileall -q services/virtual-try-on/cvi-worker
+      - name: Run signed-artifact, privacy, auth and deletion tests
+        env:
+          PYTHONPATH: services/virtual-try-on/cvi-worker
+        run: python -m pytest -q services/virtual-try-on/cvi-worker/tests
+      - name: Validate deployment manifest syntax
+        run: |
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          docs=list(yaml.safe_load_all(Path("services/virtual-try-on/cvi-worker/deploy/gpu-worker.yaml").read_text()))
+          assert len(docs)==3
+          assert docs[0]["kind"]=="Deployment"
+          assert docs[1]["spec"]["type"]=="ClusterIP"
+          assert docs[2]["kind"]=="NetworkPolicy"
+          PY
+      - name: Verify artifact-manifest CLI
+        run: python services/virtual-try-on/cvi-worker/scripts/build_artifact_manifest.py --help
