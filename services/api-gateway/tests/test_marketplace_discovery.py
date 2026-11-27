@@ -580,8 +580,9 @@ def test_inactive_or_foreign_market_preferences_are_not_used():
     assert main._profile_market_country_code(profile) is None
 
 
-def test_cultural_identity_provider_is_mandatory_in_production(monkeypatch):
+def test_cultural_identity_provider_is_required_only_when_opt_in_feature_is_enabled(monkeypatch):
     monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "true")
     monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_URL", raising=False)
     monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("CULTURAL_IDENTITY_HMAC_SECRET", raising=False)
@@ -595,9 +596,9 @@ def test_cultural_identity_provider_is_mandatory_in_production(monkeypatch):
     assert error.value.detail["code"] == "CULTURAL_IDENTITY_PROVIDER_REQUIRED"
 
 
-def test_cultural_identity_provider_remains_optional_in_local_development(monkeypatch):
-    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
-    monkeypatch.delenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", raising=False)
+def test_undeclared_shopper_in_production_has_no_cultural_restrictions_when_feature_is_not_enabled(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "false")
     monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_URL", raising=False)
     monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("CULTURAL_IDENTITY_HMAC_SECRET", raising=False)
