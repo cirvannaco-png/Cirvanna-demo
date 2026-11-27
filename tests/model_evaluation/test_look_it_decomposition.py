@@ -13,6 +13,18 @@ class LookItDecompositionEvaluationTests(unittest.TestCase):
         self.assertEqual(result["overall"]["tp"],1); self.assertEqual(result["overall"]["fp"],1); self.assertEqual(result["overall"]["fn"],1)
         self.assertEqual(result["per_category"]["upper_body"]["f1"],1.0)
         self.assertEqual(result["exact_component_count_accuracy"],1.0)
+    def test_matching_maximizes_cardinality_before_iou(self):
+        gt = [
+            {"component_id":"g1","category":"upper_body","bbox":[0.0,0.0,0.8,0.8]},
+            {"component_id":"g2","category":"upper_body","bbox":[0.0,0.0,0.5,0.5]},
+        ]
+        pred = [
+            {"component_id":"p1","category":"upper_body","bbox":[0.0,0.0,0.8,0.8]},
+            {"component_id":"p2","category":"upper_body","bbox":[0.2,0.2,1.0,1.0]},
+        ]
+        from tools.model_evaluation.look_it_decomposition.evaluate import match_components
+        self.assertEqual(len(match_components(gt, pred, 0.2)), 2)
+
     def test_rejects_duplicate_sample_and_invalid_box(self):
         row=self.row(); row["predicted_components"][0]["bbox"]=[-0.1,0.1,0.6,0.6]
         with self.assertRaisesRegex(ValueError,"normalized"): validate_record(row,1)
