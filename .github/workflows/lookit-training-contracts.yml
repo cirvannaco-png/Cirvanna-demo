@@ -1,0 +1,49 @@
+name: Look It training data contracts
+
+on:
+  pull_request:
+    paths:
+      - "tools/model_training/look_it/**"
+      - "tools/model_evaluation/look_it_decomposition/**"
+      - "tools/model_evaluation/fashion_retrieval/data_rights.py"
+      - "tests/model_training/**"
+      - "tests/model_evaluation/test_look_it_decomposition.py"
+      - "tests/model_evaluation/test_data_rights.py"
+      - ".github/workflows/lookit-training-contracts.yml"
+  push:
+    branches: [main, "feat/cvi-foundation-2026-11-27"]
+    paths:
+      - "tools/model_training/look_it/**"
+      - "tools/model_evaluation/look_it_decomposition/**"
+      - "tools/model_evaluation/fashion_retrieval/data_rights.py"
+      - "tests/model_training/**"
+      - "tests/model_evaluation/test_look_it_decomposition.py"
+      - "tests/model_evaluation/test_data_rights.py"
+      - ".github/workflows/lookit-training-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dataset-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install contract test dependencies
+        run: python -m pip install --upgrade pip pytest pillow
+      - name: Compile the training and evaluation tools
+        run: |
+          python -m compileall -q tools/model_training/look_it
+          python -m compileall -q tools/model_evaluation/look_it_decomposition
+      - name: Run rights, dataset and component evaluation tests
+        run: |
+          python -m pytest -q \
+            tests/model_training \
+            tests/model_evaluation/test_look_it_decomposition.py \
+            tests/model_evaluation/test_data_rights.py
+      - name: Verify training CLI is import-safe without model weights
+        run: python tools/model_training/look_it/train_detector.py --help
