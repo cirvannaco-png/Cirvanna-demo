@@ -85,6 +85,10 @@ def main()->int:
         train_targets.append([float(row["measurements_mm"][name]) for name in MEASUREMENTS])
     train_features=np.asarray(train_features); train_targets=np.asarray(train_targets)
     calibration=ridge_fit(train_features,train_targets,args.ridge_alpha)
+    coefficient_std=np.std(train_features[:,1:],axis=0)
+    coefficient_std=np.maximum(coefficient_std,1e-6)
+    manifest_value=json.loads(args.manifest.read_text(encoding="utf-8"))
+    landmark_vertex_indices=manifest_value["landmark_vertex_indices"]
     def evaluate_split(split_rows):
         errors=[]; actual=[]; predicted=[]
         for row in split_rows:
@@ -109,7 +113,7 @@ def main()->int:
     temp=Path(temp_name)
     try:
         with os.fdopen(fd,"wb") as stream:
-            np.savez_compressed(stream,mean_vertices=mean,shape_basis=basis,explained_variance_ratio=explained,faces=train_faces[0],measurement_calibration=calibration,measurement_names=np.asarray(MEASUREMENTS))
+            np.savez_compressed(stream,mean_vertices=mean,shape_basis=basis,explained_variance_ratio=explained,coefficient_std=coefficient_std,faces=train_faces[0],measurement_calibration=calibration,measurement_names=np.asarray(MEASUREMENTS),landmark_names=np.asarray(list(landmark_vertex_indices)),landmark_vertex_indices=np.asarray(list(landmark_vertex_indices.values()),dtype=np.int64))
             stream.flush(); os.fsync(stream.fileno())
         os.link(temp,artifact); temp.unlink()
         if os.name=="posix": os.chmod(artifact,0o600)
