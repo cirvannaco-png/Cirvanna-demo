@@ -703,50 +703,73 @@ async def look_it_image_search(
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
 
-    decoded = _decode_image(data, content_type)
-    quality = evaluate_image_quality(decoded)
-    if not quality["passed"]:
+    privacy_ready, privacy_reason = detector_configuration()
+    if not privacy_ready:
         raise HTTPException(
-            422,
-            detail={
-                "code": "IMAGE_QUALITY_REJECTED",
-                "quality": quality,
-                "message": "Retake the reference with better light, focus and framing.",
-            },
+            503,
+            detail={"code": "LOOK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
         )
 
-    offers, truncated = await _live_offers()
-    if category and category.strip():
-        selected = category.strip().casefold()
-        offers = [
-            item for item in offers
-            if str(item.get("category", "")).casefold() == selected
-            or str((item.get("product") or {}).get("category", "")).casefold() == selected
-        ]
-    image_vector = _image_embedding(decoded)
-    ranked = _rank_offers(image_vector, offers, limit)
-    decomposition = await _decompose_outfit(decoded)
-    decomposition = await _component_match_counts(decomposition, offers, limit)
+    decoded = _decode_image(data, content_type)
+    del data  # Drop the upload byte buffer once the bounded image is decoded.
+    # Look It remains a distinct consent and retrieval workflow, but faces are
+    # anonymized before quality scoring, image embedding, or external decomposition.
+    try:
+        privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    finally:
+        decoded.close()  # Never retain the unmasked decoded image past masking.
+    try:
+        quality = evaluate_image_quality(privacy_safe_image)
+        if not quality["passed"]:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "IMAGE_QUALITY_REJECTED",
+                    "quality": quality,
+                    "message": "Retake the reference with better light, focus and framing.",
+                },
+            )
 
-    # Candidate records and merchant prices do not leave Vision Intelligence.
-    # CAL and Commerce own the later display and landed-cost comparison boundary.
-    return {
-        "status": "complete",
-        "search_mode": "look_it_image_to_catalog_text_similarity",
-        "candidate_count": len(ranked),
-        "catalog_offer_count": len(offers),
-        "catalog_truncated": truncated,
-        "image_quality": quality,
-        "image_persisted": False,
-        "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
-        "scores_are_probabilities": False,
-        "outfit_decomposition": decomposition,
-        "merchant_comparison": {
-            "status": "pending_cal",
-            "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
-            "landed_cost_included": False,
-        },
-    }
+        offers, truncated = await _live_offers()
+        if category and category.strip():
+            selected = category.strip().casefold()
+            offers = [
+                item for item in offers
+                if str(item.get("category", "")).casefold() == selected
+                or str((item.get("product") or {}).get("category", "")).casefold() == selected
+            ]
+        image_vector = _image_embedding(privacy_safe_image)
+        ranked = _rank_offers(image_vector, offers, limit)
+        decomposition = await _decompose_outfit(privacy_safe_image)
+        decomposition = await _component_match_counts(decomposition, offers, limit)
+
+        # Candidate records and merchant prices do not leave Vision Intelligence.
+        # CAL and Commerce own the later display and landed-cost comparison boundary.
+        return {
+            "status": "complete",
+            "search_mode": "look_it_image_to_catalog_text_similarity",
+            "candidate_count": len(ranked),
+            "catalog_offer_count": len(offers),
+            "catalog_truncated": truncated,
+            "image_quality": quality,
+            "privacy": {
+                "face_detection": "completed",
+                "faces_masked": faces_masked,
+                "face_recognition": False,
+                "original_image_persisted": False,
+            },
+            "image_persisted": False,
+            "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
+            "scores_are_probabilities": False,
+            "outfit_decomposition": decomposition,
+            "merchant_comparison": {
+                "status": "pending_cal",
+                "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
+                "landed_cost_included": False,
+            },
+        }
+    finally:
+        privacy_safe_image.close()  # Release masked pixels on success and every failure path.
 
 
 @app.post("/v1/click-it/scan", dependencies=[Depends(require_worker_auth)], tags=["click-it"])
