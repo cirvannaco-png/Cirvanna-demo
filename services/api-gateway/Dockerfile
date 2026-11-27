@@ -15,6 +15,7 @@ COPY services/api-gateway /app/services/api-gateway
 COPY packages/identity-intelligence /app/packages/identity-intelligence
 COPY packages/preferences /app/packages/preferences
 COPY packages/fit-intelligence /app/packages/fit-intelligence
+COPY packages/http_observability /app/packages/http_observability
 
 RUN useradd --system --uid 10001 --create-home cirvanna \
     && mkdir -p /data \

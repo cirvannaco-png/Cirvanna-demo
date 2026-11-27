@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 ROOT = Path(__file__).resolve().parents[3]
 for package_path in (
+    ROOT / "packages",
     ROOT / "packages" / "identity-intelligence",
     ROOT / "packages" / "preferences",
     ROOT / "packages" / "fit-intelligence",
@@ -35,6 +37,7 @@ for package_path in (
     if resolved not in sys.path:
         sys.path.insert(0, resolved)
 
+from http_observability.observability import install_observability  # noqa: E402
 from catacaci import DecisionSignal, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from cultural_identity import (  # noqa: E402
@@ -1599,6 +1602,20 @@ def _verified_actor_from_header(end_user_authorization: str | None) -> str:
 
 
 
+def _timed_discovery_get(client: httpx.Client, dependency: str, url: str, **kwargs: Any) -> httpx.Response:
+    """Measure an allowlisted discovery dependency without recording request data."""
+    started = time.perf_counter()
+    status_code = 0
+    try:
+        response = client.get(url, **kwargs)
+        status_code = response.status_code
+        return response
+    finally:
+        metrics = getattr(getattr(app, "state", None), "request_metrics", None)
+        if metrics is not None:
+            metrics.record_dependency(dependency, "GET", status_code, max(0.0, time.perf_counter() - started))
+
+
 def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Join canonical active Catalog products to currently purchasable Commerce offers."""
     catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
@@ -1616,48 +1633,61 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
         params["category"] = payload.category
     catalog_items: list[dict[str, Any]] = []
     offer_items: list[dict[str, Any]] = []
+    offer_params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
+    if payload.query:
+        offer_params["q"] = payload.query
+    if payload.category:
+        offer_params["category"] = payload.category
+    if payload.currency:
+        offer_params["currency"] = payload.currency.upper()
+    if payload.market_country_code:
+        offer_params["market_country_code"] = payload.market_country_code.upper()
+    if payload.display_currency:
+        offer_params["display_currency"] = payload.display_currency.upper()
+    if payload.destination_key:
+        offer_params["destination_key"] = payload.destination_key
+        offer_params["radius_km"] = payload.radius_km
+    if payload.fulfillment_mode:
+        offer_params["fulfillment_mode"] = payload.fulfillment_mode
     try:
         with httpx.Client(timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
-            catalog_response = client.get(
-                catalog_base + "/products",
-                params=params,
-                headers={"Authorization": "Bearer " + catalog_token, "Accept": "application/json"},
-            )
+            # Catalog facts and Commerce offers are independent reads. Fetch both
+            # concurrently so request latency is bounded by the slower upstream
+            # rather than the sum of their network round trips. Both responses are
+            # still mandatory; the canonical join and CAL gates below are unchanged.
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                catalog_future = executor.submit(
+                    _timed_discovery_get,
+                    client,
+                    "catalog",
+                    catalog_base + "/products",
+                    params=params,
+                    headers={"Authorization": "Bearer " + catalog_token, "Accept": "application/json"},
+                )
+                offers_future = executor.submit(
+                    _timed_discovery_get,
+                    client,
+                    "commerce",
+                    commerce_base + "/marketplace/offers",
+                    params=offer_params,
+                    headers={
+                        "X-Commerce-Marketplace-Read-Token": commerce_read_token,
+                        "Accept": "application/json",
+                    },
+                )
+                catalog_response = catalog_future.result()
+                offer_response = offers_future.result()
             if catalog_response.status_code != 200:
                 raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_UNAVAILABLE"})
+            if offer_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
             catalog_payload = catalog_response.json()
             if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("items"), list):
                 raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_RESPONSE_INVALID"})
-            catalog_items = [x for x in catalog_payload["items"] if isinstance(x, dict) and x.get("status") == "active" and isinstance(x.get("product_id"), str)]
-            offer_params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
-            if payload.query:
-                offer_params["q"] = payload.query
-            if payload.category:
-                offer_params["category"] = payload.category
-            if payload.currency:
-                offer_params["currency"] = payload.currency.upper()
-            if payload.market_country_code:
-                offer_params["market_country_code"] = payload.market_country_code.upper()
-            if payload.display_currency:
-                offer_params["display_currency"] = payload.display_currency.upper()
-            if payload.destination_key:
-                offer_params["destination_key"] = payload.destination_key
-                offer_params["radius_km"] = payload.radius_km
-            if payload.fulfillment_mode:
-                offer_params["fulfillment_mode"] = payload.fulfillment_mode
-            offer_response = client.get(
-                commerce_base + "/marketplace/offers",
-                params=offer_params,
-                headers={
-                    "X-Commerce-Marketplace-Read-Token": commerce_read_token,
-                    "Accept": "application/json",
-                },
-            )
-            if offer_response.status_code != 200:
-                raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
             offer_payload = offer_response.json()
             if not isinstance(offer_payload, dict) or not isinstance(offer_payload.get("items"), list):
                 raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_RESPONSE_INVALID"})
+            catalog_items = [x for x in catalog_payload["items"] if isinstance(x, dict) and x.get("status") == "active" and isinstance(x.get("product_id"), str)]
             offer_items = [x for x in offer_payload["items"] if isinstance(x, dict)]
     except HTTPException:
         raise
@@ -1942,6 +1972,8 @@ app = FastAPI(
         "domain composition are implemented; unavailable safety and fit providers fail closed."
     ),
 )
+
+install_observability(app, SERVICE_NAME, dependency_names=("catalog", "commerce"))
 
 
 @app.middleware("http")
