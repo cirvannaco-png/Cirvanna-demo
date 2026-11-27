@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Train Cirvanna's garment-conditioned warp-and-refine Virtual Try-On candidate."""
 from __future__ import annotations
-import argparse, hashlib, io, json, os, random, subprocess, sys, tempfile
+import argparse, hashlib, io, json, os, random, sys, tempfile
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -10,6 +10,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT))
 from tools.model_training.virtual_try_on.validate_dataset import validate_dataset,safe_path
 from tools.model_training.virtual_try_on.model import build_model,try_on_loss
+from tools.model_training.provenance import require_clean_source_revision
 from tools.model_evaluation.fashion_retrieval.private_artifacts import write_private_text
 
 def save_private_checkpoint(path:Path,torch,model,metadata):
@@ -48,6 +49,7 @@ def main()->int:
         raise ValueError("invalid training hyperparameters")
     if not 0<args.learning_rate<1 or not 0.1<=args.max_gpu_memory_fraction<=0.95:
         raise ValueError("invalid optimizer or GPU resource configuration")
+    source_revision=require_clean_source_revision(ROOT)
     dataset=validate_dataset(args.manifest,args.annotations,args.media_root,args.person_rights_manifest,args.garment_rights_manifest)
     try:
         import torch
@@ -152,12 +154,10 @@ def main()->int:
     checkpoint=args.output_dir/"cvi-tryon-warp-net-state.pt"
     save_private_checkpoint(checkpoint,torch,model,{"seed":args.seed,"base_channels":args.base_channels,"architecture":"cvi-garment-conditioned-warp-refine-unet-v0"})
     checkpoint_digest=hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-    try: revision=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
-    except Exception: revision="unknown"
     report={
         "schema_version":"1.0","model_id":"cirvanna-tryon-warp-refine-v0",
         "architecture":"custom-unet-flow-warp-alpha-residual","initialization":"random",
-        "source_revision":revision,"checkpoint_sha256":checkpoint_digest,"dataset":dataset,
+        "source_revision":source_revision,"checkpoint_sha256":checkpoint_digest,"dataset":dataset,
         "training":{"epochs":args.epochs,"batch_size":args.batch_size,"learning_rate":args.learning_rate,"base_channels":args.base_channels,"seed":args.seed,"device":args.device,"max_gpu_memory_fraction":args.max_gpu_memory_fraction},
         "runtime":{"python":sys.version.split()[0],"torch":torch.__version__,"cuda_runtime":torch.version.cuda,"cuda_available":torch.cuda.is_available(),"gpu_name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,"gpu_total_memory_bytes":torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else None,"peak_gpu_memory_allocated_bytes":peak_gpu_allocated,"peak_gpu_memory_reserved_bytes":peak_gpu_reserved},
         "history":history,"held_out_test":test_metrics,"status":"research_candidate_not_qualified",
