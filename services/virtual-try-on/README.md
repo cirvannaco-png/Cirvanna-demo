@@ -56,3 +56,7 @@ The orchestration API now accepts and forwards only `garment_photo_type="flat-la
 ### Supported inference mode
 
 The orchestration API and worker advertise `supported_garment_photo_types=["flat-lay"]`. The API rejects `model` garment photos. The worker forces `segmentation_free=True` and `garment_photo_type="flat-lay"` server-side, so client input cannot switch the pipeline into parser-dependent masking. CI uses mock inference and does not establish visual quality or a live GPU deployment.
+
+## Dependency readiness semantics
+
+The orchestration service's `GET /ready` and `GET /capabilities` do not treat a syntactically valid URL/token pair as a live dependency. They make bounded HTTPS readiness probes to the Consent, Asset Service and Twin Registry providers, require an authenticated HTTP 200 response with `ready=true`, and probe the pinned GPU worker's own readiness endpoint. A configured-but-unreachable, unauthorized, malformed or non-ready upstream keeps the orchestrator unavailable. These probes establish service readiness only; they do not certify rendering quality, fit accuracy, provider rights or production acceptance.
