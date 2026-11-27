@@ -1600,6 +1600,15 @@ def _verified_actor_from_header(end_user_authorization: str | None) -> str:
 
 
 
+def _timed_discovery_get(client, dependency: str, url: str, params: dict[str, Any], headers: dict[str, str]):
+    started = time.perf_counter()
+    try:
+        return client.get(url, params=params, headers=headers)
+    finally:
+        metrics = getattr(app.state, "request_metrics", None)
+        if metrics is not None:
+            metrics.record_dependency(dependency, time.perf_counter() - started)
+
 def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Join canonical active Catalog products to current offers with parallel upstream reads."""
     catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
@@ -1645,13 +1654,17 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
         ) as client:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 catalog_future = executor.submit(
-                    client.get,
+                    _timed_discovery_get,
+                    client,
+                    "catalog",
                     catalog_base + "/products",
                     params=catalog_params,
                     headers={"Authorization": "Bearer " + catalog_token, "Accept": "application/json"},
                 )
                 offers_future = executor.submit(
-                    client.get,
+                    _timed_discovery_get,
+                    client,
+                    "commerce",
                     commerce_base + "/marketplace/offers",
                     params=offer_params,
                     headers={
