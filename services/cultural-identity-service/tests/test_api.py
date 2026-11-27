@@ -93,3 +93,16 @@ def test_sqlite_is_rejected_without_test_opt_in(client,monkeypatch):
     response=client.get("/ready")
     assert response.status_code==503
     assert response.json()["detail"]["ready"] is False
+
+
+def test_shopper_without_cultural_declaration_receives_no_restrictions(client):
+    body={"request_id":"req-no-culture","user_id":"user-without-declaration","candidate_id":"product-unrestricted","candidate_attributes":["sleeveless","short-hemline"],"candidate_attributes_complete":True}
+    response=client.post("/v1/evaluate",headers=auth(),json=body)
+    assert response.status_code==200,response.text
+    data=response.json()
+    assert data["verdict"]=="pass"
+    assert data["hard_conflict_ids"]==[]
+    assert data["cultural_requirements"]==[]
+    canonical=canonical_cultural_evidence_payload(body["request_id"],body["user_id"],body["candidate_id"],body["candidate_attributes"],body["candidate_attributes_complete"],[])
+    expected=hmac.new(SECRET.encode(),canonical,hashlib.sha256).hexdigest()
+    assert hmac.compare_digest(expected,data["cultural_evidence_signature"])
