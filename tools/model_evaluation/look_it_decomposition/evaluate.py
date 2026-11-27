@@ -2,6 +2,7 @@
 """Rights-gated, offline evaluation of Look It outfit-component localization."""
 from __future__ import annotations
 import argparse, hashlib, json, math, sys
+from functools import lru_cache
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -60,19 +61,28 @@ def box_iou(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return intersection / union if union > 0 else 0.0
 
 def match_components(gt: list[dict[str, Any]], pred: list[dict[str, Any]], threshold: float) -> list[tuple[int, int, float]]:
-    pairs = []
-    for gi, g in enumerate(gt):
-        for pi, p in enumerate(pred):
-            if g["category"] == p["category"]:
-                overlap = box_iou(g["bbox"], p["bbox"])
-                if overlap >= threshold:
-                    pairs.append((overlap, gi, pi))
-    pairs.sort(reverse=True)
-    used_gt, used_pred, matches = set(), set(), []
-    for overlap, gi, pi in pairs:
-        if gi not in used_gt and pi not in used_pred:
-            used_gt.add(gi); used_pred.add(pi); matches.append((gi, pi, overlap))
-    return matches
+    # Exact maximum-cardinality matching, then maximum total IoU. With at most
+    # 12 components per image, bitmask dynamic programming is bounded and avoids
+    # greedy assignment undercounting when garments overlap.
+    @lru_cache(maxsize=None)
+    def solve(gt_index: int, used_pred_mask: int):
+        if gt_index >= len(gt):
+            return (0, 0.0, ())
+        best = solve(gt_index + 1, used_pred_mask)
+        category = gt[gt_index]["category"]
+        for pred_index, candidate in enumerate(pred):
+            bit = 1 << pred_index
+            if used_pred_mask & bit or candidate["category"] != category:
+                continue
+            overlap = box_iou(gt[gt_index]["bbox"], candidate["bbox"])
+            if overlap < threshold:
+                continue
+            count, total_iou, pairs = solve(gt_index + 1, used_pred_mask | bit)
+            proposed = (count + 1, total_iou + overlap, ((gt_index, pred_index, overlap),) + pairs)
+            if proposed[0] > best[0] or (proposed[0] == best[0] and proposed[1] > best[1]):
+                best = proposed
+        return best
+    return list(solve(0, 0)[2])
 
 def _prf(tp: int, fp: int, fn: int) -> dict[str, float | int]:
     precision = tp/(tp+fp) if tp+fp else 0.0
