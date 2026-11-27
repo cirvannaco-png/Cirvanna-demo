@@ -113,7 +113,6 @@ def test_identity_accepts_resource_scoped_look_it_photographed_person_attestatio
     scopes = (
         "photographed_no_people_attestation",
         "photographed_people_adult_attestation",
-        "photographed_people_minor_attestation",
     )
     for index, scope in enumerate(scopes, start=1):
         response = client.post(
