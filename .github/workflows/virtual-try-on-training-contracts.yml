@@ -6,6 +6,8 @@ on:
       - "tools/model_training/virtual_try_on/**"
       - "tools/model_evaluation/fashion_retrieval/data_rights.py"
       - "tests/model_training/test_virtual_try_on_dataset.py"
+      - "tests/model_training/test_training_provenance.py"
+      - "tools/model_training/provenance.py"
       - ".github/workflows/virtual-try-on-training-contracts.yml"
   push:
     branches: [main, "feat/cvi-foundation-2026-11-27"]
@@ -13,6 +15,8 @@ on:
       - "tools/model_training/virtual_try_on/**"
       - "tools/model_evaluation/fashion_retrieval/data_rights.py"
       - "tests/model_training/test_virtual_try_on_dataset.py"
+      - "tests/model_training/test_training_provenance.py"
+      - "tools/model_training/provenance.py"
       - ".github/workflows/virtual-try-on-training-contracts.yml"
 
 permissions:
@@ -32,6 +36,7 @@ jobs:
       - name: Compile Try-On training code
         run: python -m compileall -q tools/model_training/virtual_try_on
       - name: Run rights and paired-dataset tests
-        run: python -m pytest -q tests/model_training/test_virtual_try_on_dataset.py
+        run: python -m pytest -q tests/model_training/test_virtual_try_on_dataset.py tests/model_training/test_training_provenance.py
       - name: Verify trainer CLI without loading model weights
         run: python tools/model_training/virtual_try_on/train_warp_net.py --help
+
