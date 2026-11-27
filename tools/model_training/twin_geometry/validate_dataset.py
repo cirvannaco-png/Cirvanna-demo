@@ -99,8 +99,13 @@ def validate_dataset(manifest_path:Path,annotations_path:Path,mesh_root:Path,rig
         raise ValueError("dataset must use canonical millimetre, y-up coordinate frame")
     alignment=manifest.get("alignment_protocol_id")
     measurement_protocol=manifest.get("measurement_protocol_id")
+    landmark_vertex_indices=manifest.get("landmark_vertex_indices")
     if not isinstance(alignment,str) or not alignment.strip() or not isinstance(measurement_protocol,str) or not measurement_protocol.strip():
         raise ValueError("alignment and measurement protocol IDs are required")
+    if not isinstance(landmark_vertex_indices,dict) or set(landmark_vertex_indices)!=REQUIRED_LANDMARKS:
+        raise ValueError("manifest must map every required anatomical landmark to a template vertex index")
+    if any(not isinstance(value,int) or value<0 for value in landmark_vertex_indices.values()) or len(set(landmark_vertex_indices.values()))!=len(REQUIRED_LANDMARKS):
+        raise ValueError("landmark vertex indices must be unique non-negative integers")
     raw=annotations_path.read_bytes()
     annotations_digest=hashlib.sha256(raw).hexdigest()
     if manifest.get("annotations_sha256")!=annotations_digest: raise ValueError("annotation file digest mismatch")
@@ -130,6 +135,11 @@ def validate_dataset(manifest_path:Path,annotations_path:Path,mesh_root:Path,rig
         if vertices.ndim!=2 or vertices.shape[1]!=3 or not 4<=len(vertices)<=MAX_VERTICES: raise ValueError("mesh vertices must have shape (N,3) within configured bounds")
         if faces.ndim!=2 or faces.shape[1]!=3 or not 4<=len(faces)<=MAX_FACES: raise ValueError("mesh faces must have shape (M,3) within configured bounds")
         if not np.isfinite(vertices).all() or np.any(np.abs(vertices)>3000): raise ValueError("mesh coordinates must be finite millimetres within bounds")
+        if any(index>=len(vertices) for index in landmark_vertex_indices.values()):
+            raise ValueError("landmark vertex index exceeds mesh vertex count")
+        for name,index in landmark_vertex_indices.items():
+            if np.linalg.norm(vertices[index]-np.asarray(row["landmarks_mm"][name],dtype=np.float64))>40:
+                raise ValueError(f"landmark-to-mesh correspondence exceeds 40mm for {name}")
         if np.any(faces<0) or np.any(faces>=len(vertices)): raise ValueError("mesh face indices are out of bounds")
         if np.any((faces[:,0]==faces[:,1])|(faces[:,1]==faces[:,2])|(faces[:,0]==faces[:,2])): raise ValueError("mesh contains degenerate face indices")
         triangle=vertices[faces]
@@ -152,7 +162,7 @@ def validate_dataset(manifest_path:Path,annotations_path:Path,mesh_root:Path,rig
         "split_counts":{s:sum(r["split"]==s for r in rows) for s in sorted(REQUIRED_SPLITS)},
         "subject_cluster_count":len(clusters),"vertex_count":vertex_count,"face_count":face_count,
         "topology_sha256":topology,"alignment_protocol_id":alignment,
-        "measurement_protocol_id":measurement_protocol,"annotations_sha256":annotations_digest,
+        "measurement_protocol_id":measurement_protocol,"landmark_vertex_indices":landmark_vertex_indices,"annotations_sha256":annotations_digest,
         "split_manifest_sha256":split_digest,"rights_manifest_sha256":rights["manifest_sha256"],
         "rights_evidence_sha256":rights["evidence_sha256"],"status":"validated_for_shape_model_training_only"
     }
