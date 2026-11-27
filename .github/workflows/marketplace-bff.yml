@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "services/marketplace-bff/**"
+      - "packages/http_observability/**"
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/wardrobe.html"
       - "apps/demo-web/test_wardrobe_style_profile.py"
@@ -25,6 +26,7 @@ on:
       - "feature/**"
     paths:
       - "services/marketplace-bff/**"
+      - "packages/http_observability/**"
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/wardrobe.html"
       - "apps/demo-web/assets/appearance-workspace.js"

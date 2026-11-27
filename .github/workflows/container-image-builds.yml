@@ -7,12 +7,14 @@ on:
       - "services/commerce-service/**"
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
+      - "packages/http_observability/**"
       - "services/asset-service/**"
       - "services/appearance-intelligence-service/**"
       - "packages/appearance_intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
       - "services/api-gateway/**"
+      - "packages/http_observability/**"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -21,6 +23,7 @@ on:
       - "services/commerce-service/**"
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
+      - "packages/http_observability/**"
       - "services/asset-service/**"
       - "services/appearance-intelligence-service/**"
       - "packages/appearance_intelligence/**"

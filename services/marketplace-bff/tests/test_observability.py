@@ -48,3 +48,14 @@ def test_metrics_export_only_low_cardinality_route_and_latency_series(monkeypatc
     assert "http_server_request_duration_seconds_bucket" in response.text
     assert 'route="/health"' in response.text
     assert METRICS_TOKEN not in response.text
+
+
+def test_dependency_metrics_reject_unbounded_labels():
+    from app.observability import RequestMetrics
+
+    metrics = RequestMetrics("test-service", dependency_names=("catalog",))
+    metrics.record_dependency("customer-123", "GET", 200, 0.01)
+
+    rendered = metrics.render()
+    assert 'dependency="other"' in rendered
+    assert "customer-123" not in rendered
