@@ -109,6 +109,30 @@ def test_internal_auth_is_required(client):
     ).status_code == 401
 
 
+def test_identity_accepts_resource_scoped_look_it_photographed_person_attestations(client):
+    scopes = (
+        "photographed_no_people_attestation",
+        "photographed_people_adult_attestation",
+        "photographed_people_minor_attestation",
+    )
+    for index, scope in enumerate(scopes, start=1):
+        response = client.post(
+            "/v1/tal/consents",
+            params={"subject_id": "user-verified-1"},
+            headers=auth(),
+            json={
+                "receipt_id": f"look-it-declaration-receipt-{index:02d}",
+                "consent_id": "look-it-consent-bundle-001",
+                "resource_id": "look-it-resource-001",
+                "scope": scope,
+                "consent_version": "pnelly-look-it-2026-11-v1",
+                "granted": True,
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            },
+        )
+        assert response.status_code == 200, response.text
+
+
 def test_readiness_requires_pnelly_context_and_twin_cleanup_schema(client):
     ready = client.get("/ready", headers=auth())
     assert ready.status_code == 200
