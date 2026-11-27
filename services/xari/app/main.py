@@ -131,7 +131,9 @@ def _look_it_consent_config() -> tuple[str, str] | None:
     return raw, token
 
 
-async def _verify_look_it_consent(subject_id: str, consent_id: str, resource_id: str) -> None:
+async def _verify_look_it_consent(
+    subject_id: str, consent_id: str, resource_id: str, declaration_scope: str,
+) -> None:
     config = _look_it_consent_config()
     if config is None:
         raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_PROVIDER_NOT_CONFIGURED"})
@@ -149,7 +151,7 @@ async def _verify_look_it_consent(subject_id: str, consent_id: str, resource_id:
                     "subject_id": subject_id,
                     "consent_id": consent_id,
                     "resource_id": resource_id,
-                    "required_scopes": ["image_processing", "look_it"],
+                    "required_scopes": ["image_processing", "look_it", declaration_scope],
                 },
             )
     except httpx.TimeoutException as exc:
@@ -173,7 +175,7 @@ async def _verify_look_it_consent(subject_id: str, consent_id: str, resource_id:
         and receipt.get("consent_id") == consent_id
         and receipt.get("resource_id") == resource_id
         and isinstance(scopes, list)
-        and {"image_processing", "look_it"}.issubset(set(scopes))
+        and {"image_processing", "look_it", declaration_scope}.issubset(set(scopes))
         and isinstance(receipt.get("consent_version"), str)
         and bool(receipt.get("consent_version"))
     ):
@@ -181,13 +183,19 @@ async def _verify_look_it_consent(subject_id: str, consent_id: str, resource_id:
 
 
 async def _execute_marketplace_image_search(
-    *, data: bytes, filename: str, content_type: str, category: str | None, limit: int,
+    *, data: bytes, filename: str, content_type: str, category: str | None,
+    limit: int, photographed_people_status: str,
 ) -> dict[str, object]:
     config = _marketplace_search_config()
     if config is None:
         raise HTTPException(503, detail={"code": "MARKETPLACE_SEARCH_NOT_CONFIGURED"})
     base, token = config
-    fields = {"consent_image_processing": "true", "consent_look_it": "true", "limit": str(limit)}
+    fields = {
+        "consent_image_processing": "true",
+        "consent_look_it": "true",
+        "photographed_people_status": photographed_people_status,
+        "limit": str(limit),
+    }
     if category and category.strip():
         fields["category"] = category.strip()
     try:
@@ -253,6 +261,7 @@ async def look_it_image_search(
     resource_id: Annotated[str, Form(min_length=3, max_length=160)],
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
+    photographed_people_status: Annotated[str, Form()],
     image: Annotated[UploadFile, File()],
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
@@ -264,12 +273,19 @@ async def look_it_image_search(
             raise HTTPException(422, detail={"code": "INVALID_VERIFIED_SUBJECT"})
         if not consent_image_processing or not consent_look_it:
             raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+        if photographed_people_status not in {"no_people", "adults_only"}:
+            code = "LOOK_IT_MINOR_IMAGES_UNSUPPORTED" if photographed_people_status == "contains_minor" else "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"
+            raise HTTPException(403, detail={"code": code})
+        declaration_scope = {
+            "no_people": "photographed_no_people_attestation",
+            "adults_only": "photographed_people_adult_attestation",
+        }[photographed_people_status]
         content_type = (image.content_type or "").lower()
         if content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
         if image.size is not None and image.size > 10 * 1024 * 1024:
             raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED"})
-        await _verify_look_it_consent(subject, consent_id.strip(), resource_id.strip())
+        await _verify_look_it_consent(subject, consent_id.strip(), resource_id.strip(), declaration_scope)
         data = await image.read(10 * 1024 * 1024 + 1)
         if not data:
             raise HTTPException(400, detail={"code": "EMPTY_LOOK_IT_IMAGE"})
@@ -281,6 +297,7 @@ async def look_it_image_search(
             content_type=content_type,
             category=category,
             limit=limit,
+            photographed_people_status=photographed_people_status,
         )
         decomposition = result["outfit_decomposition"]
         safe_components = []
