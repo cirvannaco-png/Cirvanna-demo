@@ -685,8 +685,8 @@ async def _component_match_counts(
 async def look_it_image_search(
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
-    photographed_people_status: Annotated[str, Form(default="unknown")],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
