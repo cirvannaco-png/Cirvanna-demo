@@ -28,6 +28,16 @@ Cirvanna will own the visual product architecture, data governance, task-specifi
 6. Consent is rechecked before processing and before persistence/display. Revocation blocks new access immediately and propagates deletion to source, derived assets, caches, registries and backups according to the approved retention policy.
 7. Independent validation inspects actual stored output bytes. Provider self-attestation is not a validation receipt.
 
+## Initial Cirvanna-owned model candidates
+
+The first implementation candidates are intentionally trained from random initialization; PyTorch/TorchVision are architecture/runtime libraries, not sources of pretrained weights:
+- **Look It:** Faster R-CNN ResNet-50 FPN detector for outfit-component bounding boxes. Pixel-mask segmentation and attribute recognition remain future work.
+- **Click It:** ResNet-50 image encoder plus Cirvanna projection head, trained with supervised contrastive learning over canonical product variants. The approved catalogue image-to-image benchmark remains the release quality gate.
+- **Virtual Try-On:** custom U-Net garment warp-and-refine network predicting sampling flow, blend alpha and image residual, with garment-region and warped-mask losses. Initial training resolution is 256x256.
+- **Virtual Twin:** registered-scan PCA shape basis, tape-measure ridge calibration and calibrated multi-view landmark/silhouette fitting, with mesh-only GLB export.
+
+These are training and geometry foundations, not trained production models. The current workspace has no approved image/scan corpora, no PyTorch/TorchVision runtime or NVIDIA GPU. Synthetic tests validate contracts and algorithms only. No model quality or production readiness is claimed.
+
 ## Release qualification
 
 The package at packages/cirvanna_visual_intelligence defines the initial fail-closed model/dataset/evaluation evidence contract, including pinned inference resource budgets. A model is not qualified unless the exact capability scope, source revision, weights digest, runtime digest, bounded resource profile, commercial rights evidence, dataset provenance, evaluation report, independent review, privacy review and resource/deletion evidence bind together.
@@ -80,3 +90,4 @@ The first Look It component-localization evaluator now computes category-aware b
 - No claim that generated imagery proves physical fit.
 - No automatic activation based on a mock test, provider demo, model-card license alone or self-reported quality.
 - No paid GPU or external provider provisioning without explicit budget approval.
+
