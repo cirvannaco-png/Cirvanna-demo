@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -82,7 +83,7 @@ app = FastAPI(
     description="Same-origin marketplace, Wardrobe and governed merchant portals with verified account identity and private service proxies.",
 )
 
-install_observability(app, SERVICE)
+install_observability(app, SERVICE, dependency_names=("pnelly",))
 
 app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
@@ -382,11 +383,24 @@ async def _safe_json_post(
             trust_env=False,
             follow_redirects=False,
         ) as client:
-            response = await client.post(
-                base + path,
-                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                json=payload,
-            )
+            started = time.perf_counter()
+            upstream_status = 0
+            try:
+                response = await client.post(
+                    base + path,
+                    headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                    json=payload,
+                )
+                upstream_status = response.status_code
+            finally:
+                metrics = getattr(app.state, "request_metrics", None)
+                if metrics is not None:
+                    metrics.record_dependency(
+                        "pnelly",
+                        "POST",
+                        upstream_status,
+                        max(0.0, time.perf_counter() - started),
+                    )
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "VISION_SEARCH_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
