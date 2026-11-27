@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "cirvanna-twin-geometry-v1",
+  "rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "annotations_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "sample_count": 0,
+  "units": "millimetres",
+  "coordinate_frame": "right_handed_x_right_y_up_z_forward",
+  "alignment_protocol_id": "REQUIRES_REGISTERED_MESH_PROTOCOL",
+  "measurement_protocol_id": "REQUIRES_ANTHROPOMETRIST_PROTOCOL",
+  "template_topology_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "split_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+}
