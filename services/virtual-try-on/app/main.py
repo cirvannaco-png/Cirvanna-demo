@@ -490,9 +490,9 @@ async def ready() -> dict[str, object]:
         database_ready = True
     except Exception:
         pass
-    consent_ready = await _dependency_ready(_trusted_base("CONSENT_API_URL", "CONSENT_API_TOKEN"))
-    asset_ready = await _dependency_ready(_trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN"))
-    twin_ready = await _dependency_ready(_trusted_base("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN"))
+    consent_ready = bool(await _dependency_ready(_trusted_base("CONSENT_API_URL", "CONSENT_API_TOKEN")))
+    asset_ready = bool(await _dependency_ready(_trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")))
+    twin_ready = bool(await _dependency_ready(_trusted_base("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN")))
     worker_ready = await _worker_ready() is not None
     auth_ready = len(os.getenv("VIRTUAL_TRY_ON_API_TOKEN", "").encode()) >= 32
     ready_now = all((database_ready, consent_ready, asset_ready, twin_ready, worker_ready, auth_ready))
@@ -523,9 +523,9 @@ async def capabilities() -> CapabilityResponse:
         database_ready = True
     except Exception:
         pass
-    consent_ready = await _dependency_ready(_trusted_base("CONSENT_API_URL", "CONSENT_API_TOKEN"))
-    asset_ready = await _dependency_ready(_trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN"))
-    twin_ready = await _dependency_ready(_trusted_base("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN"))
+    consent_ready = bool(await _dependency_ready(_trusted_base("CONSENT_API_URL", "CONSENT_API_TOKEN")))
+    asset_ready = bool(await _dependency_ready(_trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")))
+    twin_ready = bool(await _dependency_ready(_trusted_base("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN")))
     renderer_ready = await _worker_ready() is not None
     configured = database_ready and consent_ready and asset_ready and twin_ready and renderer_ready
     return CapabilityResponse(
