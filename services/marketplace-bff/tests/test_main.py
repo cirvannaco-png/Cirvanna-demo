@@ -384,6 +384,13 @@ def test_description_search_forwards_to_legacy_xari_alias_but_suppresses_all_can
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["json"]["query"] == "green linen dress"
     assert "Authorization" not in response.text
+    # The upstream span is bounded to the PNELLY dependency label and records
+    # latency/status only; it never includes the URL, token, query or payload.
+    metrics = main.app.state.request_metrics.render()
+    assert 'dependency="pnelly"' in metrics
+    assert "http_client_request_duration_seconds" in metrics
+    assert "xari.example.test" not in metrics
+    assert "green linen dress" not in metrics
 
 
 def test_click_it_requires_signed_user_token_before_upstream_calls(client, monkeypatch):
