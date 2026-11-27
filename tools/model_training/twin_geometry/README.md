@@ -52,4 +52,12 @@ PCA and measurement regression fit on the train split only. Validation and held-
 - Subgroup-specific confidence intervals and minimum cohort counts must be preregistered before the final test.
 - The shape basis is a research geometry asset. It is not a persistent Twin and must not be used for sizing or fit claims until photo reconstruction, independent anatomical validation, repeated-capture calibration, and privacy/deletion qualification pass.
 
+## Multi-view reconstruction solver
+
+The first inverse-geometry solver is fit_multiview_capture.py. It fits the learned shape coefficients to supplied front/side 2D body landmarks and silhouette bounding boxes using calibrated 3x4 camera projection matrices. The capture protocol must hold a consistent canonical pose and known camera calibration; every view is bound to its image digest and segmentation-mask digest. The solver requires a separate twin_geometry_inference rights manifest with verified subject consent.
+
+    python tools/model_training/twin_geometry/fit_multiview_capture.py       --model /restricted/twin-geometry/run-001/cvi-parametric-body-model.npz       --capture /restricted/twin-geometry/captures/capture-001.json       --rights-manifest /restricted/twin-geometry/captures/consent.manifest.json       --output-dir /restricted/twin-geometry/captures/capture-001-fit
+
+This is a multi-view parametric fitting prototype, not an end-to-end photograph model. It consumes keypoints and silhouette bounds produced by upstream vision components; it does not itself inspect raw pixels, infer pose, segment the person, solve arbitrary pose changes or reconstruct appearance. The silhouette bounding-box constraint is coarse and cannot replace a dense mask/surface objective. The resulting mesh and measurement estimates remain research candidates and are not yet persisted in Twin Registry.
+
 No SMPL, SAM 3D Body or commercial avatar provider is required for this parametric shape-basis track. The model is still dependent on a high-quality, rights-cleared 3D scan cohort and independent measurement expertise.
