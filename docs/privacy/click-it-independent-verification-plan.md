@@ -6,6 +6,8 @@
 
 Click It is a separate product surface from PNELLY Look It. It must not perform face recognition, identity search, face embeddings, naming, age estimation, identity matching or behavioral profiling. The only permitted face operation is locating regions for conservative masking.
 
+Look It remains a separate consent and retrieval workflow. Its Vision route now reuses the face-detection-only masking primitive before quality analysis, image embedding and optional outfit decomposition. This shared privacy primitive does not merge the products, scopes or enablement decisions. The real detector artifact, deployed runtime, false-negative evaluation and independent privacy assessment remain release blockers for both image workflows.
+
 The current code establishes useful fail-closed boundaries:
 
 - Marketplace BFF returns `503 CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED` without reading or parsing the uploaded body.
