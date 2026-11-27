@@ -496,6 +496,80 @@ def test_look_it_requires_both_explicit_consents_before_decoding(client, monkeyp
     assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"
 
 
+def test_look_it_requires_pinned_face_detector_before_decoding(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (False, "missing_detector"))
+    monkeypatch.setattr(
+        main, "_decode_image",
+        lambda *_args: pytest.fail("Look It must not decode when the privacy detector is unavailable"),
+    )
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTOR_NOT_READY"
+
+
+def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkeypatch):
+    events = []
+    decoded = Image.new("RGB", (240, 320), (20, 40, 60))
+    masked = Image.new("RGB", (240, 320), (80, 100, 120))
+
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "_decode_image", lambda *_args: decoded)
+
+    def anonymize(image):
+        events.append("mask")
+        assert image is decoded
+        return masked, 1
+
+    def quality(image):
+        events.append("quality")
+        assert image is masked
+        with pytest.raises(ValueError):
+            decoded.getpixel((0, 0))
+        return {"passed": True, "width": image.width, "height": image.height}
+
+    def embedding(image):
+        events.append("embedding")
+        assert image is masked
+        return [1.0, 0.0]
+
+    async def offers():
+        events.append("catalog")
+        return ([], False)
+
+    async def decomposition(image):
+        events.append("decomposition")
+        assert image is masked
+        return {"status": "unavailable", "reason": "not_configured", "components": []}
+
+    monkeypatch.setattr(main, "anonymize_click_it_image", anonymize)
+    monkeypatch.setattr(main, "evaluate_image_quality", quality)
+    monkeypatch.setattr(main, "_image_embedding", embedding)
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_rank_offers", lambda *_args: [])
+    monkeypatch.setattr(main, "_decompose_outfit", decomposition)
+
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert events == ["mask", "quality", "catalog", "embedding", "decomposition"]
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["privacy"]["faces_masked"] == 1
+    assert response.json()["privacy"]["face_recognition"] is False
+    assert response.json()["image_persisted"] is False
+    with pytest.raises(ValueError):
+        masked.getpixel((0, 0))
+
+
 def test_look_it_returns_only_candidate_counts_and_optional_validated_components(client, monkeypatch):
     async def offers():
         return ([{
