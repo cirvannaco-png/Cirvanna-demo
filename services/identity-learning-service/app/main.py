@@ -492,7 +492,8 @@ class ConsentPut(StrictModel):
         "wardrobe_photo_storage", "pnelly_conversation",
         "facial_geometry_analysis", "body_tone_analysis",
         "appearance_correction", "global_model_training", "appearance_session_storage",
-        "appearance_source_storage",
+        "appearance_source_storage", "photographed_no_people_attestation",
+        "photographed_people_adult_attestation", "photographed_people_minor_attestation",
     ]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
