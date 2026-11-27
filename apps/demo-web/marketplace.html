@@ -324,9 +324,15 @@ footer{
     <section class="ai-panel" aria-labelledby="lookItTitle">
       <div class="eyebrow">PNELLY · Look It</div>
       <h2 id="lookItTitle">Search from an outfit reference</h2>
-      <p>Upload a reference image of an outfit you are authorized to use. Look It is separate from Click It: it searches outfit components, does not identify people, and does not publish the uploaded image. Product, merchant, price and offer details remain withheld until CAL authorizes display.</p>
+      <p>Upload a reference image of an outfit you are authorized to use. Look It is separate from Click It: it searches outfit components, does not identify people, and does not publish the uploaded image. Product, merchant, price and offer details remain withheld until CAL authorizes display. Images containing minors are not supported.</p>
       <div class="ai-controls">
         <input id="lookItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose an outfit reference image">
+        <label class="wide" for="lookItPeopleStatus">Who appears in the reference image?</label>
+        <select id="lookItPeopleStatus" class="wide" required aria-label="Photographed people declaration">
+          <option value="">Choose one declaration</option>
+          <option value="no_people">No people appear in the image</option>
+          <option value="adults_only">One or more adults appear in the image</option>
+        </select>
         <label class="consent-line wide"><input id="lookItImageConsent" type="checkbox" required><span>I consent to ephemeral image processing for this Look It request.</span></label>
         <label class="consent-line wide"><input id="lookItPurposeConsent" type="checkbox" required><span>I separately consent to using this image for PNELLY Look It outfit discovery.</span></label>
         <button class="btn primary wide" id="lookItBtn">Search this outfit with Look It</button>
@@ -903,6 +909,8 @@ footer{
     const image=$("lookItImage").files&&$("lookItImage").files[0];
     if(!image){setAiStatus("lookItStatus","Choose an outfit reference image first.",true);return}
     if(!$("lookItImageConsent").checked||!$("lookItPurposeConsent").checked){setAiStatus("lookItStatus","Both separate Look It consent controls are required.",true);return}
+    const photographedPeopleStatus=$("lookItPeopleStatus").value;
+    if(!["no_people","adults_only"].includes(photographedPeopleStatus)){setAiStatus("lookItStatus","Declare whether the image contains no people or adults only. Images containing minors are not supported.",true);return}
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("lookItStatus","Choose a JPEG, PNG or WebP image.",true);return}
     if(image.size>10*1024*1024){setAiStatus("lookItStatus","The image exceeds the 10 MiB upload limit.",true);return}
     setAiBusy("lookItBtn",true,"Searching…");
@@ -911,6 +919,7 @@ footer{
       const form=new FormData();
       form.append("consent_image_processing","true");
       form.append("consent_look_it","true");
+      form.append("photographed_people_status",photographedPeopleStatus);
       form.append("reference_image",image,image.name||"look-it-reference");
       if($("aiCategory").value)form.append("category",$("aiCategory").value);
       const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
@@ -930,6 +939,7 @@ footer{
       $("lookItImage").value="";
       $("lookItImageConsent").checked=false;
       $("lookItPurposeConsent").checked=false;
+      $("lookItPeopleStatus").value="";
     }catch(e){
       setAiStatus("lookItStatus",(e&&e.message?e.message:"Look It is unavailable")+". The image is not displayed or stored by this page.",true);
     }finally{setAiBusy("lookItBtn",false,"Search this outfit with Look It")}
