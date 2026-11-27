@@ -176,3 +176,58 @@ def test_replace_replays_after_success_without_mutating_profile_again():
     assert replay["status"] == "replayed"
     assert replay["preference_id"] == new_id
     assert len(replay_client.calls) == 2
+
+
+
+def test_pnelly_allowlist_includes_independent_dimensions():
+    from app.pnelly_preferences import PNELLY_STYLE_ATTRIBUTES
+    expected = {
+        "culture:contemporary-african-luxury",
+        "culture:kitenge",
+        "occasion:wedding",
+        "coverage:long-sleeves",
+        "market:KE",
+        "style:classic",
+        "color:jewel-tones",
+    }
+    assert expected.issubset(PNELLY_STYLE_ATTRIBUTES)
+
+
+
+def test_bff_and_usi_pnelly_preference_allowlists_are_identical():
+    from pathlib import Path
+    import re
+    from app.pnelly_preferences import PNELLY_STYLE_ATTRIBUTES
+
+    repository_root = Path(__file__).resolve().parents[3]
+    identity_source = (
+        repository_root / "services" / "identity-learning-service" / "app" / "main.py"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        r"PNELLY_CONFIRMED_PROFILE_ATTRIBUTES\s*=\s*\{(.*?)\n\}",
+        identity_source,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    identity_attributes = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert PNELLY_STYLE_ATTRIBUTES == identity_attributes
+
+
+def test_replacing_regional_market_deactivates_previous_active_market():
+    from app.pnelly_preferences import PnellyStylePreferenceIn, _build_preference_update
+
+    current = profile()
+    current["preferences"].append({
+        "preference_id": "pnelly-market-ke", "attribute": "market:KE", "weight": 0.8,
+        "active": True, "source": "pnelly_user_confirmed", "source_request_id": "request-market-ke",
+    })
+    payload = PnellyStylePreferenceIn(
+        request_id="request-market-ng", consent_receipt_id="profile-receipt-001", attribute="market:NG",
+    )
+    _, updated, status = _build_preference_update(subject="customer-42", profile=current, payload=payload)
+    assert status is None
+    assert updated is not None
+    old_market = next(item for item in updated if item["preference_id"] == "pnelly-market-ke")
+    new_market = next(item for item in updated if item["attribute"] == "market:NG")
+    assert old_market["active"] is False
+    assert new_market["active"] is True

@@ -24,6 +24,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.observability import install_observability
+from app.cultural_declarations import (
+    CulturalDeclarationCreateInput,
+    CulturalDeclarationRetractionInput,
+    create_cultural_declaration,
+    list_cultural_declarations,
+    retract_cultural_declaration,
+)
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
     PnellyStylePreferenceIn,
@@ -951,6 +958,57 @@ def twin_onboarding_page() -> HTMLResponse:
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "TWIN_ONBOARDING_PAGE_UNAVAILABLE"}) from exc
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/wardrobe/pnelly/cultural-declarations")
+async def create_pnelly_cultural_declaration_route(
+    request: Request, payload: CulturalDeclarationCreateInput,
+) -> Response:
+    """Create explicitly confirmed hard requirements through the canonical CIL owner."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _internal_service(
+            "CULTURAL_IDENTITY_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_TOKEN"
+        )
+        result = await create_cultural_declaration(
+            client, base=base, token=token, subject=subject, payload=payload,
+        )
+    return _private_json_response(result)
+
+
+@app.get("/api/wardrobe/pnelly/cultural-declarations")
+async def list_pnelly_cultural_declarations_route(request: Request) -> Response:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _internal_service(
+            "CULTURAL_IDENTITY_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_TOKEN"
+        )
+        result = await list_cultural_declarations(
+            client, base=base, token=token, subject=subject,
+        )
+    return _private_json_response(result)
+
+
+@app.post("/api/wardrobe/pnelly/cultural-declarations/{declaration_id}/retract")
+async def retract_pnelly_cultural_declaration_route(
+    request: Request, declaration_id: str, payload: CulturalDeclarationRetractionInput,
+) -> Response:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _internal_service(
+            "CULTURAL_IDENTITY_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_TOKEN"
+        )
+        result = await retract_cultural_declaration(
+            client, base=base, token=token, subject=subject,
+            declaration_id=declaration_id, payload=payload,
+        )
+    return _private_json_response(result)
 
 
 @app.post("/api/wardrobe/pnelly/preferences")

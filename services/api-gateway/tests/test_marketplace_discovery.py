@@ -233,7 +233,13 @@ def test_wardrobe_discovery_fails_closed_without_npl_configuration(client, monke
     monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
-    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject, **_kwargs: object())
+    from usi import USIProfile
+    monkeypatch.setattr(
+        main, "_load_verified_usi_profile",
+        lambda _subject, **_kwargs: USIProfile(
+            profile_id="profile-empty", user_id="subject-verified-1", version="1", preferences=(),
+        ),
+    )
     response = client.post("/v1/discover", headers=auth(), json={**payload(), "use_wardrobe_context": True})
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"
@@ -533,3 +539,131 @@ def test_cal_discovery_response_requires_a_nonempty_request_id():
             _decision_response(_decision(P1, 1), request_id=" "), {P1: 1}
         )
     assert invalid.value.detail["code"] == "CAL_DISCOVERY_RESPONSE_INVALID"
+
+
+
+def test_saved_market_preference_is_used_only_when_one_active_market_is_selected():
+    from usi import StylePreference, USIProfile
+
+    profile = USIProfile(
+        profile_id="profile-market", user_id="subject-1", version="4",
+        preferences=(
+            StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=True),
+            StylePreference(preference_id="style-classic", user_id="subject-1", attribute="style:classic", active=True),
+        ),
+    )
+    assert main._profile_market_country_code(profile) == "KE"
+
+    ambiguous = USIProfile(
+        profile_id="profile-market-ambiguous", user_id="subject-1", version="5",
+        preferences=(
+            StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=True),
+            StylePreference(preference_id="market-ng", user_id="subject-1", attribute="market:NG", active=True),
+        ),
+    )
+    assert main._profile_market_country_code(ambiguous) is None
+
+
+def test_inactive_or_foreign_market_preferences_are_not_used():
+    from usi import StylePreference, USIProfile
+
+    from types import SimpleNamespace
+    profile = SimpleNamespace(
+        user_id="subject-1",
+        preferences=(
+            StylePreference(preference_id="market-ke", user_id="subject-1", attribute="market:KE", active=False),
+            # A corrupted/foreign preference must be ignored even if a malformed
+            # profile object reaches the resolver.
+            StylePreference(preference_id="market-ng", user_id="another-user", attribute="market:NG", active=True),
+        ),
+    )
+    assert main._profile_market_country_code(profile) is None
+
+
+def test_cultural_identity_provider_is_required_only_when_opt_in_feature_is_enabled(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_HMAC_SECRET", raising=False)
+
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_cultural_requirements(
+            request_id="request-123", user_id="subject-1", product_id=P1,
+            attributes=("material:linen",), attributes_complete=True,
+        )
+    assert error.value.status_code == 503
+    assert error.value.detail["code"] == "CULTURAL_IDENTITY_PROVIDER_REQUIRED"
+
+
+def test_undeclared_shopper_in_production_has_no_cultural_restrictions_when_feature_is_not_enabled(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED", "false")
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("CULTURAL_IDENTITY_HMAC_SECRET", raising=False)
+    assert main._load_persisted_cultural_requirements(
+        request_id="request-123", user_id="subject-1", product_id=P1,
+        attributes=("material:linen",), attributes_complete=True,
+    ) == ()
+
+
+def test_marketplace_discovery_uses_saved_market_but_respects_explicit_override():
+    from usi import StylePreference, USIProfile
+
+    profile = USIProfile(
+        profile_id="profile-market", user_id="subject-verified-1", version="8",
+        preferences=(StylePreference(
+            preference_id="market-ke", user_id="subject-verified-1",
+            attribute="market:KE", active=True,
+        ),),
+    )
+    request = main.DiscoveryRequest(user_id="subject-verified-1", query="linen")
+    assert main._discovery_payload_with_profile_market(request, profile).market_country_code == "KE"
+
+    explicit = main.DiscoveryRequest(
+        user_id="subject-verified-1", query="linen", market_country_code="NG",
+    )
+    resolved = main._discovery_payload_with_profile_market(explicit, profile)
+    assert resolved.market_country_code == "NG"
+    assert resolved is explicit
+
+
+def test_cultural_fail_closed_setting_does_not_change_npl_provider_optional_branch(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.delenv("NPL_SERVICE_URL", raising=False)
+    monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
+    assert main._load_persisted_npl_preferences(
+        request_id="request-123", user_id="subject-1", product_id=P1,
+        attributes=("material:linen",),
+    ) == ()
+
+
+def test_cultural_identity_internal_http_client_disables_environment_proxies_and_redirects(monkeypatch):
+    import httpx
+
+    captured = {}
+    class FailingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def post(self, *_args, **_kwargs):
+            raise httpx.ConnectError("isolated test connection failure")
+
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_URL", "https://cultural.example.test")
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "t" * 40)
+    monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "s" * 40)
+    monkeypatch.setattr(main.httpx, "Client", FailingClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_cultural_requirements(
+            request_id="request-123", user_id="subject-1", product_id=P1,
+            attributes=("material:linen",), attributes_complete=True,
+        )
+    assert error.value.status_code == 503
+    assert captured["trust_env"] is False
+    assert captured["follow_redirects"] is False

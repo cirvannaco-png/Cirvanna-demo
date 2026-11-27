@@ -167,3 +167,75 @@ def test_climate_only_sets_a_fallback_intensity_and_never_overrides_user_choice(
     assert compose_complementary_look(payload)["fragrance"]["intensity"] == "light"
     payload["preferences"]["fragrance_intensity"] = "bold"
     assert compose_complementary_look(payload)["fragrance"]["intensity"] == "bold"
+
+
+
+def test_independent_style_dimensions_compose_without_collapsing():
+    payload = rich_payload()
+    payload["preferences"].update({
+        "aesthetics": ["classic", "editorial"],
+        "occasion_preferences": ["wedding"],
+        "cultural_contexts": ["contemporary African luxury", "Kitenge textile reference"],
+        "favorite_colors": ["emerald", "burgundy"],
+        "preferred_silhouettes": ["tailored"],
+        "preferred_materials": ["silk"],
+        "preferred_patterns": ["geometric"],
+        "coverage_preferences": ["covered_shoulders", "ankle_length"],
+        "regional_market": "KE",
+    })
+    payload["look"]["occasion"] = "wedding"
+    payload["look"]["climate"] = "hot_humid"
+    result = compose_complementary_look(payload)
+    profile = result["style_profile"]
+    dimensions = profile["dimensions"]
+    assert dimensions["cultural_expression"]["values"] == [
+        "contemporary African luxury", "Kitenge textile reference"
+    ]
+    assert dimensions["personal_aesthetic"]["values"] == ["classic", "editorial"]
+    assert dimensions["occasion"]["current"] == "wedding"
+    assert dimensions["occasion"]["preferred"] == ["wedding"]
+    assert dimensions["personal_preferences"]["silhouettes"] == ["tailored"]
+    assert dimensions["personal_preferences"]["coverage_preferences"] == [
+        "covered_shoulders", "ankle_length"
+    ]
+    assert dimensions["regional_context"]["market_country_code"] == "KE"
+    assert profile["composition_policy"] == "orthogonal_dimensions"
+
+
+def test_omitted_style_dimensions_remain_unspecified():
+    from app.intelligence.style_profile import compose_style_profile
+    result = compose_style_profile({}, {})
+    assert all(
+        dimension["status"] == "not_selected"
+        for dimension in result["dimensions"].values()
+    )
+
+
+def test_regional_market_requires_iso_country_code():
+    from pydantic import ValidationError
+    from app.main import PreferencesIn
+    try:
+        PreferencesIn(regional_market="Nairobi")
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("regional market must be a two-letter country code")
+
+
+
+def test_daily_look_style_score_keeps_cultural_aesthetic_and_personal_axes():
+    from app.daily_looks import _score
+    candidate = [{
+        "item_id": "look-1",
+        "display_name": "Kitenge tailored long sleeve wedding outfit",
+        "category": "dress",
+        "attributes": ["culture:kitenge", "style:classic", "coverage:long-sleeves"],
+    }]
+    all_axes = ("culture:kitenge", "style:classic", "coverage:long-sleeves")
+    full_score = _score(candidate, "elevated", all_axes, (), "wedding", None)
+    without_culture = _score(candidate, "elevated", all_axes[1:], (), "wedding", None)
+    without_aesthetic = _score(candidate, "elevated", (all_axes[0], all_axes[2]), (), "wedding", None)
+    without_personal = _score(candidate, "elevated", all_axes[:2], (), "wedding", None)
+    assert full_score > without_culture
+    assert full_score > without_aesthetic
+    assert full_score > without_personal

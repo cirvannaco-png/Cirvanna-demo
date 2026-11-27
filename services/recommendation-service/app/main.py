@@ -38,6 +38,13 @@ class PreferencesIn(StrictModel):
         "bohemian", "streetwear", "editorial", "natural", "cultural"
     ]] = Field(default_factory=list, max_length=10)
     cultural_contexts: list[str] = Field(default_factory=list, max_length=8)
+    # Independent, explicitly selected style-profile dimensions. None is inferred.
+    preferred_silhouettes: list[Literal["relaxed", "tailored", "oversized", "structured"]] = Field(default_factory=list, max_length=8)
+    preferred_materials: list[Literal["linen", "cotton", "denim", "silk", "wool", "leather", "knitwear"]] = Field(default_factory=list, max_length=8)
+    preferred_patterns: list[Literal["solid", "floral", "striped", "geometric", "check", "animal-print", "abstract"]] = Field(default_factory=list, max_length=8)
+    coverage_preferences: list[Literal["covered_shoulders", "long_sleeves", "knee_length_or_longer", "ankle_length", "high_neckline", "loose_fit", "opaque_fabric", "head_covering_if_selected"]] = Field(default_factory=list, max_length=8)
+    occasion_preferences: list[Literal["everyday", "work", "wedding", "celebration", "religious_occasion", "formal", "travel"]] = Field(default_factory=list, max_length=8)
+    regional_market: str | None = Field(default=None, min_length=2, max_length=2)
 
     favorite_colors: list[str] = Field(default_factory=list, max_length=12)
     avoid_colors: list[str] = Field(default_factory=list, max_length=12)
@@ -95,6 +102,16 @@ class PreferencesIn(StrictModel):
             raise ValueError("preference labels must be unique")
         return cleaned
 
+    @field_validator("regional_market")
+    @classmethod
+    def validate_regional_market(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", normalized):
+            raise ValueError("regional_market must be a two-letter ISO country code")
+        return normalized
+
     @field_validator("fragrance_budget_currency")
     @classmethod
     def validate_currency(cls, value: str | None) -> str | None:
@@ -124,6 +141,7 @@ class LookIn(StrictModel):
     hairstyle: Literal["up", "down", "short", "braids", "locs", "protected_style", "unknown"] = "unknown"
     climate: Literal["hot_humid", "hot_dry", "cool", "temperate", "unknown"] = "unknown"
     occasion: str | None = Field(default=None, max_length=80)
+    location: str | None = Field(default=None, max_length=120)
 
     @field_validator("outfit_colors", "makeup_colors", "jewellery_colors", "accessory_colors")
     @classmethod

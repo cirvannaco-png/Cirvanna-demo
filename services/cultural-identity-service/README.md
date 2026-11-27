@@ -37,3 +37,7 @@ python -m pytest -q
 ```
 
 Production promotion requires a deployed PostgreSQL migration/restore test, real ingress identity binding, shared-key rotation procedure, audit retention and an end-to-end signature-verification test at each consumer.
+
+## Shopper declaration boundary
+
+The Marketplace BFF exposes authenticated Wardrobe routes for creating, listing and retracting declarations. It derives `user_id` from the verified Commerce session and does not accept a browser-provided subject. Hard coverage requirements are a separate policy declaration, not a soft USI aesthetic preference. The gateway retrieves active declarations for each candidate, verifies the candidate-bound HMAC evidence and applies required/forbidden attributes through the canonical CAL pipeline. A missing required attribute in incomplete product metadata routes to REVIEW; a hard forbidden-attribute conflict blocks. Production discovery must not run with the provider unconfigured.

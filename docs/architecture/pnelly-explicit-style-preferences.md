@@ -84,3 +84,47 @@ Unit and contract tests do not prove deployed PostgreSQL durability, production 
 ## Rollback
 
 Disable or remove the BFF preference-write route and Wardrobe preference control. No schema rollback is required. Existing profile JSON rows remain readable by the prior profile contract; the optional provenance fields can be ignored by older consumers. Do not delete existing user preferences as part of rollback.
+
+
+## Independent style dimensions (extension)
+
+**Implementation branch:** `feat/pnelly-independent-style-dimensions`
+
+PNELLY now exposes a compositional style-profile contract with five orthogonal dimensions:
+
+1. **Cultural expression** — only user-selected craft, garment and styling references. These are soft styling signals; explicit hard cultural requirements remain owned by Cultural Identity and are not inferred from identity or appearance.
+2. **Personal aesthetic** — one or more aesthetic directions, including classic / old money, minimalist, romantic, streetwear, editorial, bohemian and natural.
+3. **Occasion** — the current declared occasion, independently evaluated from aesthetic and cultural expression.
+4. **Personal preferences** — preferred and excluded colours, silhouettes, materials, patterns and coverage requirements.
+5. **Regional context** — explicitly selected market country, declared location and declared climate. Market selection is not a proxy for ethnicity, religion or style.
+
+The Complementer response adds `style_profile` while retaining the existing response fields. Each dimension reports its own selected/not-selected state. Missing dimensions remain unspecified; the composer does not fill them from demographic or visual inference. The existing USI JSON preference store remains canonical. The BFF and Identity Learning Service share the same allowlisted PNELLY attribute vocabulary, with request provenance and exact profile-storage consent unchanged.
+
+The Wardrobe experience adds a multi-axis personal-atelier selector. Saving selected values uses the existing consent-bound PNELLY BFF route one attribute at a time, so the canonical USI version check, idempotency and persistence confirmation remain in force. The interface does not claim success unless each save is confirmed.
+
+Regional availability, local designers, market pricing and fulfilment remain Catalog/Commerce responsibilities. The `market:XX` preference records a user-selected preferred market only; it does not assert product availability. All product display continues to require CAL authorization.
+
+Rollback: revert the branch. Existing USI profile JSON remains backward-compatible; newly saved attributes are ignored by older recommendation consumers unless explicitly supported. Do not delete user profile records during rollback.
+
+
+### Coverage semantics
+
+The personal-atelier coverage values remain **soft, user-confirmed styling preferences** and can influence ranking only. Wardrobe now provides a separate hard-requirement panel for explicit coverage declarations. The user must affirm that the selected requirements are non-negotiable; the BFF binds the declaration to the Commerce-verified subject and sends it to the canonical Cultural Identity service. The gateway retrieves active declarations per candidate, verifies candidate-bound signed evidence, and passes the requirements to CAL. Missing required product metadata routes to REVIEW; a hard forbidden-attribute conflict blocks. These requirements are never inferred from appearance or silently promoted from soft USI preferences.
+
+
+### Hard policy declarations and regional marketplace handoff
+
+The Wardrobe UI now separates the soft preference composer from non-negotiable coverage policy. The latter uses the authenticated BFF routes:
+
+- `POST /api/wardrobe/pnelly/cultural-declarations` creates a confirmed declaration. The browser cannot choose the subject ID; the BFF derives it from Commerce `/me`.
+- `GET /api/wardrobe/pnelly/cultural-declarations` lists declarations for that verified subject only.
+- `POST /api/wardrobe/pnelly/cultural-declarations/{declaration_id}/retract` records an explicit correction event. Retraction removes the requirement from subsequent active evaluations.
+
+The BFF uses a dedicated private Cultural Identity service token. Requirement IDs are deterministically namespaced by declaration to avoid collisions when a user later re-declares a previously retracted requirement. Contradictory required/forbidden values in one declaration are rejected. The declaration feature is explicitly opt-in at deployment level through `CULTURAL_IDENTITY_ENFORCEMENT_REQUIRED=true`; production environment alone does not enable cultural restrictions. When the feature is disabled, no cultural requirements are loaded or applied, and the absence of a provider does not block ordinary discovery. When enabled, the Cultural Identity provider is mandatory and unavailable/invalid evidence returns an error rather than silently dropping a shopper's saved declaration. With the feature enabled and provider healthy, a shopper with no active declarations receives an empty signed requirement set and no cultural restrictions; only that shopper's active, explicitly confirmed declarations are evaluated. A deployment enabling the feature must configure the service credentials, PostgreSQL schema and signing key before rollout. This code path still requires staging migration/restore verification and live cross-service signature/E2E tests before production promotion.
+
+A single active `market:XX` value in the verified USI profile is now applied to marketplace offer discovery when the shopper has not explicitly selected a market for the current search. An explicit search market wins. Saving a different PNELLY market selection deactivates the prior PNELLY market value atomically. Multiple or ambiguous active market values do not cause an arbitrary choice. This passes the selected market country code into the existing Commerce offer filter; it does not establish local designer ranking, inventory certainty, local tax, landed pricing, fulfilment capability or delivery coverage. Those remain Commerce/provider evidence and must be independently validated.
+
+
+### Cultural-policy opt-in semantics
+
+Cultural policy is never a global dress code. The deployment feature flag controls whether the declaration capability is available; it does not create requirements for shoppers. A shopper's policy set is empty unless that verified shopper explicitly creates one or more hard declarations. No self-declaration means no cultural restrictions. Retraction makes the relevant declaration inactive. The service must return a signed empty set for a shopper with no active declarations when the feature is enabled. Provider failure while the feature is enabled is an infrastructure error, not evidence that the shopper has no requirements; the gateway must not silently substitute an empty set in that case.

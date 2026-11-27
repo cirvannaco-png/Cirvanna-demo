@@ -7,6 +7,7 @@ from app.intelligence.accessories import compose_accessories
 from app.intelligence.aesthetic import compose_aesthetic, complete_existing_look
 from app.intelligence.colour import coordinate_colours
 from app.intelligence.fragrance import compose_fragrance
+from app.intelligence.style_profile import compose_style_profile
 
 CONTRACT_VERSION = "2.0.0"
 
@@ -20,6 +21,7 @@ def compose_complementary_look(payload: dict[str, Any]) -> dict[str, Any]:
     fragrance = compose_fragrance(preferences, look)
     accessories = compose_accessories(preferences, look)
     aesthetic_result = compose_aesthetic(preferences)
+    style_profile = compose_style_profile(preferences, look)
 
     # Preserve the v1 response key while expanding it into domain-level colour advice.
     palette = {
@@ -72,6 +74,7 @@ def compose_complementary_look(payload: dict[str, Any]) -> dict[str, Any]:
         "glasses": accessories["glasses"],
         "other_accessories": accessories["other_accessories"],
         "aesthetic": aesthetic,
+        "style_profile": style_profile,
         "look_completion": completion,
         "next_inputs": next_inputs,
         "limits": [

@@ -72,6 +72,8 @@ def test_pnelly_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypa
         SimpleNamespace(attribute="style:editorial", active=False),
         SimpleNamespace(attribute="silhouette:relaxed", active=True),
         SimpleNamespace(attribute="culture:declared-context", active=True),
+        SimpleNamespace(attribute="occasion:wedding", active=True),
+        SimpleNamespace(attribute="coverage:long-sleeves", active=True),
     ])
     observed = {}
 
@@ -107,7 +109,7 @@ def test_pnelly_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypa
     assert response.status_code == 200, response.text
     assert observed["profile_subject"] == "signed-user-42"
     assert observed["allow_without_consent"] is True
-    assert observed["style_signals"] == ["color:teal", "silhouette:relaxed"]
+    assert observed["style_signals"] == ["color:teal", "silhouette:relaxed", "culture:declared-context", "occasion:wedding", "coverage:long-sleeves"]
     assert observed["feedback_signals"] == ["feedback:teal", "feedback:linen"]
     assert observed["payload"].rotation_seen_item_ids == ["shirt-001"]
     assert observed["payload"].rotation_cycle_started_at == "2026-11-01"

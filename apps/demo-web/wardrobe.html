@@ -6,19 +6,19 @@
 <meta name="color-scheme" content="dark">
 <title>Cirvanna — Wardrobe</title>
 <style>
-:root{--ink:#101018;--panel:#171722;--panel2:#20202c;--cream:#f0ebe2;--muted:#aaa5b1;--gold:#c4924a;--line:#34313c;--danger:#e7a4a4;--good:#8bc8a3}
+:root{color-scheme:dark;--ink:#09080d;--panel:#17131f;--panel2:#21192c;--cream:#f7f3ed;--muted:#a99fb0;--gold:#d7b36a;--gold-light:#f0d69a;--line:rgb(215 179 106 / 19%);--danger:#e7a4a4;--good:#8bc8a3;--radius:18px}
 *{box-sizing:border-box}body{margin:0;background:var(--ink);color:var(--cream);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}
 button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.shell{max-width:1120px;margin:auto;padding:0 20px}
 header{border-bottom:1px solid var(--line)}.nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0}.brand{font:28px Georgia,serif;letter-spacing:.08em}.brand span{color:var(--gold)}.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .tag{border:1px solid var(--line);border-radius:30px;padding:6px 11px;color:var(--gold);font-size:11px}
 .hero{padding:34px 0 24px}.hero h1{font:clamp(36px,6vw,58px)/1 Georgia,serif;font-weight:400;margin:10px 0}.hero p{color:var(--muted);max-width:650px}
-.panel{background:var(--panel);border:1px solid var(--line);padding:18px;margin:16px 0;border-radius:4px}.panel h2{font:26px Georgia,serif;font-weight:400;margin:0 0 7px}.muted{color:var(--muted)}.small{font-size:12px;color:var(--muted)}
+.panel{background:linear-gradient(145deg,var(--panel),#100e16);border:1px solid var(--line);padding:20px;margin:16px 0;border-radius:var(--radius);box-shadow:0 16px 44px rgb(0 0 0 / 20%)}.panel h2{font:26px Georgia,serif;font-weight:400;margin:0 0 7px}.muted{color:var(--muted)}.small{font-size:12px;color:var(--muted)}
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .field{display:flex;flex-direction:column;gap:5px;margin:8px 0}.field label{font-size:11px;color:var(--muted)}
 input,select{width:100%;min-width:0;padding:11px;background:#101018;border:1px solid var(--line);color:var(--cream);border-radius:3px}
-.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.btn{border:1px solid var(--line);background:transparent;color:var(--cream);padding:9px 13px;border-radius:3px}.btn.primary{background:var(--gold);border-color:var(--gold);color:#17120a;font-weight:700}.btn.subtle{color:var(--muted)}.btn.danger{border-color:#704b4b;color:var(--danger)}
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.btn{border:1px solid var(--line);background:rgb(255 255 255 / 3%);color:var(--cream);padding:9px 13px;border-radius:999px;min-height:42px}.btn.primary{background:linear-gradient(135deg,var(--gold-light),var(--gold));border-color:var(--gold);color:#17120a;font-weight:700}.btn.subtle{color:var(--muted)}.btn.danger{border-color:#704b4b;color:var(--danger)}
 .status{padding:10px 12px;margin:10px 0;background:#12121a;border-left:2px solid var(--gold);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.status.error{border-color:var(--danger);color:var(--danger)}.status.good{border-color:var(--good);color:var(--good)}
-.item{background:var(--panel2);border:1px solid #302d38;padding:14px;display:flex;flex-direction:column;gap:9px;min-width:0}.item h3{font:20px Georgia,serif;font-weight:400;margin:0}.item .attrs{font-size:12px;color:var(--muted);min-height:32px}.item .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto}.item .actions .btn{font-size:11px;padding:7px 9px}
+.item{background:linear-gradient(145deg,var(--panel2),#15121c);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:9px;min-width:0}.item h3{font:20px Georgia,serif;font-weight:400;margin:0}.item .attrs{font-size:12px;color:var(--muted);min-height:32px}.item .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto}.item .actions .btn{font-size:11px;padding:7px 9px}
 .rec-card{border-top:1px solid var(--line);padding:13px 0}.rec-card h3{font:20px Georgia,serif;margin:0 0 4px;font-weight:400}.rec-card p{font-size:12px;color:var(--muted);margin:4px 0}
 .empty{border:1px dashed var(--line);padding:24px;text-align:center;color:var(--muted);grid-column:1/-1}
 .hidden{display:none!important}.consent{display:flex;gap:12px;align-items:flex-start;border-top:1px solid var(--line);padding:12px 0}.consent>div{flex:1}.consent strong{font-size:13px}
@@ -26,7 +26,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nav{align-items:flex-start;flex-direction:column}}
 @media(max-width:520px){.shell{padding:0 13px}.grid{grid-template-columns:1fr}.panel{padding:14px}.nav .row{width:100%}.nav .tag{white-space:normal}}
 .pnelly-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
-.pnelly-card{min-width:0;border:1px solid var(--line);background:#12121a;padding:14px;border-radius:4px}
+.pnelly-card{min-width:0;border:1px solid var(--line);background:linear-gradient(145deg,var(--panel2),#121018);padding:16px;border-radius:14px}
 .pnelly-card h3{font:22px Georgia,serif;font-weight:400;margin:5px 0 10px;text-transform:capitalize}
 .pnelly-piece{border-top:1px solid var(--line);padding:9px 0}
 .pnelly-piece strong{display:block;font-size:13px}
@@ -34,6 +34,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 .pnelly-note{font-size:12px;color:var(--muted);margin-top:10px}
 .pnelly-advisory{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}.pnelly-advisory p{font-size:12px;color:var(--muted);margin:6px 0}.pnelly-advisory .btn{margin-top:5px}
 @media(max-width:800px){.pnelly-grid{grid-template-columns:1fr}}
+.style-profile-builder{margin:18px 0;padding:18px;border:1px solid var(--line);border-radius:16px;background:radial-gradient(ellipse at 100% 0,rgb(215 179 106 / 8%),transparent 55%),linear-gradient(145deg,#20182a,#100e16)}.style-profile-builder h3{font:400 25px Georgia,serif;margin:7px 0}.style-axis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}.style-axis-grid select{min-height:112px;background:#100e16;color:var(--cream);border:1px solid var(--line);border-radius:10px}.style-profile-builder .field label{color:var(--cv-muted,var(--muted))}@media(max-width:520px){.style-axis-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -138,8 +139,42 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   <div class="eyebrow">USI · your saved choices</div>
   <h2>Manage PNELLY preferences</h2>
   <p class="small">These are the style preferences you explicitly saved. Replace a preference or deactivate it; deactivated preferences stop guiding later daily looks. This does not change your wardrobe, TAL feedback history or NPL exclusions.</p>
+  <div class="style-profile-builder" aria-labelledby="styleProfileTitle">
+    <div class="eyebrow">Your personal atelier · independent style dimensions</div>
+    <h3 id="styleProfileTitle">Build your style in layers</h3>
+    <p class="small">Choose any combination. Cultural expression, aesthetic, occasion, personal preferences and regional context remain separate; none is inferred from your appearance.</p>
+    <div class="style-axis-grid">
+      <div class="field"><label for="styleCulture">Cultural expression · only references you choose</label><select id="styleCulture" multiple size="5"><option value="culture:contemporary-african-luxury">Contemporary African luxury</option><option value="culture:north-african-craft">North African craft</option><option value="culture:latin-american-textiles">Latin American textiles</option><option value="culture:pacific-islander-craft">Pacific Islander craft</option><option value="culture:ankara">Ankara</option><option value="culture:kitenge">Kitenge</option><option value="culture:kente">Kente</option><option value="culture:adire">Adire</option><option value="culture:aso-oke">Aso-oke</option><option value="culture:batik">Batik</option><option value="culture:saree">Saree</option><option value="culture:lehenga">Lehenga</option><option value="culture:salwar-kameez">Salwar kameez</option><option value="culture:kimono-inspired">Kimono-inspired</option><option value="culture:hanbok-inspired">Hanbok-inspired</option><option value="culture:abaya">Abaya</option><option value="culture:kaftan">Kaftan</option><option value="culture:embroidered-thobe">Embroidered thobe</option><option value="culture:caribbean-textiles">Caribbean textiles</option><option value="culture:indigenous-craft-user-selected">Indigenous craft (user-selected)</option></select></div>
+      <div class="field"><label for="styleAesthetic">Personal aesthetic</label><select id="styleAesthetic" multiple size="5"><option value="style:minimalist">Minimalist</option><option value="style:elegant">Elegant</option><option value="style:romantic">Romantic</option><option value="style:bold">Bold</option><option value="style:streetwear">Streetwear</option><option value="style:classic">Classic / old money</option><option value="style:editorial">Editorial</option><option value="style:bohemian">Bohemian</option><option value="style:natural">Natural</option></select></div>
+      <div class="field"><label for="styleOccasion">Occasion preferences</label><select id="styleOccasion" multiple size="5"><option value="occasion:everyday">Everyday</option><option value="occasion:work">Work</option><option value="occasion:wedding">Wedding</option><option value="occasion:celebration">Celebration</option><option value="occasion:religious-occasion">Religious occasion</option><option value="occasion:formal">Formal</option><option value="occasion:travel">Travel</option></select></div>
+      <div class="field"><label for="stylePersonal">Personal preferences · colour, cut, material, coverage preferences</label><select id="stylePersonal" multiple size="7"><option value="color:teal">Teal</option><option value="color:navy">Navy</option><option value="color:earthy">Earth tones</option><option value="color:monochrome">Monochrome</option><option value="color:pastel">Pastels</option><option value="color:jewel-tones">Jewel tones</option><option value="color:burgundy">Burgundy</option><option value="color:emerald">Emerald</option><option value="color:sapphire">Sapphire</option><option value="silhouette:relaxed">Relaxed</option><option value="silhouette:tailored">Tailored</option><option value="silhouette:oversized">Oversized</option><option value="silhouette:structured">Structured</option><option value="material:linen">Linen</option><option value="material:cotton">Cotton</option><option value="material:denim">Denim</option><option value="material:silk">Silk</option><option value="material:wool">Wool</option><option value="material:leather">Leather</option><option value="material:knitwear">Knitwear</option><option value="pattern:solid">Solid</option><option value="pattern:floral">Floral</option><option value="pattern:striped">Striped</option><option value="pattern:geometric">Geometric</option><option value="pattern:check">Check</option><option value="pattern:animal-print">Animal print</option><option value="pattern:abstract">Abstract</option><option value="coverage:covered-shoulders">Covered shoulders</option><option value="coverage:long-sleeves">Long sleeves</option><option value="coverage:knee-length-or-longer">Knee length or longer</option><option value="coverage:ankle-length">Ankle length</option><option value="coverage:high-neckline">High neckline</option><option value="coverage:loose-fit">Loose fit</option><option value="coverage:opaque-fabric">Opaque fabric</option><option value="coverage:head-covering-if-selected">Head covering, if selected</option></select></div>
+      <div class="field"><label for="styleMarket">Preferred regional market</label><select id="styleMarket"><option value="">No market preference</option><option value="market:KE">Kenya</option><option value="market:NG">Nigeria</option><option value="market:ZA">South Africa</option><option value="market:IN">India</option><option value="market:JP">Japan</option><option value="market:KR">South Korea</option><option value="market:AE">United Arab Emirates</option><option value="market:GB">United Kingdom</option><option value="market:US">United States</option></select></div>
+    </div>
+    <button class="btn primary" id="saveStyleProfile" type="button" disabled>Save selected dimensions</button>
+    <p class="small" id="styleProfileSaveStatus" role="status">Enable profile storage to save your choices.</p>
+  </div>
   <div class="status" id="pnellyPreferencesStatus" role="status">Enable profile storage to review saved preferences.</div>
   <div id="pnellyPreferencesList"></div>
+</section>
+
+<section class="panel hidden" id="culturalPolicyPanel">
+  <div class="eyebrow">Cultural Identity · explicit policy</div>
+  <h2>Non-negotiable coverage requirements</h2>
+  <p class="small">This is separate from your soft styling preferences. Select only requirements you want Cirvanna to enforce as hard constraints. A candidate must carry matching, complete product metadata; missing evidence is sent to review, never assumed to comply. Nothing is inferred from your appearance, name or location.</p>
+  <div class="grid">
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:covered-shoulders" style="width:auto;min-width:auto"> Shoulders must be covered</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:long-sleeves" style="width:auto;min-width:auto"> Long sleeves required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:knee-length-or-longer" style="width:auto;min-width:auto"> Knee length or longer</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:ankle-length" style="width:auto;min-width:auto"> Ankle length required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:high-neckline" style="width:auto;min-width:auto"> High neckline required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:loose-fit" style="width:auto;min-width:auto"> Loose fit required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:opaque-fabric" style="width:auto;min-width:auto"> Opaque fabric required</label>
+    <label class="small"><input type="checkbox" class="hardCoverage" value="coverage:head-covering-if-selected" style="width:auto;min-width:auto"> Head covering required when selected</label>
+  </div>
+  <label class="small" style="display:block;margin:14px 0"><input id="confirmHardRequirements" type="checkbox" style="width:auto;min-width:auto"> I confirm these are my explicit, non-negotiable requirements and want them applied as hard policy constraints.</label>
+  <button class="btn primary" id="saveHardRequirements" type="button">Save hard requirements</button>
+  <div class="status" id="culturalPolicyStatus" role="status">Connect your account to manage explicit requirements.</div>
+  <div id="culturalDeclarationsList"></div>
 </section>
 
 <section class="panel hidden" id="pnellyPanel">
@@ -199,6 +234,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   let colorProfileVersion = 0;
   let pnellyPreferenceVersion = 0;
   let pnellyPreferences = [];
+  let culturalDeclarations = [];
   let pnellyData = null;
   let items = [];
   const api = async (path, options = {}) => {
@@ -220,15 +256,81 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     return data;
   };
   const PNELLY_PREFERENCE_OPTIONS = [
-    ["style:minimalist", "Minimalist"], ["style:elegant", "Elegant"], ["style:romantic", "Romantic"],
-    ["style:bold", "Bold"], ["style:streetwear", "Streetwear"], ["style:classic", "Classic"],
-    ["style:editorial", "Editorial"], ["color:teal", "Teal"], ["color:navy", "Navy"],
-    ["color:earthy", "Earth tones"], ["color:monochrome", "Monochrome"], ["color:pastel", "Pastels"],
-    ["silhouette:relaxed", "Relaxed silhouette"], ["silhouette:tailored", "Tailored silhouette"],
-    ["silhouette:oversized", "Oversized silhouette"], ["silhouette:structured", "Structured silhouette"],
-    ["material:linen", "Linen"], ["material:cotton", "Cotton"], ["material:denim", "Denim"],
-    ["material:silk", "Silk"], ["pattern:solid", "Solid"], ["pattern:floral", "Floral"],
-    ["pattern:striped", "Striped"], ["pattern:geometric", "Geometric"]
+    ["style:minimalist", "Minimalist"],
+    ["style:elegant", "Elegant"],
+    ["style:romantic", "Romantic"],
+    ["style:bold", "Bold"],
+    ["style:streetwear", "Streetwear"],
+    ["style:classic", "Classic"],
+    ["style:editorial", "Editorial"],
+    ["style:bohemian", "Bohemian"],
+    ["style:natural", "Natural"],
+    ["color:teal", "Teal"],
+    ["color:navy", "Navy"],
+    ["color:earthy", "Earthy"],
+    ["color:monochrome", "Monochrome"],
+    ["color:pastel", "Pastel"],
+    ["color:jewel-tones", "Jewel Tones"],
+    ["color:burgundy", "Burgundy"],
+    ["color:emerald", "Emerald"],
+    ["color:sapphire", "Sapphire"],
+    ["silhouette:relaxed", "Relaxed silhouette"],
+    ["silhouette:tailored", "Tailored silhouette"],
+    ["silhouette:oversized", "Oversized silhouette"],
+    ["silhouette:structured", "Structured silhouette"],
+    ["material:linen", "Linen"],
+    ["material:cotton", "Cotton"],
+    ["material:denim", "Denim"],
+    ["material:silk", "Silk"],
+    ["material:wool", "Wool"],
+    ["material:leather", "Leather"],
+    ["material:knitwear", "Knitwear"],
+    ["pattern:solid", "Solid"],
+    ["pattern:floral", "Floral"],
+    ["pattern:striped", "Striped"],
+    ["pattern:geometric", "Geometric"],
+    ["pattern:check", "Check"],
+    ["pattern:animal-print", "Animal print"],
+    ["pattern:abstract", "Abstract"],
+    ["culture:contemporary-african-luxury", "Contemporary African Luxury"],
+    ["culture:north-african-craft", "North African Craft"],
+    ["culture:latin-american-textiles", "Latin American Textiles"],
+    ["culture:pacific-islander-craft", "Pacific Islander Craft"],
+    ["culture:ankara", "Ankara"],
+    ["culture:kitenge", "Kitenge"],
+    ["culture:kente", "Kente"],
+    ["culture:adire", "Adire"],
+    ["culture:aso-oke", "Aso Oke"],
+    ["culture:batik", "Batik"],
+    ["culture:saree", "Saree"],
+    ["culture:lehenga", "Lehenga"],
+    ["culture:salwar-kameez", "Salwar Kameez"],
+    ["culture:kimono-inspired", "Kimono Inspired"],
+    ["culture:hanbok-inspired", "Hanbok Inspired"],
+    ["culture:abaya", "Abaya"],
+    ["culture:kaftan", "Kaftan"],
+    ["culture:embroidered-thobe", "Embroidered Thobe"],
+    ["culture:caribbean-textiles", "Caribbean Textiles"],
+    ["culture:indigenous-craft-user-selected", "Indigenous Craft User Selected"],
+    ["occasion:everyday", "Everyday"],
+    ["occasion:work", "Work"],
+    ["occasion:wedding", "Wedding"],
+    ["occasion:celebration", "Celebration"],
+    ["occasion:religious-occasion", "Religious Occasion"],
+    ["occasion:formal", "Formal"],
+    ["occasion:travel", "Travel"],
+    ["coverage:covered-shoulders", "Covered Shoulders"],
+    ["coverage:long-sleeves", "Long Sleeves"],
+    ["coverage:knee-length-or-longer", "Knee Length Or Longer"],
+    ["coverage:ankle-length", "Ankle Length"],
+    ["coverage:high-neckline", "High Neckline"],
+    ["coverage:loose-fit", "Loose Fit"],
+    ["coverage:opaque-fabric", "Opaque Fabric"],
+    ["coverage:head-covering-if-selected", "Head Covering If Selected"],
+    ["market:KE", "Kenya market"], ["market:NG", "Nigeria market"], ["market:ZA", "South Africa market"],
+    ["market:IN", "India market"], ["market:JP", "Japan market"], ["market:KR", "South Korea market"],
+    ["market:AE", "United Arab Emirates market"], ["market:GB", "United Kingdom market"],
+    ["market:US", "United States market"]
   ];
   const preferenceRequestId = prefix => {
     const bytes = new Uint8Array(16);
@@ -405,10 +507,12 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     root.replaceChildren();
     if (!profileReceipt) {
       $("pnellyPreferencesPanel").classList.add("hidden");
+      $("saveStyleProfile").disabled = true;
       status("pnellyPreferencesStatus", "Enable profile storage to review saved preferences.");
       return;
     }
     $("pnellyPreferencesPanel").classList.remove("hidden");
+    $("saveStyleProfile").disabled = false;
     if (!pnellyPreferences.length) {
       status("pnellyPreferencesStatus", "No PNELLY-saved preferences yet. Save one from a Complementer advisory.");
       return;
@@ -479,6 +583,93 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       root.append(card);
     }
   };
+  const renderCulturalDeclarations = () => {
+    const root = $("culturalDeclarationsList");
+    root.replaceChildren();
+    if (!culturalDeclarations.length) {
+      root.append(text("p", "No active hard cultural or coverage declarations.", "small"));
+      return;
+    }
+    for (const declaration of culturalDeclarations) {
+      const card = document.createElement("div");
+      card.className = "consent";
+      const info = document.createElement("div");
+      const title = text("strong", "Declaration · " + declaration.declaration_id);
+      const details = text("div", (declaration.requirements || []).map(item => item.attribute + " · " + item.kind).join("; "), "small");
+      info.append(title, details);
+      const retract = text("button", "Retract", "btn danger");
+      retract.type = "button";
+      retract.addEventListener("click", async () => {
+        retract.disabled = true;
+        try {
+          await api("/api/wardrobe/pnelly/cultural-declarations/" + encodeURIComponent(declaration.declaration_id) + "/retract", {
+            method: "POST",
+            body: JSON.stringify({request_id: preferenceRequestId("cultural-retract-"), user_confirmation: true})
+          });
+          await loadCulturalDeclarations();
+          status("culturalPolicyStatus", "Declaration retracted. It will no longer constrain subsequent candidate decisions.", "good");
+        } catch (error) {
+          status("culturalPolicyStatus", error.message, "error");
+          retract.disabled = false;
+        }
+      });
+      card.append(info, retract);
+      root.append(card);
+    }
+  };
+  const loadCulturalDeclarations = async () => {
+    const data = await api("/api/wardrobe/pnelly/cultural-declarations");
+    if (!Array.isArray(data.declarations)) throw new Error("CULTURAL_DECLARATION_RESPONSE_INVALID");
+    culturalDeclarations = data.declarations.filter(item => item && item.status === "active");
+    renderCulturalDeclarations();
+    status("culturalPolicyStatus", culturalDeclarations.length + " active hard declaration(s) loaded from Cultural Identity.", "good");
+  };
+  const saveCulturalDeclarations = async () => {
+    const attributes = [...document.querySelectorAll(".hardCoverage:checked")].map(node => node.value);
+    if (!attributes.length) {
+      status("culturalPolicyStatus", "Select at least one hard requirement. No changes were made.", "error");
+      return;
+    }
+    if (!$("confirmHardRequirements").checked) {
+      status("culturalPolicyStatus", "Confirm that these are non-negotiable requirements before saving.", "error");
+      return;
+    }
+    const existing = new Set(culturalDeclarations.flatMap(item => (item.requirements || []).map(req => req.attribute)));
+    const newAttributes = attributes.filter(attribute => !existing.has(attribute));
+    if (!newAttributes.length) {
+      status("culturalPolicyStatus", "Every selected hard requirement is already active.");
+      return;
+    }
+    const button = $("saveHardRequirements");
+    button.disabled = true;
+    try {
+      const data = await api("/api/wardrobe/pnelly/cultural-declarations", {
+        method: "POST",
+        body: JSON.stringify({
+          request_id: preferenceRequestId("cultural-hard-"),
+          confirmation_version: "cultural-hard-requirements-v1",
+          user_confirmation: true,
+          requirements: newAttributes.map((attribute, index) => ({
+            requirement_id: "coverage-" + index + "-" + attribute.replace(/[^a-z0-9]+/gi, "-").toLowerCase(),
+            attribute,
+            kind: "required_attribute",
+            hard: true
+          }))
+        })
+      });
+      if (data.status !== "active" || data.hard_requirements !== true) throw new Error("CULTURAL_DECLARATION_PERSISTENCE_UNCONFIRMED");
+      await loadCulturalDeclarations();
+      document.querySelectorAll(".hardCoverage").forEach(node => { node.checked = false; });
+      $("confirmHardRequirements").checked = false;
+      status("culturalPolicyStatus", "Hard requirements saved through Cultural Identity. They are enforced only against explicit, auditable candidate metadata; missing metadata routes to review.", "good");
+    } catch (error) {
+      status("culturalPolicyStatus", error.message + ". Verify the active declaration list before retrying.", "error");
+      try { await loadCulturalDeclarations(); } catch (_) {}
+    } finally {
+      button.disabled = false;
+    }
+  };
+  $("saveHardRequirements").addEventListener("click", saveCulturalDeclarations);
   const loadPnellyPreferences = async () => {
     if (!profileReceipt) {
       pnellyPreferences = [];
@@ -711,6 +902,9 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("twinPanel").classList.remove("hidden");
     await loadTwinCapabilities();
     $("learningPanel").classList.remove("hidden");
+    $("culturalPolicyPanel").classList.remove("hidden");
+    try { await loadCulturalDeclarations(); }
+    catch (error) { status("culturalPolicyStatus", "Cultural Identity service is unavailable; hard requirements were not saved or assumed: " + error.message, "error"); }
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
     $("connectPanel").classList.add("hidden");
@@ -954,6 +1148,46 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     try { await revokeConsent("style_learning"); }
     catch (error) { status("learningStatus",error.message,"error"); }
   });
+  $("saveStyleProfile").addEventListener("click", async () => {
+    if (!profileReceipt) {
+      status("styleProfileSaveStatus", "Enable profile-storage consent before saving. Nothing has been changed.", "error");
+      return;
+    }
+    const selects = ["styleCulture", "styleAesthetic", "styleOccasion", "stylePersonal"];
+    const selected = selects.flatMap(id => Array.from($(id).selectedOptions, option => option.value));
+    const market = $("styleMarket").value;
+    if (market) selected.push(market);
+    if (!selected.length) {
+      status("styleProfileSaveStatus", "Choose at least one dimension before saving.", "error");
+      return;
+    }
+    const button = $("saveStyleProfile");
+    button.disabled = true;
+    try {
+      for (const attribute of [...new Set(selected)]) {
+        const saved = await api("/api/wardrobe/pnelly/preferences", {
+          method: "POST",
+          body: JSON.stringify({
+            request_id: preferenceRequestId("pnelly-style-"),
+            consent_receipt_id: profileReceipt,
+            attribute
+          })
+        });
+        if (saved.durable_persistence !== true || saved.learning_owner !== "USI" ||
+            !["recorded", "replayed", "already_present"].includes(saved.status)) {
+          throw new Error("PNELLY_STYLE_PROFILE_PERSISTENCE_UNCONFIRMED");
+        }
+      }
+      await loadPnellyPreferences();
+      status("styleProfileSaveStatus", "Your selected dimensions are saved to your USI profile. PNELLY will combine them independently on subsequent recommendations.", "good");
+    } catch (error) {
+      status("styleProfileSaveStatus", "Could not confirm all selected preferences: " + error.message + ". Reload saved preferences before retrying.", "error");
+      try { await loadPnellyPreferences(); } catch (_) {}
+    } finally {
+      button.disabled = !profileReceipt;
+    }
+  });
+
   $("enableProfile").addEventListener("click", async () => {
     try { await createConsent("profile_storage"); }
     catch (error) { status("learningStatus",error.message,"error"); }

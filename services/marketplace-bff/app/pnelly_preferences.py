@@ -18,6 +18,51 @@ PnellyStyleAttribute = Literal[
     "silhouette:relaxed", "silhouette:tailored", "silhouette:oversized", "silhouette:structured",
     "material:linen", "material:cotton", "material:denim", "material:silk",
     "pattern:solid", "pattern:floral", "pattern:striped", "pattern:geometric",
+    "material:wool", "material:leather", "material:knitwear",
+    "pattern:check", "pattern:animal-print", "pattern:abstract",
+    "culture:contemporary-african-luxury",
+    "culture:north-african-craft",
+    "culture:latin-american-textiles",
+    "culture:pacific-islander-craft",
+    "market:KE", "market:NG", "market:ZA", "market:IN", "market:JP",
+    "market:KR", "market:AE", "market:GB", "market:US",
+    "culture:ankara",
+    "culture:kitenge",
+    "culture:kente",
+    "culture:adire",
+    "culture:aso-oke",
+    "culture:batik",
+    "culture:saree",
+    "culture:lehenga",
+    "culture:salwar-kameez",
+    "culture:kimono-inspired",
+    "culture:hanbok-inspired",
+    "culture:abaya",
+    "culture:kaftan",
+    "culture:embroidered-thobe",
+    "culture:caribbean-textiles",
+    "culture:indigenous-craft-user-selected",
+    "occasion:everyday",
+    "occasion:work",
+    "occasion:wedding",
+    "occasion:celebration",
+    "occasion:religious-occasion",
+    "occasion:formal",
+    "occasion:travel",
+    "coverage:covered-shoulders",
+    "coverage:long-sleeves",
+    "coverage:knee-length-or-longer",
+    "coverage:ankle-length",
+    "coverage:high-neckline",
+    "coverage:loose-fit",
+    "coverage:opaque-fabric",
+    "coverage:head-covering-if-selected",
+    "style:bohemian",
+    "style:natural",
+    "color:jewel-tones",
+    "color:burgundy",
+    "color:emerald",
+    "color:sapphire",
 ]
 
 
@@ -143,6 +188,18 @@ def _build_preference_update(
         for item in preferences
     ):
         return preference_id, None, "already_present"
+    if payload.attribute.startswith("market:"):
+        # Regional market is a single-select preference. Retire the previous
+        # PNELLY market atomically when the user explicitly chooses another.
+        for item in preferences:
+            if (
+                isinstance(item, dict)
+                and item.get("source") == "pnelly_user_confirmed"
+                and item.get("active", True) is True
+                and isinstance(item.get("attribute"), str)
+                and item["attribute"].startswith("market:")
+            ):
+                item["active"] = False
     if len(preferences) >= 100:
         raise HTTPException(409, detail={"code": "USI_PROFILE_PREFERENCE_LIMIT_REACHED"})
     preferences.append({
