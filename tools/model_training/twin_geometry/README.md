@@ -1,0 +1,55 @@
+# Cirvanna-owned parametric Twin geometry foundation
+
+This is the first proprietary geometry track for Virtual Twin. It does not select an external body model. It learns a Cirvanna parametric shape basis from consented, registered 3D body scans and fits a separate linear calibration from shape coefficients to trained-anthropometrist tape measurements.
+
+The current implementation is deliberately narrower than a complete Twin:
+- PCA shape basis over a common registered mesh topology.
+- Mesh reconstruction from shape coefficients.
+- Ridge calibration of five anthropometric outputs from those coefficients.
+- Held-out surface and tape-measure error reporting.
+- Strict rights, subject-disjoint split, topology, anatomical landmark and mesh integrity checks.
+
+It does not infer shape coefficients from photographs, solve camera/pose ambiguity, reconstruct appearance or hair, generate a persistent user avatar, or prove independent anatomical validity.
+
+## Dataset requirements
+
+Use a 3D scan cohort collected under explicit, revocable consent for commercial model training and human review. The data-rights manifest scope is twin_geometry_training, and the rights validator requires verified depicted-person consent.
+
+Every mesh must:
+- be in millimetres using right_handed_x_right_y_up_z_forward;
+- be registered to one template topology and one documented alignment protocol;
+- preserve real-world scale (do not normalize each body to unit height);
+- have valid triangular faces and finite, bounded coordinates;
+- be split by pseudonymous subject cluster, with no participant crossing train/validation/test;
+- include independently annotated anatomical landmarks and tape measurements using one documented measurement protocol.
+
+The mesh archive is an NPZ with arrays named vertices (N x 3 float) and faces (M x 3 integer). Annotation JSONL contains sample_id, subject_cluster_id, split, mesh_path, mesh_sha256, alignment_protocol_id, landmarks_mm, measurements_mm and non-identifying subgroup labels.
+
+## Validate the cohort
+
+    python tools/model_training/twin_geometry/validate_dataset.py \
+      --manifest /restricted/twin-geometry/dataset.manifest.json \
+      --annotations /restricted/twin-geometry/annotations.jsonl \
+      --mesh-root /restricted/twin-geometry/meshes \
+      --rights-manifest /restricted/twin-geometry/data-rights.manifest.json
+
+## Fit the shape basis and measurement calibration
+
+    python tools/model_training/twin_geometry/train_shape_model.py \
+      --manifest /restricted/twin-geometry/dataset.manifest.json \
+      --annotations /restricted/twin-geometry/annotations.jsonl \
+      --mesh-root /restricted/twin-geometry/meshes \
+      --rights-manifest /restricted/twin-geometry/data-rights.manifest.json \
+      --output-dir /restricted/twin-geometry/run-001 \
+      --components 20 --ridge-alpha 1.0
+
+PCA and measurement regression fit on the train split only. Validation and held-out test splits are reported separately. The checkpoint and report are written owner-only with digests. The test split must remain sealed until the shape dimension and ridge alpha are preregistered.
+
+## Interpretation
+
+- Surface vertex errors measure reconstruction of registered scans using a low-dimensional shape basis. They do not measure photo-to-3D accuracy.
+- Tape-measure MAE, median error, P95 and bias are compared with independent tape measurements. The report is not a pass/fail calibration certificate.
+- Subgroup-specific confidence intervals and minimum cohort counts must be preregistered before the final test.
+- The shape basis is a research geometry asset. It is not a persistent Twin and must not be used for sizing or fit claims until photo reconstruction, independent anatomical validation, repeated-capture calibration, and privacy/deletion qualification pass.
+
+No SMPL, SAM 3D Body or commercial avatar provider is required for this parametric shape-basis track. The model is still dependent on a high-quality, rights-cleared 3D scan cohort and independent measurement expertise.
