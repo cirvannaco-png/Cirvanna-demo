@@ -1,10 +1,10 @@
 # Production observability, SLOs and incident runbook
 
-**Status: code-level telemetry hooks added to the Marketplace BFF, Commerce and Privacy Governance services. Central collection, alert routing, on-call ownership, dashboards and production incident drills remain unconfigured.** A metrics endpoint is not proof of an operational monitoring system.
+**Status: code-level telemetry hooks added to the Marketplace BFF, Commerce, Privacy Governance and Decision API Gateway services. Central collection, alert routing, on-call ownership, dashboards and production incident drills remain unconfigured.** A metrics endpoint is not proof of an operational monitoring system.
 
 ## 1. Telemetry implemented in the release-readiness branch
 
-The three critical services now share a small, dependency-free telemetry module.
+The critical services use the shared `packages/http_observability` telemetry module. The Decision API Gateway records Catalog and Commerce dependency latency using a fixed dependency allowlist.
 
 - `GET /internal/metrics` exposes Prometheus text format only when `METRICS_ENABLED=true` and a dedicated `OBSERVABILITY_METRICS_TOKEN` of at least 32 bytes is configured.
 - Scrapers must send `X-Observability-Token`; the endpoint is not part of the public customer navigation or API contract. Missing configuration returns 404; an invalid token returns 401. **The bearer token is application authentication, not a network firewall:** production ingress/network policy must separately allow only the monitoring network or private service mesh to reach this route, and the proxy must preserve a trustworthy client address. Do not expose `/internal/metrics` through public routing.
@@ -13,7 +13,7 @@ The three critical services now share a small, dependency-free telemetry module.
 - Request bodies, query strings, Authorization headers, user IDs, asset IDs, image bytes, face crops, embeddings and exception messages are not recorded by this middleware.
 - Counters are process-local and reset on restart. They must be scraped frequently and correlated with platform logs/traces; they are not a durable audit ledger or a replacement for provider, database or business-event monitoring.
 
-This slice covers the public ingress, Commerce transaction service and Privacy Governance service. The remaining services (Asset, Vision, Twin Registry, Virtual Twin, Gateway, Catalog, Identity, Wardrobe, NPL, CIL and workers) still need consistent instrumentation before full platform SLOs can be measured.
+This slice covers the public ingress, Commerce transaction service, Privacy Governance service and Decision API Gateway. The remaining services (Asset, Vision, Twin Registry, Virtual Twin, Gateway, Catalog, Identity, Wardrobe, NPL, CIL and workers) still need consistent instrumentation before full platform SLOs can be measured.
 
 ## 2. Deployment configuration
 
