@@ -233,6 +233,30 @@
       "acceptance": "All production services export privacy-safe low-cardinality metrics, structured logs and traces through an approved private telemetry backend; secrets, user IDs, images and sensitive request content are excluded. Dashboards, SLOs, alert routes and notifications are tested with named owners/on-call. Payment reconciliation, provider outage, image/privacy incident, rights quarantine/deletion, database backup/restore, rollback and disaster-recovery runbooks are executed. Exact configuration, retention/access controls, measured RPO/RTO and exercise evidence are tied to the release commit.",
       "evidence_refs": [],
       "verified_commit": null
+    },
+    {
+      "id": "REL-24",
+      "name": "Virtual Try-On rendering quality and runtime qualification",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Virtual Try-On / model / quality owner",
+      "acceptance": "The exact FASHN VTON 1.5 source, model revision, weight-file digests, runtime/dependency lock and complete transitive licence/provenance are recorded and approved for commercial use. The initial supported scope is flat-lay garments only; no model-worn garment mode or uncleared parser dependency is enabled. A pinned GPU worker passes real inference, resource/load/latency/timeout and recovery tests on the production target. A rights-cleared, consented, participant-disjoint and blinded human evaluation measures garment identity/texture preservation, body/pose preservation, occlusion and artefact rates, category/device/skin-tone/body-shape subgroup failures, repeatability and abstention; synthetic/mock output and vendor claims do not count. Consent, Twin ownership, private source-asset authorization, output asset ownership, no-store behavior, short retention, deletion/revocation and CDN/cache non-publication are exercised end-to-end. Try-On remains a visual preview only: no fit, size or purchase recommendation is inferred without separately calibrated FCI evidence."
+    },
+    {
+      "id": "REL-25",
+      "name": "Click It visual product-matching quality",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Vision / Catalog / retrieval quality owner",
+      "acceptance": "Click It is evaluated as image-to-catalog-image product matching using rights-cleared, immutable catalog product/variant images and a frozen candidate snapshot; the current image-to-catalog-text FashionCLIP path is reported only as a separate baseline and is not called exact visual matching. The evaluation is preregistered and human-judged with product/source-cluster separation, duplicate/near-duplicate controls and representative market/category/device/lighting/capture subgroups. Report Recall@k, Precision@k, nDCG@k, MRR, top-1 exact-variant hit rate, no-match/abstention, false-positive cost and subgroup confidence intervals. Model, processor, image assets, runtime, catalog snapshot and qrels are digest-bound. Similarity scores are not probabilities until calibrated on a separate calibration split. Product details and merchant comparisons remain candidate-only until exact-variant CAL SHOW and current Commerce landed-cost checks succeed."
+    },
+    {
+      "id": "REL-26",
+      "name": "Look It outfit decomposition and component retrieval quality",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "PNELLY / Vision / retrieval quality owner",
+      "acceptance": "Look It is evaluated independently from Click It using a rights-cleared outfit-reference dataset and its own human-reviewed labels. Outfit decomposition is scored separately from component-to-catalog retrieval; report component detection/category precision and recall, item count/coverage, per-component Recall@k/Precision@k/nDCG, false component rate, no-match/abstention, and subgroup confidence intervals across garment layering, occlusion, body presentation, devices, lighting and market categories. Do not reuse Click It qrels or combine product metrics. Any external decomposition provider has pinned model/revision/weights, commercial and image-processing rights, privacy/retention approval, DPA/subprocessor/region evidence and a verified deletion path. Look It's declaration-bound consent, face masking and no-store boundary are exercised in staging. Results remain candidates only; product, merchant, price and media details require exact-variant CAL SHOW and current Commerce data."
     }
   ]
 }
