@@ -171,7 +171,9 @@
       "status": "blocked",
       "owner_role": "Twin / privacy / platform owner",
       "acceptance": "Twin Registry is the sole persistent Twin metadata authority and is integrated with Identity Consent and Asset Service. Every create and authorization verifies exact subject, Twin resource, consent bundle/version/expiry, mesh asset and source-image assets. Asset bytes remain only in private Asset Service. A pinned licensed full-body mesh model and independently reviewed validation pipeline produce a signed release/report attestation. Managed PostgreSQL, Asset Service private object storage, consent expiry/revocation, asset deletion, restore/failure drills and exact-head integration tests are complete. No pose skeleton, mock attestation or registry metadata alone is described as a persistent or validated Twin. The pilot also reports per-measurement error against trained anthropometrist/reference-scan ground truth, per-body-region surface error, scale and pose repeatability, coverage/rejection rates and subgroup confidence intervals across launch-market body shapes, skin tones, capture devices, lighting, occlusion and clothing. Appearance/likeness fidelity is evaluated separately from body geometry and measurement accuracy. The target measurement error (including any proposed 4% claim) is preregistered and cannot be asserted from pose landmarks, vendor claims or aggregate-only averages. Source-photo pixel leakage and deletion of every source/derived asset are independently tested.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/visual-capabilities-qualification-plan-2026-11-27.md"
+      ],
       "verified_commit": null
     },
     {
@@ -181,7 +183,9 @@
       "status": "blocked",
       "owner_role": "Marketplace / Identity / Privacy / Decision owner",
       "acceptance": "The same-origin BFF derives the subject from a verified Commerce session, records a short-lived resource-bound image_processing + look_it bundle in the canonical Identity Consent authority, verifies exact subject/bundle/resource/scopes/version/expiry, invokes PNELLY which independently re-verifies, and revokes the bundle after processing. The Vision processor requires a digest-pinned face detector and masks all detected faces before image-quality analysis, embedding, retrieval or optional external outfit decomposition; unmasked image buffers are closed before downstream processing. Look It also requires an explicit no_people/adults_only declaration bound to a third resource-specific consent receipt, re-verified by PNELLY; missing declarations and minor-containing images are blocked, and adults_only with zero detected faces fails closed. Independent detector false-negative evaluation, deployed detector readiness and privacy review are required; Look It remains distinct from Click It. If revocation fails, no search result is returned. Image bytes are not persisted in BFF/Xari/Vision. Look It returns only aggregate candidate counts and validated outfit-component descriptions; no product, merchant, price, stock or image details leave the retrieval path until CAL SHOW. Optional external outfit decomposition requires separately reviewed provider privacy/retention approval, pinned model/revision/report, and real staging verification. Click It remains independently disabled.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "docs/release/visual-capabilities-qualification-plan-2026-11-27.md"
+      ],
       "verified_commit": null
     },
     {
@@ -240,7 +244,11 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Virtual Try-On / model / quality owner",
-      "acceptance": "The exact FASHN VTON 1.5 source, model revision, weight-file digests, runtime/dependency lock and complete transitive licence/provenance are recorded and approved for commercial use. The initial supported scope is flat-lay garments only; no model-worn garment mode or uncleared parser dependency is enabled. A pinned GPU worker passes real inference, resource/load/latency/timeout and recovery tests on the production target. A rights-cleared, consented, participant-disjoint and blinded human evaluation measures garment identity/texture preservation, body/pose preservation, occlusion and artefact rates, category/device/skin-tone/body-shape subgroup failures, repeatability and abstention; synthetic/mock output and vendor claims do not count. Consent, Twin ownership, private source-asset authorization, output asset ownership, no-store behavior, short retention, deletion/revocation and CDN/cache non-publication are exercised end-to-end. Try-On remains a visual preview only: no fit, size or purchase recommendation is inferred without separately calibrated FCI evidence."
+      "acceptance": "The exact FASHN VTON 1.5 source, model revision, weight-file digests, runtime/dependency lock and complete transitive licence/provenance are recorded and approved for commercial use. The initial supported scope is flat-lay garments only; no model-worn garment mode or uncleared parser dependency is enabled. A pinned GPU worker passes real inference, resource/load/latency/timeout and recovery tests on the production target. A rights-cleared, consented, participant-disjoint and blinded human evaluation measures garment identity/texture preservation, body/pose preservation, occlusion and artefact rates, category/device/skin-tone/body-shape subgroup failures, repeatability and abstention; synthetic/mock output and vendor claims do not count. Consent, Twin ownership, private source-asset authorization, output asset ownership, no-store behavior, short retention, deletion/revocation and CDN/cache non-publication are exercised end-to-end. Try-On remains a visual preview only: no fit, size or purchase recommendation is inferred without separately calibrated FCI evidence.",
+      "evidence_refs": [
+        "docs/release/visual-capabilities-qualification-plan-2026-11-27.md"
+      ],
+      "verified_commit": null
     },
     {
       "id": "REL-25",
@@ -248,7 +256,11 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Vision / Catalog / retrieval quality owner",
-      "acceptance": "Click It is evaluated as image-to-catalog-image product matching using rights-cleared, immutable catalog product/variant images and a frozen candidate snapshot; the current image-to-catalog-text FashionCLIP path is reported only as a separate baseline and is not called exact visual matching. The evaluation is preregistered and human-judged with product/source-cluster separation, duplicate/near-duplicate controls and representative market/category/device/lighting/capture subgroups. Report Recall@k, Precision@k, nDCG@k, MRR, top-1 exact-variant hit rate, no-match/abstention, false-positive cost and subgroup confidence intervals. Model, processor, image assets, runtime, catalog snapshot and qrels are digest-bound. Similarity scores are not probabilities until calibrated on a separate calibration split. Product details and merchant comparisons remain candidate-only until exact-variant CAL SHOW and current Commerce landed-cost checks succeed."
+      "acceptance": "Click It is evaluated as image-to-catalog-image product matching using rights-cleared, immutable catalog product/variant images and a frozen candidate snapshot; the current image-to-catalog-text FashionCLIP path is reported only as a separate baseline and is not called exact visual matching. The evaluation is preregistered and human-judged with product/source-cluster separation, duplicate/near-duplicate controls and representative market/category/device/lighting/capture subgroups. Report Recall@k, Precision@k, nDCG@k, MRR, top-1 exact-variant hit rate, no-match/abstention, false-positive cost and subgroup confidence intervals. Model, processor, image assets, runtime, catalog snapshot and qrels are digest-bound. Similarity scores are not probabilities until calibrated on a separate calibration split. Product details and merchant comparisons remain candidate-only until exact-variant CAL SHOW and current Commerce landed-cost checks succeed.",
+      "evidence_refs": [
+        "docs/release/visual-capabilities-qualification-plan-2026-11-27.md"
+      ],
+      "verified_commit": null
     },
     {
       "id": "REL-26",
@@ -256,7 +268,11 @@
       "required": true,
       "status": "blocked",
       "owner_role": "PNELLY / Vision / retrieval quality owner",
-      "acceptance": "Look It is evaluated independently from Click It using a rights-cleared outfit-reference dataset and its own human-reviewed labels. Outfit decomposition is scored separately from component-to-catalog retrieval; report component detection/category precision and recall, item count/coverage, per-component Recall@k/Precision@k/nDCG, false component rate, no-match/abstention, and subgroup confidence intervals across garment layering, occlusion, body presentation, devices, lighting and market categories. Do not reuse Click It qrels or combine product metrics. Any external decomposition provider has pinned model/revision/weights, commercial and image-processing rights, privacy/retention approval, DPA/subprocessor/region evidence and a verified deletion path. Look It's declaration-bound consent, face masking and no-store boundary are exercised in staging. Results remain candidates only; product, merchant, price and media details require exact-variant CAL SHOW and current Commerce data."
+      "acceptance": "Look It is evaluated independently from Click It using a rights-cleared outfit-reference dataset and its own human-reviewed labels. Outfit decomposition is scored separately from component-to-catalog retrieval; report component detection/category precision and recall, item count/coverage, per-component Recall@k/Precision@k/nDCG, false component rate, no-match/abstention, and subgroup confidence intervals across garment layering, occlusion, body presentation, devices, lighting and market categories. Do not reuse Click It qrels or combine product metrics. Any external decomposition provider has pinned model/revision/weights, commercial and image-processing rights, privacy/retention approval, DPA/subprocessor/region evidence and a verified deletion path. Look It's declaration-bound consent, face masking and no-store boundary are exercised in staging. Results remain candidates only; product, merchant, price and media details require exact-variant CAL SHOW and current Commerce data.",
+      "evidence_refs": [
+        "docs/release/visual-capabilities-qualification-plan-2026-11-27.md"
+      ],
+      "verified_commit": null
     }
   ]
 }
