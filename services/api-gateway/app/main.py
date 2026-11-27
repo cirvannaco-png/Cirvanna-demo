@@ -47,6 +47,7 @@ from fci import FitConfidenceEstimate  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload, evaluate as evaluate_npl  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 from app.comparison import compare_like_for_like_offers  # noqa: E402
+from app.observability import install_observability  # noqa: E402
 
 SERVICE_NAME = "cirvanna-decision-gateway"
 API_VERSION = "1.0.0"
@@ -1942,6 +1943,7 @@ app = FastAPI(
         "domain composition are implemented; unavailable safety and fit providers fail closed."
     ),
 )
+install_observability(app, SERVICE_NAME)
 
 
 @app.middleware("http")
