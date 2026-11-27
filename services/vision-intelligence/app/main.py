@@ -745,7 +745,7 @@ async def look_it_image_search(
 
         # Candidate records and merchant prices do not leave Vision Intelligence.
         # CAL and Commerce own the later display and landed-cost comparison boundary.
-        return {
+        payload = {
             "status": "complete",
             "search_mode": "look_it_image_to_catalog_text_similarity",
             "candidate_count": len(ranked),
@@ -768,6 +768,15 @@ async def look_it_image_search(
                 "landed_cost_included": False,
             },
         }
+        return JSONResponse(
+            content=payload,
+            headers={
+                "Cache-Control": "no-store, private",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
     finally:
         privacy_safe_image.close()  # Release masked pixels on success and every failure path.
 
