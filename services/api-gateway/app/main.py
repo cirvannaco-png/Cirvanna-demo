@@ -1601,7 +1601,7 @@ def _verified_actor_from_header(end_user_authorization: str | None) -> str:
 
 
 def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Join canonical active Catalog products to currently purchasable Commerce offers."""
+    """Join canonical active Catalog products to current offers with parallel upstream reads."""
     catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
     catalog_token = os.getenv("CATALOG_API_TOKEN", "").strip()
     commerce_base = os.getenv("COMMERCE_API_URL", "").strip().rstrip("/")
@@ -1610,60 +1610,83 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
         raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_NOT_CONFIGURED"})
     if not commerce_base or not _trusted_internal_base_url(commerce_base) or len(commerce_read_token.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_NOT_CONFIGURED"})
-    params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
+
+    catalog_params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
     if payload.query:
-        params["q"] = payload.query
+        catalog_params["q"] = payload.query
     if payload.category:
-        params["category"] = payload.category
-    catalog_items: list[dict[str, Any]] = []
-    offer_items: list[dict[str, Any]] = []
+        catalog_params["category"] = payload.category
+
+    offer_params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
+    if payload.query:
+        offer_params["q"] = payload.query
+    if payload.category:
+        offer_params["category"] = payload.category
+    if payload.currency:
+        offer_params["currency"] = payload.currency.upper()
+    if payload.market_country_code:
+        offer_params["market_country_code"] = payload.market_country_code.upper()
+    if payload.display_currency:
+        offer_params["display_currency"] = payload.display_currency.upper()
+    if payload.destination_key:
+        offer_params["destination_key"] = payload.destination_key
+        offer_params["radius_km"] = payload.radius_km
+    if payload.fulfillment_mode:
+        offer_params["fulfillment_mode"] = payload.fulfillment_mode
+
     try:
-        with httpx.Client(timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
-            catalog_response = client.get(
-                catalog_base + "/products",
-                params=params,
-                headers={"Authorization": "Bearer " + catalog_token, "Accept": "application/json"},
-            )
-            if catalog_response.status_code != 200:
-                raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_UNAVAILABLE"})
+        # Catalog metadata and Commerce offers are independent reads. Run them
+        # concurrently so discovery pays approximately the slower upstream latency,
+        # not the sum. Both responses are still validated and joined below.
+        with httpx.Client(
+            timeout=httpx.Timeout(5.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                catalog_future = executor.submit(
+                    client.get,
+                    catalog_base + "/products",
+                    params=catalog_params,
+                    headers={"Authorization": "Bearer " + catalog_token, "Accept": "application/json"},
+                )
+                offers_future = executor.submit(
+                    client.get,
+                    commerce_base + "/marketplace/offers",
+                    params=offer_params,
+                    headers={
+                        "X-Commerce-Marketplace-Read-Token": commerce_read_token,
+                        "Accept": "application/json",
+                    },
+                )
+                catalog_response = catalog_future.result()
+                offer_response = offers_future.result()
+
+        if catalog_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_UNAVAILABLE"})
+        if offer_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
+        try:
             catalog_payload = catalog_response.json()
-            if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("items"), list):
-                raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_RESPONSE_INVALID"})
-            catalog_items = [x for x in catalog_payload["items"] if isinstance(x, dict) and x.get("status") == "active" and isinstance(x.get("product_id"), str)]
-            offer_params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
-            if payload.query:
-                offer_params["q"] = payload.query
-            if payload.category:
-                offer_params["category"] = payload.category
-            if payload.currency:
-                offer_params["currency"] = payload.currency.upper()
-            if payload.market_country_code:
-                offer_params["market_country_code"] = payload.market_country_code.upper()
-            if payload.display_currency:
-                offer_params["display_currency"] = payload.display_currency.upper()
-            if payload.destination_key:
-                offer_params["destination_key"] = payload.destination_key
-                offer_params["radius_km"] = payload.radius_km
-            if payload.fulfillment_mode:
-                offer_params["fulfillment_mode"] = payload.fulfillment_mode
-            offer_response = client.get(
-                commerce_base + "/marketplace/offers",
-                params=offer_params,
-                headers={
-                    "X-Commerce-Marketplace-Read-Token": commerce_read_token,
-                    "Accept": "application/json",
-                },
-            )
-            if offer_response.status_code != 200:
-                raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
             offer_payload = offer_response.json()
-            if not isinstance(offer_payload, dict) or not isinstance(offer_payload.get("items"), list):
-                raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_RESPONSE_INVALID"})
-            offer_items = [x for x in offer_payload["items"] if isinstance(x, dict)]
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "MARKETPLACE_DISCOVERY_RESPONSE_INVALID"}) from exc
+        if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("items"), list):
+            raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_RESPONSE_INVALID"})
+        if not isinstance(offer_payload, dict) or not isinstance(offer_payload.get("items"), list):
+            raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_RESPONSE_INVALID"})
+        catalog_items = [
+            item for item in catalog_payload["items"]
+            if isinstance(item, dict)
+            and item.get("status") == "active"
+            and isinstance(item.get("product_id"), str)
+        ]
+        offer_items = [item for item in offer_payload["items"] if isinstance(item, dict)]
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(503, detail={"code": "MARKETPLACE_DISCOVERY_UNAVAILABLE"}) from exc
+
     catalog_ids = {item["product_id"] for item in catalog_items}
     joined = [offer for offer in offer_items if offer.get("catalog_product_id") in catalog_ids]
     return catalog_items, joined
