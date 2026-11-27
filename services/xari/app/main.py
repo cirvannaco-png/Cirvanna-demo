@@ -261,7 +261,7 @@ async def look_it_image_search(
     resource_id: Annotated[str, Form(min_length=3, max_length=160)],
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
-    photographed_people_status: Annotated[str, Form()],
+    photographed_people_status: Annotated[str, Form(default="unknown")],
     image: Annotated[UploadFile, File()],
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
