@@ -489,7 +489,7 @@ def test_look_it_requires_both_explicit_consents_before_decoding(client, monkeyp
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "false"},
+        data={"consent_image_processing": "true", "consent_look_it": "false", "photographed_people_status": "no_people"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 403
@@ -505,7 +505,7 @@ def test_look_it_requires_pinned_face_detector_before_decoding(client, monkeypat
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 503
@@ -556,7 +556,7 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
 
@@ -568,6 +568,45 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
     assert response.json()["image_persisted"] is False
     with pytest.raises(ValueError):
         masked.getpixel((0, 0))
+
+
+def test_look_it_adult_declaration_with_no_detected_face_fails_closed(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 0))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unverified adult image reached embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("catalog must not be queried"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "photographed_people_status": "adults_only",
+        },
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
+def test_look_it_rejects_minor_or_missing_person_declaration_before_decode(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("unsupported declaration must block before decode"))
+    for status, expected in (
+        ("contains_minor", "LOOK_IT_MINOR_IMAGES_UNSUPPORTED"),
+        ("", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
+    ):
+        response = client.post(
+            "/v1/search/image",
+            headers=auth(),
+            data={
+                "consent_image_processing": "true",
+                "consent_look_it": "true",
+                "photographed_people_status": status,
+            },
+            files={"image": ("outfit.png", image_bytes(), "image/png")},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == expected
 
 
 def test_look_it_returns_only_candidate_counts_and_optional_validated_components(client, monkeypatch):
@@ -606,7 +645,7 @@ def test_look_it_returns_only_candidate_counts_and_optional_validated_components
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
