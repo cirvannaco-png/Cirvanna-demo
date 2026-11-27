@@ -9,6 +9,7 @@ SERVICES = (
     "marketplace-bff",
     "commerce-service",
     "privacy-governance-service",
+    "api-gateway",
 )
 
 
@@ -21,7 +22,8 @@ def test_critical_services_install_the_shared_observability_contract():
         ast.parse(text, filename=str(source))
         ast.parse(module_text, filename=str(module))
         assert "from app.observability import install_observability" in text
-        assert "install_observability(app, SERVICE)" in text
+        expected_call = "install_observability(app, SERVICE_NAME)" if service == "api-gateway" else "install_observability(app, SERVICE)"
+        assert expected_call in text
         assert '"/internal/metrics"' in module_text
 
 
