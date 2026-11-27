@@ -28,12 +28,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install geometry contract dependencies
-        run: python -m pip install --upgrade pip pytest numpy
+        run: python -m pip install --upgrade pip pytest numpy==2.2.6 trimesh==4.7.4
       - name: Compile Twin geometry tools
         run: python -m compileall -q tools/model_training/twin_geometry
       - name: Run consent, topology and shape-basis tests
-        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py
+        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py tests/model_training/test_twin_multiview_fit.py
       - name: Verify training CLI help
         run: |
           python tools/model_training/twin_geometry/validate_dataset.py --help
           python tools/model_training/twin_geometry/train_shape_model.py --help
+          python tools/model_training/twin_geometry/fit_multiview_capture.py --help
