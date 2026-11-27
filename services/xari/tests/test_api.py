@@ -187,6 +187,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "true",
+            "photographed_people_status": "adults_only",
             "category": "dress",
             "limit": "5",
         },
@@ -227,6 +228,7 @@ def test_look_it_rejects_request_when_consent_is_incomplete(monkeypatch):
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "false",
+            "photographed_people_status": "adults_only",
         },
         files={"image": ("outfit.png", b"reference-image", "image/png")},
     )
