@@ -42,6 +42,9 @@ class RequestMetrics:
         self._buckets: dict[tuple[str, str, int], list[int]] = defaultdict(
             lambda: [0 for _ in _BUCKETS]
         )
+        self._dependency_counts: dict[str, int] = defaultdict(int)
+        self._dependency_sums: dict[str, float] = defaultdict(float)
+        self._dependency_buckets: dict[str, list[int]] = defaultdict(lambda: [0 for _ in _BUCKETS])
 
     def record(self, method: str, route: str, status_code: int, elapsed: float) -> None:
         key = (method, route, status_code)
@@ -53,11 +56,25 @@ class RequestMetrics:
                 if elapsed <= boundary:
                     values[index] += 1
 
+    def record_dependency(self, dependency: str, elapsed: float) -> None:
+        # Fixed allowlist keeps dependency metric cardinality bounded.
+        if dependency not in {"catalog", "commerce"}:
+            return
+        duration = max(0.0, float(elapsed))
+        with self._lock:
+            self._dependency_counts[dependency] += 1
+            self._dependency_sums[dependency] += duration
+            for index, boundary in enumerate(_BUCKETS):
+                if duration <= boundary:
+                    self._dependency_buckets[dependency][index] += 1
     def render(self) -> str:
         with self._lock:
             counts = dict(self._counts)
             sums = dict(self._sums)
             buckets = {key: list(value) for key, value in self._buckets.items()}
+            dependency_counts = dict(self._dependency_counts)
+            dependency_sums = dict(self._dependency_sums)
+            dependency_buckets = {key: list(value) for key, value in self._dependency_buckets.items()}
 
         lines = [
             "# HELP http_server_requests_total Total HTTP requests by bounded route template.",
@@ -98,6 +115,21 @@ class RequestMetrics:
             lines.append(
                 f"http_server_request_duration_seconds_count{{{base}}} {counts[key]}"
             )
+        if dependency_counts:
+            lines.extend([
+                "# HELP http_client_request_duration_seconds Internal dependency request duration in seconds.",
+                "# TYPE http_client_request_duration_seconds histogram",
+            ])
+            for dependency, count in sorted(dependency_counts.items()):
+                base = f'service="{_escape_label(self.service)}",dependency="{dependency}"'
+                values = dependency_buckets.get(dependency, [0 for _ in _BUCKETS])
+                for index, boundary in enumerate(_BUCKETS):
+                    lines.append(
+                        f'http_client_request_duration_seconds_bucket{{{base},le="{boundary:g}"}} {values[index]}'
+                    )
+                lines.append(f'http_client_request_duration_seconds_bucket{{{base},le="+Inf"}} {count}')
+                lines.append(f'http_client_request_duration_seconds_sum{{{base}}} {dependency_sums.get(dependency, 0.0):.9f}')
+                lines.append(f'http_client_request_duration_seconds_count{{{base}}} {count}')
         return "\n".join(lines) + "\n"
 
 
