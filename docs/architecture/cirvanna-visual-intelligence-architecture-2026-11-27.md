@@ -53,6 +53,12 @@ The first Look It component-localization evaluator now computes category-aware b
 - Appearance likeness, skin/hair/material fidelity and temporal consistency reported separately.
 - Human-reviewed failure analysis; no sizing/fit use until calibrated measurement gates pass.
 
+### Virtual Try-On private inference worker
+
+A Cirvanna-owned GPU worker candidate is defined at services/virtual-try-on/cvi-worker. It loads only a digest-pinned Cirvanna warp-and-refine checkpoint, verifies an independent Ed25519 qualification attestation over the model/data/rights/evaluation/runtime/GPU manifest, and rejects unsigned research weights. Each inference requires a short-lived, one-time Ed25519 privacy receipt binding the exact input asset digests, active consent/revocation snapshot, preprocessing digest and face-masking declarations. The worker is internal-only, single-concurrency, CUDA-only, no-store, and closes uploads/overwrites in-memory buffers and tensors after inference.
+
+The deployment template specifies one private GPU, bounded memory, read-only model artifacts, memory-backed temporary uploads and network-policy isolation. It has not been built or deployed: there is no trained checkpoint, independent qualification signature, selected GPU provider or authorized paid provisioning. The worker's current security tests mock the model inference function; they do not prove real GPU inference or image quality.
+
 ### Virtual Try-On
 - Pinned model/code/weights and full transitive license/SBOM review.
 - Real GPU load/inference, deterministic input/output validation and resource saturation tests.
