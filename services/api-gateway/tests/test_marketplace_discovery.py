@@ -667,3 +667,42 @@ def test_cultural_identity_internal_http_client_disables_environment_proxies_and
     assert error.value.status_code == 503
     assert captured["trust_env"] is False
     assert captured["follow_redirects"] is False
+
+
+def test_catalog_and_commerce_reads_overlap_and_emit_dependency_latency(monkeypatch):
+    from threading import Barrier
+
+    rendezvous = Barrier(2)
+    product_id = "catalog-product-1"
+
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, body): self._body = body
+        def json(self): return self._body
+
+    class FakeClient:
+        def __init__(self, **_kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def get(self, url, **_kwargs):
+            rendezvous.wait(timeout=2)
+            if url.endswith("/products"):
+                return FakeResponse({"items": [{"product_id": product_id, "status": "active"}]})
+            return FakeResponse({"items": [{"catalog_product_id": product_id, "listing_id": "listing-1"}]})
+
+    monkeypatch.setenv("CATALOG_SERVICE_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-read-token-with-at-least-32-bytes")
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", "commerce-read-token-with-at-least-32-bytes")
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+
+    products, offers = main._discover_catalog_and_offers(
+        main.DiscoveryRequest(user_id="subject-1", query="cotton shirt", limit=10)
+    )
+
+    assert [item["product_id"] for item in products] == [product_id]
+    assert [item["catalog_product_id"] for item in offers] == [product_id]
+    metrics = main.app.state.request_metrics.render()
+    assert 'dependency="catalog"' in metrics
+    assert 'dependency="commerce"' in metrics
+    assert "http_client_request_duration_seconds_bucket" in metrics
