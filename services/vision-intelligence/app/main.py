@@ -685,6 +685,7 @@ async def _component_match_counts(
 async def look_it_image_search(
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
+    photographed_people_status: Annotated[str, Form()],
     image: Annotated[UploadFile, File()],
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
@@ -693,6 +694,10 @@ async def look_it_image_search(
     if not consent_image_processing or not consent_look_it:
         await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only"}:
+        await image.close()
+        code = "LOOK_IT_MINOR_IMAGES_UNSUPPORTED" if photographed_people_status == "contains_minor" else "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"
+        raise HTTPException(403, detail={"code": code})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -718,6 +723,9 @@ async def look_it_image_search(
         privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
     finally:
         decoded.close()  # Never retain the unmasked decoded image past masking.
+    if photographed_people_status == "adults_only" and faces_masked < 1:
+        privacy_safe_image.close()
+        raise HTTPException(503, detail={"code": "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"})
     try:
         quality = evaluate_image_quality(privacy_safe_image)
         if not quality["passed"]:
@@ -755,6 +763,7 @@ async def look_it_image_search(
             "privacy": {
                 "face_detection": "completed",
                 "faces_masked": faces_masked,
+                "photographed_people_status": photographed_people_status,
                 "face_recognition": False,
                 "original_image_persisted": False,
             },
