@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fit a Cirvanna parametric body shape basis and tape-measure calibration from registered scans."""
 from __future__ import annotations
-import argparse, hashlib, json, os, subprocess, sys, tempfile
+import argparse, hashlib, json, os, sys, tempfile
 from pathlib import Path
 import numpy as np
 
@@ -10,6 +10,7 @@ sys.path.insert(0,str(ROOT))
 from tools.model_training.twin_geometry.validate_dataset import validate_dataset,safe_mesh_path
 from tools.model_training.twin_geometry.parametric_body import reconstruct_mesh
 from tools.model_evaluation.fashion_retrieval.private_artifacts import write_private_text
+from tools.model_training.provenance import require_clean_source_revision
 
 MEASUREMENTS=("height_mm","chest_circumference_mm","waist_circumference_mm","hip_circumference_mm","inseam_mm")
 
@@ -65,11 +66,13 @@ def main()->int:
     parser.add_argument("--ridge-alpha",type=float,default=1.0)
     args=parser.parse_args()
     if args.components<1 or args.ridge_alpha<0: raise ValueError("invalid shape model configuration")
+    source_revision=require_clean_source_revision(ROOT)
     dataset=validate_dataset(args.manifest,args.annotations,args.mesh_root,args.rights_manifest)
+    dataset["dataset_manifest_sha256"]=hashlib.sha256(args.manifest.read_bytes()).hexdigest()
     rows=[json.loads(line) for line in args.annotations.read_text(encoding="utf-8").splitlines() if line.strip()]
     train=[row for row in rows if row["split"]=="train"]
     validation=[row for row in rows if row["split"]=="validation"]
-    test=[row for row in rows if row["split"]=="test"]
+    test_rows=[row for row in rows if row["split"]=="test"]
     train_vertices=[]; train_faces=[]
     for row in train:
         vertices,faces=load_mesh(safe_mesh_path(args.mesh_root,row["mesh_path"]))
@@ -104,7 +107,7 @@ def main()->int:
             "measurements":{name:metric_summary(actual[:,i],predicted[:,i]) for i,name in enumerate(MEASUREMENTS)}
         }
     validation_report=evaluate_split(validation)
-    test_report=evaluate_split(test)
+    # The held-out test split is sealed for the independent evaluator.
     args.output_dir.mkdir(parents=True,exist_ok=True,mode=0o700)
     if os.name=="posix" and args.output_dir.stat().st_mode&0o077: raise PermissionError("training output directory must be owner-only (0700)")
     artifact=args.output_dir/"cvi-parametric-body-model.npz"
@@ -120,21 +123,19 @@ def main()->int:
     except Exception:
         temp.unlink(missing_ok=True); raise
     digest=hashlib.sha256(artifact.read_bytes()).hexdigest()
-    try: revision=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
-    except Exception: revision="unknown"
     report={
         "schema_version":"1.0","model_id":"cirvanna-parametric-body-shape-v0",
         "architecture":"registered-mesh-pca-plus-ridge-anthropometry-calibration",
         "initialization":"fit_from_consent-governed_registered_3d_scans",
-        "source_revision":revision,"artifact_sha256":digest,"dataset":dataset,
+        "source_revision":source_revision,"artifact_sha256":digest,"dataset":dataset,
         "configuration":{"components":len(basis),"requested_components":args.components,"ridge_alpha":args.ridge_alpha,"measurement_names":MEASUREMENTS},
         "explained_variance_ratio":explained.tolist(),
-        "validation":validation_report,"held_out_test":test_report,
+        "validation":validation_report,"held_out_test":{"status":"reserved_for_independent_evaluation","sample_count":len(test_rows)},
         "status":"research_geometry_basis_not_a_photo_reconstruction_model",
         "limitations":["Requires registered scans with identical topology and calibrated millimetre scale.","Does not infer shape coefficients from photographs.","Surface reconstruction errors are on registered scans, not independent anatomical validation.","Tape-measure regression is cohort-specific and must be independently calibrated and subgroup-validated.","No persistent Twin rendering, identity consistency or privacy release gate is qualified."]
     }
     write_private_text(args.output_dir/"training-report.json",json.dumps(report,indent=2,sort_keys=True)+"\n")
-    print(json.dumps({"status":report["status"],"artifact_sha256":digest,"components":len(basis),"output_dir":str(args.output_dir)}))
+    print(json.dumps({"status":report["status"],"artifact_sha256":digest,"components":len(basis),"held_out_test":"reserved_for_independent_evaluation","output_dir":str(args.output_dir)}))
     return 0
 
 if __name__=="__main__": raise SystemExit(main())
