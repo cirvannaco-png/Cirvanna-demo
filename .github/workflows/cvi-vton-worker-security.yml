@@ -39,10 +39,12 @@ jobs:
           import yaml
           from pathlib import Path
           docs=list(yaml.safe_load_all(Path("services/virtual-try-on/cvi-worker/deploy/gpu-worker.yaml").read_text()))
-          assert len(docs)==3
+          assert len(docs)==4
           assert docs[0]["kind"]=="Deployment"
           assert docs[1]["spec"]["type"]=="ClusterIP"
           assert docs[2]["kind"]=="NetworkPolicy"
+          assert docs[3]["kind"]=="PersistentVolumeClaim"
+          assert docs[3]["metadata"]["name"]=="cirvanna-cvi-tryon-replay-ledger"
           PY
       - name: Verify artifact-manifest CLI
         run: python services/virtual-try-on/cvi-worker/scripts/build_artifact_manifest.py --help
