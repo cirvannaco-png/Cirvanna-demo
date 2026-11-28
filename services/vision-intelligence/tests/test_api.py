@@ -556,7 +556,7 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
 
@@ -570,11 +570,8 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
         masked.getpixel((0, 0))
 
 
-def test_look_it_adult_declaration_with_no_detected_face_fails_closed(client, monkeypatch):
-    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
-    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 0))
-    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unverified adult image reached embedding"))
-    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("catalog must not be queried"))
+def test_look_it_rejects_adult_declaration_before_decode(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("people-containing image declarations must be rejected before decode"))
     response = client.post(
         "/v1/search/image",
         headers=auth(),
@@ -585,14 +582,15 @@ def test_look_it_adult_declaration_with_no_detected_face_fails_closed(client, mo
         },
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"
 
 
 def test_look_it_rejects_minor_or_missing_person_declaration_before_decode(client, monkeypatch):
     monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("unsupported declaration must block before decode"))
     for status, expected in (
-        ("contains_minor", "LOOK_IT_MINOR_IMAGES_UNSUPPORTED"),
+        ("contains_minor", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
+        ("adults_only", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
         ("", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
     ):
         response = client.post(
