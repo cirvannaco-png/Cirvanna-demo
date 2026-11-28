@@ -1,4 +1,4 @@
-import base64, datetime, hashlib, io, json, sys, tempfile, subprocess
+import base64, datetime, hashlib, io, json, os, sys, tempfile, subprocess
 from pathlib import Path
 
 import numpy as np
@@ -276,18 +276,29 @@ def test_artifact_builder_creates_unsigned_bundle_that_worker_refuses(tmp_path):
         worker.verify_model_bundle(bundle,public,"independent-model-review-key")
 
 
-def test_privacy_receipt_replay_is_durable_across_worker_restarts(tmp_path, monkeypatch):
+def test_privacy_receipt_replay_is_durable_across_worker_restarts(tmp_path):
     ledger = tmp_path / "durable" / "replay-ledger.sqlite3"
-    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", str(ledger))
-    expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20)
-    worker.consume_receipt_once("receipt-persistent-001", expires)
+    env = os.environ.copy()
+    env["CVI_VTON_REPLAY_DB_PATH"] = str(ledger)
+    consume_script = (
+        "import datetime; from app import main as worker; "
+        "worker.consume_receipt_once('receipt-persistent-001', "
+        "datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20))"
+    )
 
-    # A new worker process has no in-memory state to inherit. The database
-    # uniqueness constraint must still reject the same unexpired receipt.
+    # Separate interpreter processes model a worker restart: no process-local
+    # memory survives, so only the persistent database can reject the replay.
+    first = subprocess.run(
+        [sys.executable, "-c", consume_script], env=env, capture_output=True, text=True,
+    )
+    assert first.returncode == 0, first.stderr
     assert ledger.is_file()
     assert ledger.stat().st_mode & 0o777 == 0o600
-    with pytest.raises(ValueError, match="replay"):
-        worker.consume_receipt_once("receipt-persistent-001", expires)
+    second = subprocess.run(
+        [sys.executable, "-c", consume_script], env=env, capture_output=True, text=True,
+    )
+    assert second.returncode != 0
+    assert "privacy receipt replay detected" in second.stderr
 
 
 def test_privacy_receipt_ledger_allows_exactly_one_concurrent_consumer(tmp_path, monkeypatch):
