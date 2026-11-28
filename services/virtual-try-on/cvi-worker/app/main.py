@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio, base64, hashlib, hmac, io, json, os, re, sqlite3, threading
 from datetime import datetime, timezone, timedelta
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -236,7 +237,7 @@ def check_receipt_ledger() -> None:
     """Verify that the durable replay ledger is readable, writable and healthy."""
     db_path = _receipt_ledger_path()
     try:
-        with sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None) as connection:
+        with closing(sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None)) as connection:
             connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute(
@@ -263,7 +264,7 @@ def consume_receipt_once(receipt_id: str, expires_at: datetime) -> None:
     now_text = now.isoformat(timespec="microseconds")
     expiry_text = expires_at.astimezone(timezone.utc).isoformat(timespec="microseconds")
     try:
-        with sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None) as connection:
+        with closing(sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None)) as connection:
             connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute(
