@@ -497,6 +497,9 @@ def test_look_it_requires_both_explicit_consents_before_decoding(client, monkeyp
 
 
 def test_look_it_returns_only_candidate_counts_and_optional_validated_components(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 1))
+
     async def offers():
         return ([{
             "variant_id": "00000000-0000-4000-8000-000000000001",
