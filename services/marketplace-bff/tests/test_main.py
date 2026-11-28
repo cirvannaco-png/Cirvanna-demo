@@ -898,7 +898,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
             "displayable_products": [], "withheld_candidate_ids": [],
         }),
     ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post(
         "/api/wardrobe/recommendations",
         headers={"Authorization": "Bearer signed-session"},
@@ -925,6 +925,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
     assert gateway["context"]["location"] == "Subukia"
     assert response.json()["conversation"]["state_version"] == 2
     assert response.json()["conversation"]["raw_transcript_stored"] is False
+    assert all(call[2]["timeout"].connect == 2.0 and call[2]["timeout"].read == 12.0 for call in fake.calls)
 
 
 def test_wardrobe_recommendations_block_revoked_conversation_before_gateway(client, monkeypatch):
@@ -976,7 +977,7 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
             "display_authority": "CaTaCaCi/CAL",
         }),
     ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post(
         "/api/wardrobe/recommendations",
         headers={"Authorization": "Bearer signed-session"},
@@ -1004,6 +1005,7 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert "withheld_candidate_ids" not in response.json()
     assert "blocked-product-secret" not in response.text
     assert "Authorization" not in response.text
+    assert all(call[2]["timeout"].connect == 2.0 and call[2]["timeout"].read == 12.0 for call in fake.calls)
 
 
 def test_sanctuary_and_twin_onboarding_pages_are_served_without_cache(client):
