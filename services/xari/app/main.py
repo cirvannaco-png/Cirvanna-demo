@@ -273,13 +273,9 @@ async def look_it_image_search(
             raise HTTPException(422, detail={"code": "INVALID_VERIFIED_SUBJECT"})
         if not consent_image_processing or not consent_look_it:
             raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
-        if photographed_people_status not in {"no_people", "adults_only"}:
-            code = "LOOK_IT_MINOR_IMAGES_UNSUPPORTED" if photographed_people_status == "contains_minor" else "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"
-            raise HTTPException(403, detail={"code": code})
-        declaration_scope = {
-            "no_people": "photographed_no_people_attestation",
-            "adults_only": "photographed_people_adult_attestation",
-        }[photographed_people_status]
+        if photographed_people_status != "no_people":
+            raise HTTPException(403, detail={"code": "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"})
+        declaration_scope = "photographed_no_people_attestation"
         content_type = (image.content_type or "").lower()
         if content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
