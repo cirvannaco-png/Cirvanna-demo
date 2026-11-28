@@ -97,14 +97,15 @@ def project_landmarks(vertices:np.ndarray,indices:np.ndarray,views:list[dict[str
         for name,index in zip(landmark_names,range(len(indices))):
             point=np.append(points[index],1.0)
             projected=camera@point
-            if abs(projected[2])<1e-8: raise ValueError("camera projection produced a point at infinity")
+            if projected[2]<=1e-8: raise ValueError("camera projection places a body landmark behind or on the camera plane")
             x=projected[0]/projected[2]/view["image_width"]
             y=projected[1]/projected[2]/view["image_height"]
             observed_x,observed_y,confidence=view["keypoints"][name]
             scale=np.sqrt(confidence)
             residuals.extend([(x-observed_x)*view["image_width"]*scale,(y-observed_y)*view["image_height"]*scale])
         projected_mesh=(camera@homogeneous.T).T
-        if np.any(np.abs(projected_mesh[:,2])<1e-8): raise ValueError("silhouette projection produced a point at infinity")
+        if np.any(projected_mesh[:,2]<=1e-8):
+            raise ValueError("silhouette projection places body mesh vertices behind or on the camera plane")
         normalized_x=projected_mesh[:,0]/projected_mesh[:,2]/view["image_width"]
         normalized_y=projected_mesh[:,1]/projected_mesh[:,2]/view["image_height"]
         predicted_bbox=(normalized_x.min(),normalized_y.min(),normalized_x.max(),normalized_y.max())
