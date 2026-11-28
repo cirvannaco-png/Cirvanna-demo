@@ -2870,7 +2870,7 @@ def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(cl
             "withheld_candidate_ids": [],
         }),
     ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post(
         "/api/wardrobe/recommendations",
         headers={"Authorization": "Bearer signed-session"},
