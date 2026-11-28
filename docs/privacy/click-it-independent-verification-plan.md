@@ -6,7 +6,7 @@
 
 Click It is a separate product surface from PNELLY Look It. It must not perform face recognition, identity search, face embeddings, naming, age estimation, identity matching or behavioral profiling. The only permitted face operation is locating regions for conservative masking.
 
-Look It remains a separate consent and retrieval workflow. Its BFF creates short-lived image_processing + look_it consent receipts plus a declaration-specific receipt; the PNELLY boundary re-verifies all three scopes. Only no_people and adults_only declarations are accepted; missing declarations and minor-containing images are rejected. For adults_only, a zero-face detector result fails closed. Its Vision route reuses the face-detection-only masking primitive before quality analysis, image embedding and optional outfit decomposition. This shared privacy primitive does not merge the products, scopes or enablement decisions. The real detector artifact, deployed runtime, false-negative evaluation and independent privacy assessment remain release blockers for both image workflows.
+Look It remains a separate consent and retrieval workflow. Its BFF creates short-lived image_processing + look_it consent receipts plus a declaration-specific receipt; the PNELLY boundary re-verifies all three scopes. Look It accepts only a no_people user attestation. Images containing people are not supported. This is not automated person detection or age verification; face detection only masks detected faces and cannot prove that an image contains no people. The attestation is bound to the request consent resource and re-verified by PNELLY. Its Vision route reuses the face-detection-only masking primitive before quality analysis, image embedding and optional outfit decomposition. This shared privacy primitive does not merge the products, scopes or enablement decisions. The real detector artifact, deployed runtime, false-negative evaluation and independent privacy assessment remain release blockers for both image workflows.
 
 The current code establishes useful fail-closed boundaries:
 
@@ -22,7 +22,7 @@ The following privacy providers are still declared unconfigured/unverified in th
 | Stage | Required control | Failure result |
 |---|---|---|
 | Capture | Authenticated uploader; bounded JPEG/PNG/WebP; no background upload; clear separate Click It purpose consent | Reject before parsing/forwarding |
-| Photographed-person declaration | `no_people`, `adults_only` or `contains_minor`; declaration is user attestation, not model inference | Unknown/missing declaration blocks |
+| Look It photographed-person declaration | `no_people` user attestation only; not automated person detection or age verification | Any other or missing declaration blocks |
 | Consent | Short-lived consent bound to verified subject, one request/resource, purpose, version and exact scope; revocation checked before processing | No scan and no candidate response |
 | Jurisdiction | Signed current policy with complete applicability and cross-border transfer resolution | BLOCK/REVIEW; no processing |
 | Child safeguards | Independent, purpose-bound guardian authority for minor-containing images; no child Twin/wardrobe/behavioral personalization | BLOCK |
