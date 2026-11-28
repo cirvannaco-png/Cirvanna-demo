@@ -268,8 +268,6 @@ async def look_it_image_search(
             raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
         if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
             raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
-        if photographed_people_status == "contains_minor":
-            raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
         content_type = (image.content_type or "").lower()
         if content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
