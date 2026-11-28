@@ -12,6 +12,7 @@ from tools.model_training.twin_geometry.parametric_body import reconstruct_mesh
 from tools.model_evaluation.fashion_retrieval.private_artifacts import write_private_text
 
 MEASUREMENTS=("height_mm","chest_circumference_mm","waist_circumference_mm","hip_circumference_mm","inseam_mm")
+MAX_HELD_OUT_MEASUREMENT_MAPE_PERCENT=4.0
 
 def load_mesh(path:Path):
     with np.load(path,allow_pickle=False) as archive:
@@ -53,6 +54,26 @@ def metric_summary(actual:np.ndarray,predicted:np.ndarray)->dict[str,float]:
         "bias_mm":round(float(error.mean()),4),
         "mape_percent":round(float((absolute/np.maximum(actual,1e-6)).mean()*100),4),
     }
+
+def measurement_accuracy_gate(test_report:dict)->dict:
+    """Apply the pre-registered per-measurement held-out MAPE ceiling."""
+    metrics=test_report.get("measurements")
+    if not isinstance(metrics,dict):
+        return {"threshold_mape_percent":MAX_HELD_OUT_MEASUREMENT_MAPE_PERCENT,"passed":False,"reason":"held_out_measurement_metrics_missing","per_measurement":{}}
+    results={}
+    for name in MEASUREMENTS:
+        item=metrics.get(name)
+        mape=item.get("mape_percent") if isinstance(item,dict) else None
+        count=item.get("sample_count") if isinstance(item,dict) else None
+        passed=isinstance(mape,(int,float)) and not isinstance(mape,bool) and isinstance(count,int) and count>0 and float(mape)<=MAX_HELD_OUT_MEASUREMENT_MAPE_PERCENT
+        results[name]={"mape_percent":mape,"sample_count":count,"passed":passed}
+    return {
+        "threshold_mape_percent":MAX_HELD_OUT_MEASUREMENT_MAPE_PERCENT,
+        "metric":"per_measurement_held_out_mean_absolute_percentage_error",
+        "passed":all(item["passed"] for item in results.values()) and len(results)==len(MEASUREMENTS),
+        "per_measurement":results,
+    }
+
 
 def main()->int:
     parser=argparse.ArgumentParser(description=__doc__)
@@ -130,6 +151,7 @@ def main()->int:
         "configuration":{"components":len(basis),"requested_components":args.components,"ridge_alpha":args.ridge_alpha,"measurement_names":MEASUREMENTS},
         "explained_variance_ratio":explained.tolist(),
         "validation":validation_report,"held_out_test":test_report,
+        "held_out_measurement_accuracy_gate":measurement_accuracy_gate(test_report),
         "status":"research_geometry_basis_not_a_photo_reconstruction_model",
         "limitations":["Requires registered scans with identical topology and calibrated millimetre scale.","Does not infer shape coefficients from photographs.","Surface reconstruction errors are on registered scans, not independent anatomical validation.","Tape-measure regression is cohort-specific and must be independently calibrated and subgroup-validated.","No persistent Twin rendering, identity consistency or privacy release gate is qualified."]
     }
