@@ -35,7 +35,7 @@ Despite product image URLs being present in the enriched Catalog records, the cu
 Therefore run two separate tracks:
 
 - **Track A — parity track:** reproduce current Cirvanna image-to-text metadata retrieval and text-to-text search. This is the valid apples-to-apples comparison with the current baseline.
-- **Track B — image-to-image track:** query-image to licensed catalog-product-image retrieval. This is a separate capability experiment. It may reveal a stronger architecture, but it cannot be reported as a direct win over Track A.
+- **Track B — image-to-image track:** query-image to licensed catalog-product-image retrieval. The benchmark runner now supports the `image_to_catalog_image` task with one pinned local catalogue image per candidate and a separate digest manifest. This is a separate capability experiment. It may reveal a stronger architecture, but it cannot be reported as a direct win over Track A. No approved Cirvanna catalogue-image corpus or final human qrels have yet been supplied, so the experiment has not been run and no model is selected.
 
 Do not merge the metrics of these tracks.
 
