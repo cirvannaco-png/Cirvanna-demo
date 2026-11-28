@@ -11,6 +11,10 @@ The current implementation is deliberately narrower than a complete Twin:
 
 It does not infer shape coefficients from photographs, solve camera/pose ambiguity, reconstruct appearance or hair, generate a persistent user avatar, or prove independent anatomical validity.
 
+## Measurement acceptance threshold
+
+The held-out test report now applies a pre-registered maximum of **4.0% MAPE for each of the five measurements independently** (height, chest, waist, hip and inseam). Missing evidence, an empty test sample for any measurement, or any one measurement above 4.0% fails this accuracy gate. Passing this numeric gate is necessary but not sufficient: it does not replace anthropometrist-led independent validation, subgroup error/confidence intervals, repeatability testing, scan-to-photo generalization testing, or calibration drift analysis. The current model remains research-only until those independent gates pass.
+
 ## Dataset requirements
 
 Use a 3D scan cohort collected under explicit, revocable consent for commercial model training and human review. The data-rights manifest scope is twin_geometry_training, and the rights validator requires verified depicted-person consent.
