@@ -1,6 +1,6 @@
 """Private, GPU-only inference worker for Cirvanna's own Try-On model."""
 from __future__ import annotations
-import asyncio, base64, hashlib, hmac, io, json, os, re, threading
+import asyncio, base64, hashlib, hmac, io, json, os, re, sqlite3, threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -90,8 +90,6 @@ _runtime=None
 _runtime_error="not_initialized"
 _runtime_lock=threading.Lock()
 _inference_slot=threading.BoundedSemaphore(1)
-_receipt_lock=threading.Lock()
-_consumed_receipts:dict[str,datetime]={}
 
 def sha256_bytes(data:bytes|bytearray)->str:
     return hashlib.sha256(data).hexdigest()
@@ -217,13 +215,54 @@ def verify_privacy_attestation(
     signature=attestation.get("signature_base64")
     if not isinstance(signature,str): raise ValueError("privacy receipt signature is missing")
     verify_ed25519(privacy_attestation_payload(attestation),signature,public_key_b64)
-    with _receipt_lock:
-        expired=[receipt for receipt,deadline in _consumed_receipts.items() if deadline<=now]
-        for receipt in expired: _consumed_receipts.pop(receipt,None)
-        if receipt_id in _consumed_receipts:
-            raise ValueError("privacy receipt replay detected")
-        _consumed_receipts[receipt_id]=expires
+    consume_receipt_once(receipt_id, expires)
     return receipt_id
+
+def consume_receipt_once(receipt_id: str, expires_at: datetime) -> None:
+    """Atomically consume a privacy receipt in durable storage.
+
+    The ledger stores only an opaque receipt ID and expiry timestamp. It never
+    stores image bytes, asset URLs, user IDs, or consent payloads. A missing,
+    unsafe, read-only, or unavailable ledger is a hard failure.
+    """
+    configured = os.getenv("CVI_VTON_REPLAY_DB_PATH", "/var/lib/cvi-tryon/replay-ledger.sqlite3").strip()
+    if not configured:
+        raise RuntimeError("durable privacy receipt ledger is not configured")
+    db_path = Path(configured)
+    try:
+        parent = db_path.parent
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if parent.is_symlink() or db_path.is_symlink():
+            raise RuntimeError("privacy receipt ledger path must not contain a symlink")
+        now = datetime.now(timezone.utc)
+        now_text = now.isoformat(timespec="microseconds")
+        expiry_text = expires_at.astimezone(timezone.utc).isoformat(timespec="microseconds")
+        with sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None) as connection:
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS consumed_privacy_receipts ("
+                "receipt_id TEXT PRIMARY KEY, expires_at TEXT NOT NULL)"
+            )
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "DELETE FROM consumed_privacy_receipts WHERE expires_at <= ?", (now_text,)
+            )
+            try:
+                connection.execute(
+                    "INSERT INTO consumed_privacy_receipts(receipt_id, expires_at) VALUES (?, ?)",
+                    (receipt_id, expiry_text),
+                )
+            except sqlite3.IntegrityError as exc:
+                connection.execute("ROLLBACK")
+                raise ValueError("privacy receipt replay detected") from exc
+            connection.execute("COMMIT")
+        if db_path.exists():
+            os.chmod(db_path, 0o600)
+    except ValueError:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise RuntimeError("durable privacy receipt ledger is unavailable") from exc
 
 async def read_limited(upload:UploadFile,limit:int)->bytearray:
     result=bytearray()
@@ -435,8 +474,10 @@ async def render(
                 privacy_attestation,runtime["privacy_public_key"],runtime["privacy_key_id"],
                 asset_digests,preprocessing_manifest_sha256
             )
-        except Exception as exc:
+        except ValueError as exc:
             raise HTTPException(status_code=403,detail="signed privacy attestation rejected") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503,detail="privacy receipt replay ledger unavailable") from exc
         png=await run_in_threadpool(run_inference,runtime,buffers)
         return Response(content=png,media_type="image/png",headers={
             "Cache-Control":"no-store, no-cache, must-revalidate, private",
