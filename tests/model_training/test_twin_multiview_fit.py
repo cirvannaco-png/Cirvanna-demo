@@ -59,6 +59,19 @@ class TwinMultiviewFitTests(unittest.TestCase):
         self.assertLess(result["reprojection_rmse_pixels"],0.01)
         self.assertEqual(result["vertices"].shape,self.mean.shape)
 
+    def test_rejects_camera_calibration_that_places_body_behind_camera(self):
+        behind_camera = np.asarray(
+            [[1, 0, 0, 1000], [0, -1, 0, 1800], [0, 0, 0, -1]],
+            dtype=float,
+        )
+        invalid_view = make_view("behind-camera", behind_camera, self.target_vertices)
+        with self.assertRaisesRegex(ValueError, "behind or on the camera plane"):
+            fit_coefficients(
+                self.mean, self.basis, self.coefficient_std, self.faces,
+                self.landmark_indices, self.landmark_names,
+                [invalid_view, self.views[1]], prior_strength=0.01, max_iterations=5,
+            )
+
     def test_capture_validation_requires_consent_and_valid_silhouette_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
