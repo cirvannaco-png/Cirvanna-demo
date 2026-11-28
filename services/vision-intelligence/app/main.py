@@ -531,6 +531,7 @@ def readiness() -> dict[str, Any]:
 def capabilities() -> dict[str, Any]:
     clip_configured, _ = _model_configured()
     pose_configured, _ = _pose_model_configured()
+    face_detector_ready, _ = detector_configuration()
     commerce_configured = bool(os.getenv("COMMERCE_API_URL", "").strip())
     catalog_configured = bool(os.getenv("CATALOG_API_URL", "").strip()) and bool(
         os.getenv("CATALOG_API_TOKEN", "").strip() or os.getenv("CATALOG_READ_TOKEN", "").strip()
@@ -539,7 +540,8 @@ def capabilities() -> dict[str, Any]:
         "service": SERVICE,
         "model_backed_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
         "description_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
-        "look_it_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "look_it_image_search": face_detector_ready and clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "look_it_face_anonymization": face_detector_ready,
         "outfit_decomposition": bool(os.getenv("OUTFIT_DECOMPOSITION_API_URL") and os.getenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256") and SHA256.fullmatch(os.getenv("OUTFIT_DECOMPOSITION_PRIVACY_APPROVAL_SHA256", "").strip().lower())),
         "pose_3d_landmark_inference": pose_configured and _POSE_LANDMARKER is not None,
         "full_surface_mesh": False,
