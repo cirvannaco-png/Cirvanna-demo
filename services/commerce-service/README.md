@@ -6,7 +6,7 @@ This service implements persistent, authenticated commerce APIs. Canonical produ
 
 ## Implemented
 
-- JWT authentication with development-only shared-secret HS256 plus production OIDC/JWKS mode validating RS256 signature, issuer, audience, expiry and a configured application-role claim. Production rejects HS256 even when a shared secret exists. A caller cannot choose an arbitrary user ID through the request body or an X-User-ID header.
+- JWT authentication with development-only shared-secret HS256 plus production OIDC/JWKS mode validating ES256 or RS256 signatures, issuer, audience, expiry and a configured application-role claim. Production rejects HS256 even when a shared secret exists. A caller cannot choose an arbitrary user ID through the request body or an X-User-ID header.
 - Merchant application, admin decision, a required human-verification reference, approval/suspension states, owner-scoped listings and merchant-specific SKUs/variants.
 - Inventory adjustment ledger and invariant checks; available stock equals on_hand minus reserved_qty.
 - Durable per-user saved products and carts, uniqueness constraints and stock revalidation.
@@ -79,7 +79,16 @@ A successful paid settlement writes a versioned `commerce.order.paid` record to 
 
 ## Identity provider setup
 
-This repository does not issue login sessions or manage the user lifecycle. Connect the actual Cirvanna identity provider before staging rollout. Configure the provider's JWKS URL, exact issuer and Commerce audience in the secret manager, map its trusted application-role claim, and test key rotation, expiry, unknown keys, issuer/audience mismatch and disabled-user/session revocation. Signature verification here does not replace the provider's sign-in, consent, account recovery or lifecycle controls.
+This repository does not issue login sessions or manage the user lifecycle. The approved Cirvanna staging issuer is Supabase Auth:
+
+- `COMMERCE_JWT_JWKS_URL=https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json`
+- `COMMERCE_JWT_ISSUER=https://opmfudcofezmatqqsfho.supabase.co/auth/v1`
+- `COMMERCE_JWT_AUDIENCE=authenticated`
+- `COMMERCE_JWT_ROLE_CLAIM=app_role`
+
+Supabase reserves the JWT `role` claim for its Postgres role (`authenticated` for signed-in users); Commerce must not interpret that reserved claim as customer/merchant/admin. The private Identity Learning Auth Hook copies only server-controlled `app_metadata.app_role` to the separate top-level `app_role` claim. Missing app_role defaults to customer; invalid values fail token issuance. Merchant/admin role assignment remains a trusted server-side workflow and must not be driven by user_metadata or browser input. Install the private hook migration from the Identity Learning PR and explicitly enable it under Supabase Authentication → Hooks before enabling Commerce OIDC.
+
+Supabase signing keys support ES256 and RS256; Commerce accepts only those asymmetric algorithms in OIDC mode and never HS256. Configure the project to use an active asymmetric signing key, then verify the live JWKS document and key ID before rollout. Test rotation, expiry, unknown keys, issuer/audience mismatch, disabled-user/session revocation and cache behavior. Signature verification here does not replace browser Authorization Code + PKCE, server-side session lifecycle, consent, account recovery or logout/revocation controls.
 
 ## Production gates still open
 
