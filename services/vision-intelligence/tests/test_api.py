@@ -651,3 +651,29 @@ def test_look_it_masking_uncertainty_blocks_visual_inference(client, monkeypatch
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
+def test_capabilities_do_not_advertise_look_it_without_face_anonymization(monkeypatch):
+    monkeypatch.setattr(main, "_model_configured", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "_pose_model_configured", lambda: (False, "not_needed"))
+    monkeypatch.setattr(main, "detector_configuration", lambda: (False, "detector_missing"))
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_READ_TOKEN", "catalog-read-token-longer-than-thirty-two-bytes")
+    monkeypatch.setattr(main, "_CLIP_MODEL", object())
+    capabilities = main.capabilities()
+    assert capabilities["look_it_face_anonymization"] is False
+    assert capabilities["look_it_image_search"] is False
+
+
+def test_capabilities_advertise_look_it_only_when_masking_and_dependencies_are_ready(monkeypatch):
+    monkeypatch.setattr(main, "_model_configured", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "_pose_model_configured", lambda: (False, "not_needed"))
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_READ_TOKEN", "catalog-read-token-longer-than-thirty-two-bytes")
+    monkeypatch.setattr(main, "_CLIP_MODEL", object())
+    capabilities = main.capabilities()
+    assert capabilities["look_it_face_anonymization"] is True
+    assert capabilities["look_it_image_search"] is True
