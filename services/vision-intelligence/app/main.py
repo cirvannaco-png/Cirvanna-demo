@@ -722,6 +722,9 @@ async def look_it_image_search(
         privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
     finally:
         decoded.close()  # Never retain the unmasked decoded image past masking.
+    if faces_masked > 0:
+        privacy_safe_image.close()
+        raise HTTPException(403, detail={"code": "LOOK_IT_PHOTOGRAPHED_PEOPLE_DETECTED"})
     try:
         quality = evaluate_image_quality(privacy_safe_image)
         if not quality["passed"]:
