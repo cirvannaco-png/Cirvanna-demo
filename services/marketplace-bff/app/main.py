@@ -4393,6 +4393,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
                 identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
                 params={"subject_id": subject},
                 headers=identity_headers,
+                timeout=request_timeout,
             )
         except httpx.HTTPError as exc:
             raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"}) from exc
@@ -4427,6 +4428,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
                     "turn_id": payload.conversation_turn_id,
                     "context": context_state,
                 },
+                timeout=request_timeout,
             )
         except httpx.HTTPError as exc:
             raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_UNAVAILABLE"}) from exc
@@ -4479,6 +4481,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
                 "Accept": "application/json",
             },
             json=body,
+            timeout=request_timeout,
         )
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "WARDROBE_RECOMMENDATIONS_TIMEOUT"}) from exc
