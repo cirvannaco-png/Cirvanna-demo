@@ -60,6 +60,8 @@ POST /v1/render is internal-only and requires:
 
 The privacy receipt binds the exact SHA-256 of all submitted assets, a user-binding digest, consent scope/policy version, active consent state, revocation epoch, face-masking declarations and a short expiry (maximum 30 seconds). Receipt IDs are one-time and replay is rejected using atomic Redis SET-NX with expiry, shared across worker restarts and replicas. Readiness fails closed when the private replay store is missing or unreachable. The orchestrator must recheck current CAL consent/revocation immediately before issuing the receipt; the worker validates the signed snapshot and its short lifetime.
 
+The replay Redis service is security-critical state, not a disposable cache. Production configuration must use durable persistence with an acknowledged-write guarantee appropriate to the receipt lifetime, `maxmemory-policy noeviction`, TLS, a dedicated ACL user restricted to the replay key prefix, authentication, network isolation, capacity alerts and tested failover/restore procedures. Do not use an evicting cache or an in-memory-only Redis. If persistence is lost, rolled back or failover can discard acknowledged SET-NX writes, a previously consumed receipt may become usable again; keep the worker offline after any replay-store restore until outstanding receipts have expired and the privacy-governance owner has rotated the signing key or advanced the revocation epoch.
+
 The worker accepts no remote image URLs and performs no face recognition. It does not decide consent itself.
 
 ## Resource and deletion controls
