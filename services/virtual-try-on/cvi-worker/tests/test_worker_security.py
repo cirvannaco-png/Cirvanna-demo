@@ -272,3 +272,43 @@ def test_artifact_builder_creates_unsigned_bundle_that_worker_refuses(tmp_path):
     private,public=key_pair()
     with pytest.raises(ValueError,match="attestation is missing"):
         worker.verify_model_bundle(bundle,public,"independent-model-review-key")
+
+
+def test_privacy_receipt_replay_is_durable_across_worker_restarts(tmp_path, monkeypatch):
+    ledger = tmp_path / "durable" / "replay-ledger.sqlite3"
+    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", str(ledger))
+    expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20)
+    worker.consume_receipt_once("receipt-persistent-001", expires)
+
+    # A new worker process has no in-memory state to inherit. The database
+    # uniqueness constraint must still reject the same unexpired receipt.
+    assert ledger.is_file()
+    assert ledger.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(ValueError, match="replay"):
+        worker.consume_receipt_once("receipt-persistent-001", expires)
+
+
+def test_privacy_receipt_ledger_allows_exactly_one_concurrent_consumer(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    ledger = tmp_path / "replay-ledger.sqlite3"
+    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", str(ledger))
+    expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20)
+
+    def consume():
+        try:
+            worker.consume_receipt_once("receipt-race-001", expires)
+            return "accepted"
+        except ValueError:
+            return "replay"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes = list(pool.map(lambda _: consume(), range(8)))
+    assert outcomes.count("accepted") == 1
+    assert outcomes.count("replay") == 7
+
+
+def test_privacy_receipt_ledger_fails_closed_when_unconfigured(monkeypatch):
+    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", "")
+    expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20)
+    with pytest.raises(RuntimeError, match="not configured"):
+        worker.consume_receipt_once("receipt-no-ledger-001", expires)
