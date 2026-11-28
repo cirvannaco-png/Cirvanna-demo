@@ -334,6 +334,7 @@ def validate_privacy_preprocessing_manifest(
     image_records = value["images"]
     if not isinstance(image_records, dict) or set(image_records) != required_images:
         raise ValueError("privacy preprocessing manifest must cover every query and candidate image exactly once")
+    faces_masked_total = 0
     for relative_path in sorted(required_images):
         record = image_records[relative_path]
         if not isinstance(record, dict):
@@ -347,6 +348,7 @@ def validate_privacy_preprocessing_manifest(
         masked_count = record.get("faces_masked")
         if isinstance(masked_count, bool) or not isinstance(masked_count, int) or masked_count < 0:
             raise ValueError(f"faces_masked must be a non-negative integer for {relative_path}")
+        faces_masked_total += masked_count
     return {
         "manifest_sha256": sha256_file(path),
         "evidence_sha256": evidence_digest,
@@ -358,6 +360,7 @@ def validate_privacy_preprocessing_manifest(
         "detector_source_revision": value["detector_source_revision"],
         "detector_weights_sha256": value["detector_weights_sha256"],
         "image_count": len(required_images),
+        "faces_masked_total": faces_masked_total,
     }
 
 
@@ -808,7 +811,7 @@ def main() -> int:
         "candidate_pool_sizes": sorted({len(case["candidate_ids"]) for case in cases}),
         "model_revisions": revisions,
         "models": model_manifest,
-        "query_image_digests": image_digest_manifest,
+        "image_asset_digests": image_digest_manifest,
         "privacy_preprocessing": privacy_preprocessing,
         "rankings_output_sha256": sha256_file(output_path),
         "runtime": {
