@@ -47,7 +47,22 @@ The mesh archive is an NPZ with arrays named vertices (N x 3 float) and faces (M
       --output-dir /restricted/twin-geometry/run-001 \
       --components 20 --ridge-alpha 1.0
 
-PCA and measurement regression fit on the train split only. Validation and held-out test splits are reported separately. The checkpoint and report are written owner-only with digests. The test split must remain sealed until the shape dimension and ridge alpha are preregistered.
+PCA and measurement regression fit on the train split only. The trainer evaluates validation data but deliberately does not open the held-out test split; it records only the reserved test sample count. The shape artifact and report are written owner-only with digests. The test split must remain sealed until the shape dimension and ridge alpha are preregistered.
+
+## Independent held-out geometry and measurement evaluation
+
+After training, evaluate the frozen shape basis and calibration in the exact same clean source revision:
+
+    python tools/model_evaluation/twin_geometry/evaluate.py \
+      --model /restricted/twin-geometry/run-001/cvi-parametric-body-model.npz \
+      --training-report /restricted/twin-geometry/run-001/training-report.json \
+      --manifest /restricted/twin-geometry/dataset.manifest.json \
+      --annotations /restricted/twin-geometry/annotations.jsonl \
+      --mesh-root /restricted/twin-geometry/meshes \
+      --rights-manifest /restricted/twin-geometry/data-rights.manifest.json \
+      --output /restricted/twin-geometry/run-001/independent-evaluation.json
+
+The evaluator opens only the frozen test split and binds the model artifact, training report, dataset manifest, annotation split and rights evidence. It reports registered-surface vertex error, measurement MAE/median/P95/bias/MAPE, structural mesh validity and subgroup slices. These are independent held-out research metrics, not anatomical certification or photo-to-3D accuracy.
 
 ## Interpretation
 

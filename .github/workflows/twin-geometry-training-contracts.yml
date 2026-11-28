@@ -4,15 +4,25 @@ on:
   pull_request:
     paths:
       - "tools/model_training/twin_geometry/**"
+      - "tools/model_evaluation/twin_geometry/**"
+      - "tests/model_evaluation/test_twin_geometry_evaluation.py"
       - "tools/model_evaluation/fashion_retrieval/data_rights.py"
       - "tests/model_training/test_twin_geometry_dataset.py"
+      - "tests/model_training/test_twin_multiview_fit.py"
+      - "tests/model_training/test_twin_measurement_accuracy_gate.py"
+      - "tests/model_training/test_twin_shape_training_seals_test.py"
       - ".github/workflows/twin-geometry-training-contracts.yml"
   push:
     branches: [main, "feat/cvi-foundation-2026-11-27"]
     paths:
       - "tools/model_training/twin_geometry/**"
+      - "tools/model_evaluation/twin_geometry/**"
+      - "tests/model_evaluation/test_twin_geometry_evaluation.py"
       - "tools/model_evaluation/fashion_retrieval/data_rights.py"
       - "tests/model_training/test_twin_geometry_dataset.py"
+      - "tests/model_training/test_twin_multiview_fit.py"
+      - "tests/model_training/test_twin_measurement_accuracy_gate.py"
+      - "tests/model_training/test_twin_shape_training_seals_test.py"
       - ".github/workflows/twin-geometry-training-contracts.yml"
 
 permissions:
@@ -29,12 +39,15 @@ jobs:
           python-version: "3.11"
       - name: Install geometry contract dependencies
         run: python -m pip install --upgrade pip pytest numpy==2.2.6 trimesh==4.7.4 networkx==3.4.2 httpx==0.28.1 fastapi==0.115.8 pydantic==2.10.6 python-multipart==0.0.20 Pillow
-      - name: Compile Twin geometry tools
-        run: python -m compileall -q tools/model_training/twin_geometry
-      - name: Run consent, topology and shape-basis tests
-        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py tests/model_training/test_twin_multiview_fit.py
+      - name: Compile Twin geometry training and evaluation tools
+        run: |
+          python -m compileall -q tools/model_training/twin_geometry
+          python -m compileall -q tools/model_evaluation/twin_geometry
+      - name: Run consent, topology, shape-basis and held-out evaluator tests
+        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py tests/model_training/test_twin_multiview_fit.py tests/model_evaluation/test_twin_geometry_evaluation.py tests/model_training/test_twin_measurement_accuracy_gate.py tests/model_training/test_twin_shape_training_seals_test.py
       - name: Verify training CLI help
         run: |
           python tools/model_training/twin_geometry/validate_dataset.py --help
           python tools/model_training/twin_geometry/train_shape_model.py --help
           python tools/model_training/twin_geometry/fit_multiview_capture.py --help
+          python tools/model_evaluation/twin_geometry/evaluate.py --help
