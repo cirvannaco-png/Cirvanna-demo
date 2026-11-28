@@ -6,7 +6,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from PIL import Image
 
 ROOT=Path(__file__).resolve().parents[3]
@@ -87,6 +86,7 @@ def run(args)->dict[str,Any]:
         import torch
         import torch.nn.functional as F
         from torch.utils.data import DataLoader,Dataset
+        import numpy as np
     except ImportError as exc:
         raise RuntimeError("PyTorch is required in the approved evaluation runtime") from exc
     if args.device=="cuda" and not torch.cuda.is_available():
