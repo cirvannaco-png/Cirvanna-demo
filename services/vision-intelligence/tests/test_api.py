@@ -438,7 +438,7 @@ def test_click_it_uses_real_masking_function_before_embedding(client, monkeypatc
 
     assert response.status_code == 200, response.text
     assert events == ["detector", "quality", "embedding", "catalog"]
-    assert response.json()["privacy"]["faces_masked"] == 1
+    assert response.json()["privacy"]["faces_masked"] == 0
     assert response.json()["results"][0]["image_url"] is None
     assert response.headers["cache-control"] == "no-store, private"
 
@@ -523,7 +523,7 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
     def anonymize(image):
         events.append("mask")
         assert image is decoded
-        return masked, 1
+        return masked, 0
 
     def quality(image):
         events.append("quality")
@@ -569,6 +569,29 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
     with pytest.raises(ValueError):
         masked.getpixel((0, 0))
 
+
+
+def test_look_it_rejects_detected_faces_before_quality_embedding_or_catalog(client, monkeypatch):
+    decoded = Image.new("RGB", (240, 320), (20, 40, 60))
+    masked = Image.new("RGB", (240, 320), (80, 100, 120))
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "_decode_image", lambda *_args: decoded)
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda _image: (masked, 1))
+    monkeypatch.setattr(main, "evaluate_image_quality", lambda *_: pytest.fail("face-positive image must not reach quality scoring"))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("face-positive image must not reach embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("face-positive image must not query Catalog"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "LOOK_IT_PHOTOGRAPHED_PEOPLE_DETECTED"
+    with pytest.raises(ValueError):
+        decoded.getpixel((0, 0))
+    with pytest.raises(ValueError):
+        masked.getpixel((0, 0))
 
 def test_look_it_rejects_adult_declaration_before_decode(client, monkeypatch):
     monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("people-containing image declarations must be rejected before decode"))
