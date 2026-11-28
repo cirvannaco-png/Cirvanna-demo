@@ -156,6 +156,21 @@ def test_redis_replay_ttl_rounds_up_to_signed_receipt_expiry(monkeypatch):
     assert list(store.ttls.values()) == [2]
 
 
+def test_privacy_receipt_fails_closed_when_redis_replay_store_is_unavailable():
+    private,public=key_pair()
+    assets={role:(str(index+1)*64) for index,role in enumerate(worker.ASSET_ROLES)}
+    preprocessing="f"*64
+    receipt=privacy_receipt(private,"privacy-governance-key",assets,preprocessing)
+    class UnavailableReplayStore:
+        def set(self,*_args,**_kwargs):
+            raise OSError("redis unavailable")
+    with pytest.raises(worker.ReplayStoreUnavailable,match="durable privacy receipt replay store"):
+        worker.verify_privacy_attestation(
+            json.dumps(receipt),public,"privacy-governance-key",assets,preprocessing,
+            replay_store=UnavailableReplayStore(),
+        )
+
+
 def test_privacy_receipt_rejects_expired_or_unmasked_assets():
     private,public=key_pair()
     assets={role:(str(index+1)*64) for index,role in enumerate(worker.ASSET_ROLES)}
