@@ -127,6 +127,7 @@ The validator requires:
 - a fixed bootstrap count and seed;
 - immutable baseline/challenger revisions; and
 - SHA-256 digests for the data, qrels, complete dependency lock and approved data-rights manifest.
+- For `image_to_catalog_image`, the exact reviewed face-masking preprocessing manifest path and SHA-256 digest. The final evaluator verifies that the runner used that locked manifest and that face recognition remained disabled.
 
 The sample values in unit tests are synthetic examples only, not recommended power calculations or a Cirvanna success threshold. Set the effect threshold and minimum sample/cluster counts from the intended product decision, reviewer capacity and a documented power/precision analysis before final-test unblinding. If the final dataset cannot meet the declared minimums, report the study as underpowered; do not silently lower the gates. Keep the completed registration and its source manifests in the restricted evaluation workspace, not GitHub.
 
