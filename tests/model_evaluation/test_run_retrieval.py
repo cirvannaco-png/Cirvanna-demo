@@ -2,10 +2,15 @@ import hashlib
 import json
 import tempfile
 import unittest
+import sys
+import types
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
 from tools.model_evaluation.fashion_retrieval.run_retrieval import (
+    BASELINE_REVISION,
+    EmbeddingAdapter,
     MODEL_SPECS,
     parse_revisions,
     rank_candidates,
@@ -13,6 +18,7 @@ from tools.model_evaluation.fashion_retrieval.run_retrieval import (
     candidate_text_for_embedding,
     prepare_open_clip_local_dir,
     resolve_media_path,
+    run_model,
     sha256_file,
     validate_case,
     validate_privacy_preprocessing_manifest,
@@ -229,6 +235,71 @@ class RetrievalRunnerTests(unittest.TestCase):
             }), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "prohibits face recognition"):
                 validate_privacy_preprocessing_manifest(manifest, [make_image_case()], root)
+
+    def test_image_to_image_runner_embeds_catalog_photos_and_query_in_same_space(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            media = root / "media"
+            (media / "queries").mkdir(parents=True)
+            (media / "catalog").mkdir()
+            (media / "queries" / "q1.jpg").write_bytes(b"query-image")
+            (media / "catalog" / "p1.jpg").write_bytes(b"matching-catalog-image")
+            (media / "catalog" / "p2.jpg").write_bytes(b"nonmatching-catalog-image")
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            (snapshot / "model.safetensors").write_bytes(b"test-model-artifact")
+            cache = root / "cache"
+            case = make_image_case()
+            cases = [validate_case(case, 1)]
+
+            class FakeCuda:
+                @staticmethod
+                def is_available():
+                    return False
+
+                @staticmethod
+                def empty_cache():
+                    return None
+
+            fake_torch = types.SimpleNamespace(
+                manual_seed=lambda _seed: None,
+                cuda=FakeCuda(),
+            )
+            fake_hub = types.ModuleType("huggingface_hub")
+            fake_hub.snapshot_download = lambda **_kwargs: str(snapshot)
+
+            class FakeAdapter:
+                processor_overrides = {}
+
+                @staticmethod
+                def encode_images(paths, batch_size):
+                    vectors = []
+                    for path in paths:
+                        data = Path(path).read_bytes()
+                        if data == b"query-image":
+                            vectors.append([1.0, 0.0])
+                        elif data == b"matching-catalog-image":
+                            vectors.append([0.9, 0.1])
+                        else:
+                            vectors.append([0.0, 1.0])
+                    return vectors
+
+            with patch.dict(sys.modules, {"torch": fake_torch, "huggingface_hub": fake_hub}):
+                with patch.object(EmbeddingAdapter, "load", return_value=FakeAdapter()):
+                    rankings, scores, metadata = run_model(
+                        "cirvanna-fashion-clip",
+                        BASELINE_REVISION,
+                        cases,
+                        media,
+                        cache,
+                        "cpu",
+                        2,
+                    )
+            self.assertEqual(rankings["query-0001"], ["p1", "p2"])
+            self.assertGreater(scores["query-0001"]["p1"], scores["query-0001"]["p2"])
+            self.assertEqual(metadata["candidate_embedding_mode"], "image")
+            self.assertEqual(metadata["embedding_dimension"], 2)
+            self.assertGreaterEqual(metadata["timings_seconds"]["candidate_image_embedding"], 0.0)
 
     def test_openclip_tokenizer_is_repointed_to_the_pinned_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
