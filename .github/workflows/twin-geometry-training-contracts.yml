@@ -5,7 +5,7 @@ on:
     paths:
       - "tools/model_training/twin_geometry/**"
       - "tools/model_evaluation/twin_geometry/**"
-      - "tests/model_evaluation/test_twin_geometry_evaluation.py"
+      - "tests/model_training/test_twin_geometry_evaluation.py"
       - "tools/model_evaluation/fashion_retrieval/data_rights.py"
       - "tests/model_training/test_twin_geometry_dataset.py"
       - "tests/model_training/test_twin_multiview_fit.py"
@@ -17,7 +17,7 @@ on:
     paths:
       - "tools/model_training/twin_geometry/**"
       - "tools/model_evaluation/twin_geometry/**"
-      - "tests/model_evaluation/test_twin_geometry_evaluation.py"
+      - "tests/model_training/test_twin_geometry_evaluation.py"
       - "tools/model_evaluation/fashion_retrieval/data_rights.py"
       - "tests/model_training/test_twin_geometry_dataset.py"
       - "tests/model_training/test_twin_multiview_fit.py"
@@ -44,7 +44,7 @@ jobs:
           python -m compileall -q tools/model_training/twin_geometry
           python -m compileall -q tools/model_evaluation/twin_geometry
       - name: Run consent, topology, shape-basis and held-out evaluator tests
-        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py tests/model_training/test_twin_multiview_fit.py tests/model_evaluation/test_twin_geometry_evaluation.py tests/model_training/test_twin_measurement_accuracy_gate.py tests/model_training/test_twin_shape_training_seals_test.py
+        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py tests/model_training/test_twin_multiview_fit.py tests/model_training/test_twin_geometry_evaluation.py tests/model_training/test_twin_measurement_accuracy_gate.py tests/model_training/test_twin_shape_training_seals_test.py
       - name: Verify training CLI help
         run: |
           python tools/model_training/twin_geometry/validate_dataset.py --help
