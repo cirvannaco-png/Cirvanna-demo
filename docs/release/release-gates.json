@@ -28,10 +28,19 @@
       "id": "REL-03",
       "name": "Managed database migrations and restore",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Database/reliability owner",
       "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass. CAL purchase audit evidence is database-immutable: use distinct schema-owner and Commerce runtime credentials; the runtime role must not own the audit table or be able to disable/drop immutability guards, and UPDATE/DELETE/TRUNCATE attempts must be rejected and verified in PostgreSQL after migration.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/322",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289585",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289629",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289582",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289563",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289590",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/327",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/331"
+      ],
       "verified_commit": null
     },
     {
@@ -68,10 +77,19 @@
       "id": "REL-07",
       "name": "CAL display gate and durable decision receipts",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Decision-platform owner",
       "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions. In production, the Gateway and Decision Service require the latest context-scoped CIL CAL feedback review; BLOCK is an additional veto, SHOW cannot override ordinary gates, and missing/malformed/unavailable review evidence fails closed. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in commerce_cal_purchase_audits. Database triggers reject audit UPDATE/DELETE and PostgreSQL TRUNCATE; the runtime role cannot disable the guards or mutate audit rows. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/317",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45068944839",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/320",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071563147",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071563145",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/323",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107279976",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107279942"
+      ],
       "verified_commit": null
     },
     {
@@ -88,10 +106,16 @@
       "id": "REL-09",
       "name": "Security, privacy, consent, and deletion",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Security/privacy owner",
       "acceptance": "Threat/security review, least-privilege service credentials, HTTPS/private networking, CORS/CSP/rate limits, secret scanning/rotation, log redaction, consent revocation, retention purge, export/deletion, tenant isolation, and privacy verification pass.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/318",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45069741773",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45069741729",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/320",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071563145"
+      ],
       "verified_commit": null
     },
     {
@@ -128,20 +152,29 @@
       "id": "REL-13",
       "name": "Multi-market offer comparison and checkout",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Commerce / marketplace owner",
       "acceptance": "The multi-market implementation is based on current main and one migration chain after 20261109_0007. It proves market-specific merchant capability, source/payable/display currency separation, fresh provider-sourced FX, shipping/courier/merchant delivery/collection/local transport, authoritative jurisdiction-matched tax, payment-method capability, exact cross-market canonical product/variant identity, like-for-like comparison, stale/missing-evidence unavailable reasons, radius behavior and checkout-time quote revalidation with consistent order/Stripe/webhook totals. Fulfilment is not quote-only: each enabled market/mode demonstrates provider-authenticated serviceability/quote, order-bound idempotent booking, shipment tracking, cancellation/exception handling and provider reconciliation. No quote or booking is inferred from merchant-supplied data. In staging/production, each FX, tax, payment-capability and fulfilment quote/capability ingestion request must be attested by its configured trusted adapter against the exact variant, merchant, market, destination, value, currency, provider reference and validity window; internal HMAC/service tokens alone are not third-party evidence.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/318",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45069741738",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/322",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289563"
+      ],
       "verified_commit": null
     },
     {
       "id": "REL-14",
       "name": "Click It privacy, rights and child safeguards",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Security / privacy owner",
       "acceptance": "Click It remains disabled until real purpose-bound consent and revocation, trusted jurisdiction policy, licensed pinned face-masking attestation, fail-closed uncertainty, zero public unmasked-face exposure, retention/purge and deletion propagation, photographed-person rights intake/review/quarantine, guardian verification where required, minor-specific restrictions and every public publish/restore/syndication/share/media-delivery route are exercised against real staging providers and immutable asset digests. An independent assessor verifies the exact deployed route inventory, detector artifact/dataset digest, subgroup false-negative confidence intervals, source-to-mask ordering, zero unmasked-media escape, consent revocation, urgent quarantine and deletion across source, derivatives, replicas, backups where applicable, caches, CDN, merchant surfaces and shared links. The assessor report is digest-bound to the release commit.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/320",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071563145",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/331"
+      ],
       "verified_commit": null
     },
     {
@@ -168,10 +201,15 @@
       "id": "REL-17",
       "name": "Persistent Twin identity, consent, assets and validated representation",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Twin / privacy / platform owner",
       "acceptance": "Twin Registry is the sole persistent Twin metadata authority and is integrated with Identity Consent and Asset Service. Every create and authorization verifies exact subject, Twin resource, consent bundle/version/expiry, mesh asset and source-image assets. Asset bytes remain only in private Asset Service. A pinned licensed full-body mesh model and independently reviewed validation pipeline produce a signed release/report attestation. Managed PostgreSQL, Asset Service private object storage, consent expiry/revocation, asset deletion, restore/failure drills and exact-head integration tests are complete. No pose skeleton, mock attestation or registry metadata alone is described as a persistent or validated Twin.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/323",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107280004",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/322",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45071289582"
+      ],
       "verified_commit": null
     },
     {
@@ -208,10 +246,16 @@
       "id": "REL-21",
       "name": "PNELLY conversational discovery and integrated wardrobe loop",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Product / recommendation / identity owner",
       "acceptance": "Authenticated conversational discovery uses the active subject's wardrobe and only consented style-learning/profile signals, with current user-provided or trusted context, bounded conversation state, explicit reset/export/deletion and no cross-user memory. PNELLY's three daily looks are sourced from active wardrobe items and persistent rotation state; Complementer remains a separately authenticated advisory and cannot grant product authority. Catalog/Commerce candidates are surfaced only after CAL SHOW and CIL rights/evidence approval. Explicit look/item feedback reaches the appropriate consented Identity Learning/NPL path, and only explicit, receipt-bound suitability reports enter the CIL cohort pipeline.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/323",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107279976",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107279981",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107279942",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45107279954"
+      ],
       "verified_commit": null
     },
     {
