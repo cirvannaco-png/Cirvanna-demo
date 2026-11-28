@@ -28,7 +28,8 @@ class ReleaseGateValidationTests(unittest.TestCase):
 
     def test_passed_gate_requires_evidence_and_exact_commit(self):
         document = copy.deepcopy(self.document)
-        document["gates"][0]["status"] = "passed"
+        document["gates"][0].update({"status": "passed", "evidence_refs": []})
+        document["gates"][0].pop("verified_commit", None)
         errors = validate_release_gates(document)
         self.assertTrue(any("evidence_refs" in error for error in errors))
         self.assertTrue(any("verified_commit" in error for error in errors))
