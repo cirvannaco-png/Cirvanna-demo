@@ -116,7 +116,8 @@ def test_model_bundle_rejects_unsigned_research_checkpoint(tmp_path):
     with pytest.raises(ValueError,match="attestation is missing"):
         worker.verify_model_bundle(bundle,public,"independent-model-review-key")
 
-def test_privacy_receipt_binds_assets_user_scope_expiry_and_masking():
+def test_privacy_receipt_binds_assets_user_scope_expiry_and_masking(tmp_path, monkeypatch):
+    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", str(tmp_path / "replay-ledger.sqlite3"))
     private,public=key_pair()
     assets={role:(str(index+1)*64) for index,role in enumerate(worker.ASSET_ROLES)}
     preprocessing="f"*64
@@ -154,7 +155,8 @@ def test_input_validation_and_sensitive_buffer_wipe():
     worker.wipe_sensitive_buffers(buffers)
     assert buffers=={} or all(not value for value in buffers.values())
 
-def test_render_requires_bearer_auth_and_signed_privacy_receipt(monkeypatch):
+def test_render_requires_bearer_auth_and_signed_privacy_receipt(monkeypatch, tmp_path):
+    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", str(tmp_path / "replay-ledger.sqlite3"))
     private,public=key_pair()
     monkeypatch.setenv("CVI_VTON_WORKER_TOKEN","w"*48)
     monkeypatch.setenv("CVI_VTON_PRIVACY_KEY_ID","privacy-governance-key")
