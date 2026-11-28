@@ -50,7 +50,10 @@ app.include_router(dsi_vision_router)
 @app.middleware("http")
 async def dsi_no_store_headers(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/v1/dsi/"):
+    if (
+        request.url.path.startswith("/v1/dsi/")
+        or request.url.path in {"/v1/search/image", "/v1/click-it/scan"}
+    ):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
