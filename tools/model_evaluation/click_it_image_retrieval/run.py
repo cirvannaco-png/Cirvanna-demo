@@ -12,6 +12,7 @@ from tools.model_evaluation.fashion_retrieval.data_rights import load_and_valida
 from tools.model_evaluation.fashion_retrieval.private_artifacts import write_private_text
 from tools.model_training.provenance import require_clean_source_revision
 from tools.model_training.click_it.train_retrieval import build_model
+from tools.model_training.click_it.validate_dataset import validate_dataset
 
 MAX_BYTES=25*1024*1024
 MAX_PIXELS=20_000_000
@@ -171,6 +172,20 @@ def run(args)->dict[str,Any]:
     if not isinstance(model_revision,str) or len(model_revision)!=40 or any(c not in "0123456789abcdef" for c in model_revision): raise ValueError("training report source revision is not pinned")
     if model_revision!=source_revision: raise ValueError("evaluation checkout must match the exact model training source revision")
     if digest(args.checkpoint)!=training.get("checkpoint_sha256"): raise ValueError("checkpoint digest does not match training report")
+    training_config=training.get("training",{})
+    images_per_product=training_config.get("images_per_product")
+    if isinstance(images_per_product,bool) or not isinstance(images_per_product,int) or images_per_product<2:
+        raise ValueError("training report image-per-product setting is invalid")
+    training_dataset=validate_dataset(
+        args.training_manifest,args.training_annotations,args.training_media_root,
+        args.training_rights_manifest,images_per_product
+    )
+    training_manifest_sha=digest(args.training_manifest)
+    if training.get("dataset",{}).get("dataset_manifest_sha256")!=training_manifest_sha:
+        raise ValueError("training dataset manifest digest does not match training report")
+    for key in ("annotations_sha256","split_manifest_sha256","rights_manifest_sha256"):
+        if training.get("dataset",{}).get(key)!=training_dataset.get(key):
+            raise ValueError(f"training dataset provenance mismatch: {key}")
     embedding_dim=training.get("embedding_dim")
     if not isinstance(embedding_dim,int) or not 32<=embedding_dim<=4096: raise ValueError("training report embedding dimension is invalid")
     records=[]
@@ -237,6 +252,9 @@ def run(args)->dict[str,Any]:
       "schema_version":"1.0","task":"image_to_catalog_image","model_id":MODEL_ID,
       "architecture":ARCHITECTURE,"model_source_revision":model_revision,
       "checkpoint_sha256":training["checkpoint_sha256"],"training_report_sha256":digest(args.training_report),
+      "training_dataset_manifest_sha256":training_manifest_sha,
+      "training_annotations_sha256":training_dataset["annotations_sha256"],
+      "training_rights_manifest_sha256":training_dataset["rights_manifest_sha256"],
       "test_input_sha256":hashlib.sha256(raw).hexdigest(),"rights_manifest_sha256":rights["manifest_sha256"],
       "privacy_preprocessing":privacy_preprocessing,
       "rights_evidence_sha256":rights["evidence_sha256"],"sample_count":len(records),
@@ -254,7 +272,12 @@ def main()->int:
     p.add_argument("--input",required=True,type=Path); p.add_argument("--media-root",required=True,type=Path)
     p.add_argument("--rights-manifest",required=True,type=Path); p.add_argument("--privacy-preprocessing-manifest",required=True,type=Path)
     p.add_argument("--checkpoint",required=True,type=Path)
-    p.add_argument("--training-report",required=True,type=Path); p.add_argument("--output",required=True,type=Path)
+    p.add_argument("--training-report",required=True,type=Path)
+    p.add_argument("--training-manifest",required=True,type=Path)
+    p.add_argument("--training-annotations",required=True,type=Path)
+    p.add_argument("--training-media-root",required=True,type=Path)
+    p.add_argument("--training-rights-manifest",required=True,type=Path)
+    p.add_argument("--output",required=True,type=Path)
     p.add_argument("--device",choices=("cpu","cuda"),default="cuda"); p.add_argument("--overwrite",action="store_true")
     args=p.parse_args()
     report=run(args)

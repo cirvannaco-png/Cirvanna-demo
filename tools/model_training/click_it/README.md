@@ -32,7 +32,23 @@ The balanced batch sampler ensures each product contributes positive views while
 
 ## Evaluation and limits
 
-Use tools/model_evaluation/click_it_image_retrieval/run.py for the separate image-to-image benchmark. It loads the local CVI checkpoint, verifies its training report and exact source revision, embeds query and candidate catalogue images, and scores the fixed candidate pool. The final test must be product-family/source-cluster disjoint, human-labelled, preregistered and never used for training or model selection. Report Recall@K, Precision@K, nDCG@K, MRR, top-1 hit rate, subgroup metrics and operational costs. The first runner does not yet compute cluster-bootstrap intervals or calibrated abstention.
+Use tools/model_evaluation/click_it_image_retrieval/run.py for the separate image-to-image benchmark. It loads the local CVI checkpoint, revalidates the exact rights-cleared training dataset and training rights manifest, verifies its checkpoint/report and exact source revision, embeds query and candidate catalogue images, and scores the fixed candidate pool. The final test must be product-family/source-cluster disjoint, human-labelled, preregistered and never used for training or model selection. Report Recall@K, Precision@K, nDCG@K, MRR, top-1 hit rate, subgroup metrics and operational costs. The first runner does not yet compute cluster-bootstrap intervals or calibrated abstention.
+
+Example invocation (mount all data on restricted private volumes):
+
+    python tools/model_evaluation/click_it_image_retrieval/run.py \
+      --input /restricted/click-it/test-cases.jsonl \
+      --media-root /restricted/click-it/test-media \
+      --rights-manifest /restricted/click-it/evaluation-rights.manifest.json \
+      --privacy-preprocessing-manifest /restricted/click-it/approved-mask-evidence.json \
+      --checkpoint /restricted/click-it/run-001/clickit-image-encoder-state.pt \
+      --training-report /restricted/click-it/run-001/training-report.json \
+      --training-manifest /restricted/click-it/dataset.manifest.json \
+      --training-annotations /restricted/click-it/annotations.jsonl \
+      --training-media-root /restricted/click-it/media \
+      --training-rights-manifest /restricted/click-it/data-rights.manifest.json \
+      --output /restricted/click-it/run-001/held-out-evaluation.json \
+      --device cuda
 
 This model is not facial recognition, identity matching or cross-user search. It does not emit calibrated match probabilities. A good contrastive training loss is not proof of retrieval quality; no Click It production route may be enabled from this training scaffold alone.
 
