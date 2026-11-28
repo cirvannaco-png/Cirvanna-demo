@@ -11,12 +11,13 @@ The runner does not upload source images. The evaluator does not download models
 
 The existing Vision Intelligence path uses the pinned FashionCLIP model to create query-image embeddings and compare them with text representations built from live Commerce/Catalog offers. Its current candidate path does **not** embed the Catalog product images.
 
-That is why the first benchmark supports:
+The benchmark runner supports three explicitly separate tasks:
 
-- `image_to_catalog_text`: query image → frozen Catalog offer text.
-- `text_to_catalog_text`: text query → frozen Catalog offer text.
+- `image_to_catalog_text`: query image → frozen Catalog offer text (parity with the current Click It/Look It retrieval representation).
+- `text_to_catalog_text`: text query → frozen Catalog offer text (text-search parity).
+- `image_to_catalog_image`: query image → frozen, rights-cleared Catalog product images (the dedicated Click It image-to-image track).
 
-Do not combine these with a future `image_to_catalog_image` benchmark. That will be a separate task with licensed catalogue images and a separate comparison report.
+Do not combine task IDs in one run or pool their metrics. Image-to-image requires an explicit `candidate_image_paths` mapping for every candidate ID and a rights manifest that covers the source catalogue photographs and depicted people. Candidate images are read only from the restricted local `--media-root`; no remote URLs are fetched. The private run manifest records query and candidate image SHA-256 digests and sizes, never the image bytes or absolute media paths. This track is not a parity comparison with image-to-text; it gets a separate evaluation report and preregistered success gate.
 
 ## Safe, pinned model loading
 
@@ -60,11 +61,32 @@ One record per query:
 
 For `text_to_catalog_text`, provide `query_text` instead of `query_image_path`.
 
+For the separate `image_to_catalog_image` task, omit `candidate_texts` and provide one rights-cleared relative image path per candidate:
+
+    {
+      "schema_version": "1.0",
+      "query_id": "clickit-image-query-000001",
+      "cluster_id": "catalog-source-cluster-01",
+      "task_id": "image_to_catalog_image",
+      "split": "test",
+      "query_image_path": "queries/query-000001.jpg",
+      "candidate_ids": ["variant-a", "variant-b"],
+      "candidate_image_paths": {
+        "variant-a": "catalog/variant-a-front.jpg",
+        "variant-b": "catalog/variant-b-front.jpg"
+      },
+      "qrels": {"variant-a": 4, "variant-b": 0},
+      "excluded_product_ids": [],
+      "subgroups": {"source_type": "studio", "query_type": "image"}
+    }
+
+All candidate image paths are resolved under `--media-root`; path traversal, missing files and symlink escapes are rejected. Keep query/candidate images and the approved data-rights evidence in the restricted evaluation workspace. The evaluator receives opaque candidate IDs and qrels, not image paths.
+
 Candidate text must come from the same frozen Catalog/Commerce snapshot. For parity with current code, its content should match the Vision service's `_offer_description()` and be truncated to 1,000 characters before tokenization. The text query path uses the same prefix as the current production-intended description-search route.
 
 The input contract requires the same candidate IDs and qrels for every model. Preserve the frozen Commerce offer order in each `candidate_ids` array; the production ranker uses a stable score-only sort, so the runner preserves that order for exact-score ties. Use human-reviewed graded labels; do not describe LLM-generated labels as human ground truth. Split and deduplicate by product/source/near-duplicate clusters before the run. Do not tune on final-test qrels.
 
-Image paths must be relative to `--media-root` and remain inside that directory. The runner rejects path traversal. The source images are read locally and are not written into the ranking output, manifest, or GitHub.
+Image paths must be relative to `--media-root` and remain inside that directory. The runner rejects path traversal. Query images and (for `image_to_catalog_image`) candidate catalogue images are read locally and are not written into the ranking output, manifest, or GitHub. Their SHA-256 digests and byte sizes are recorded in the private run manifest for reproducibility.
 
 ## Install dependencies
 
