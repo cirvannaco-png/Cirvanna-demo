@@ -314,3 +314,17 @@ def test_privacy_receipt_ledger_fails_closed_when_unconfigured(monkeypatch):
     expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=20)
     with pytest.raises(RuntimeError, match="not configured"):
         worker.consume_receipt_once("receipt-no-ledger-001", expires)
+
+
+def test_readiness_fails_closed_without_durable_replay_ledger(monkeypatch):
+    monkeypatch.setenv("CVI_VTON_REPLAY_DB_PATH", "")
+    runtime = {
+        "manifest": {"model_id": worker.MODEL_ID},
+        "gpu_name": "test-gpu",
+        "gpu_memory_bytes": 8 * 1024**3,
+        "bundle_manifest_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(worker, "get_runtime", lambda: (runtime, None))
+    response = TestClient(worker.app).get("/ready")
+    assert response.status_code == 503
+    assert "replay ledger" in response.text
