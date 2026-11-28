@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run Cirvanna-owned image-to-image Click It retrieval on a rights-cleared frozen test set."""
 from __future__ import annotations
-import argparse, hashlib, json, math, os, sys
+import argparse, hashlib, json, math, os, re, sys
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
 
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT))
@@ -66,6 +67,77 @@ def validate_record(row:Any,line:int)->dict[str,Any]:
     if not isinstance(row.get("subgroups"),dict) or not row["subgroups"]: raise ValueError(f"line {line}: subgroup labels are required")
     return row
 
+def validate_privacy_preprocessing_manifest(
+    manifest_path:Path, records:list[dict[str,Any]], media_root:Path
+)->dict[str,Any]:
+    """Bind every embedded image to an approved, face-masked preprocessing record."""
+    value=json.loads(manifest_path.read_text(encoding="utf-8"))
+    required={
+        "schema_version","approval_status","scope","reviewed_by","reviewed_at_utc",
+        "evidence_path","evidence_sha256","face_masked_before_inference","face_recognition",
+        "detector_model_id","detector_source_revision","detector_weights_sha256","images",
+    }
+    if not isinstance(value,dict) or required-set(value):
+        missing=sorted(required-set(value)) if isinstance(value,dict) else sorted(required)
+        raise ValueError("privacy preprocessing manifest missing fields: "+", ".join(missing))
+    if value["schema_version"]!="1.0" or value["approval_status"]!="approved":
+        raise ValueError("privacy preprocessing manifest must be approved schema 1.0")
+    if value["scope"]!="click_it_retrieval_evaluation":
+        raise ValueError("privacy preprocessing scope must be click_it_retrieval_evaluation")
+    if not isinstance(value["reviewed_by"],str) or not value["reviewed_by"].strip():
+        raise ValueError("privacy preprocessing reviewer must be identified")
+    try:
+        reviewed=datetime.fromisoformat(str(value["reviewed_at_utc"]).replace("Z","+00:00"))
+    except ValueError as exc:
+        raise ValueError("privacy preprocessing reviewed_at_utc must be ISO-8601") from exc
+    if reviewed.tzinfo is None or reviewed>datetime.now(timezone.utc):
+        raise ValueError("privacy preprocessing review timestamp is invalid")
+    if value["face_masked_before_inference"] is not True or value["face_recognition"] is not False:
+        raise ValueError("Click It evaluation requires face masking and prohibits face recognition")
+    if not isinstance(value["detector_model_id"],str) or not value["detector_model_id"].strip():
+        raise ValueError("privacy preprocessing detector_model_id is required")
+    if not isinstance(value["detector_source_revision"],str) or not re.fullmatch(r"[0-9a-f]{40}",value["detector_source_revision"]):
+        raise ValueError("privacy preprocessing detector source revision must be a full commit SHA")
+    if not isinstance(value["detector_weights_sha256"],str) or not re.fullmatch(r"[0-9a-f]{64}",value["detector_weights_sha256"]):
+        raise ValueError("privacy preprocessing detector weights digest must be a full SHA-256")
+    evidence=Path(str(value["evidence_path"])).expanduser()
+    if not evidence.is_absolute(): evidence=manifest_path.resolve().parent/evidence
+    evidence=evidence.resolve()
+    if not evidence.is_file() or value["evidence_sha256"]!=digest(evidence):
+        raise ValueError("privacy preprocessing reviewer evidence is missing or has a digest mismatch")
+    expected={}
+    for row in records:
+        expected[row["query_image_path"]]=row["query_image_sha256"]
+        for candidate in row["candidates"]:
+            expected[candidate["image_path"]]=candidate["image_sha256"]
+    images=value["images"]
+    if not isinstance(images,dict) or set(images)!=set(expected):
+        raise ValueError("privacy preprocessing manifest must cover every query and candidate image exactly once")
+    masked_total=0
+    for relative,expected_sha in expected.items():
+        item=images[relative]
+        if not isinstance(item,dict) or item.get("processed_image_sha256")!=expected_sha:
+            raise ValueError(f"preprocessed image digest does not match test record for {relative}")
+        count=item.get("faces_masked")
+        if isinstance(count,bool) or not isinstance(count,int) or count<0:
+            raise ValueError(f"faces_masked must be a non-negative integer for {relative}")
+        image_path=safe_image_path(media_root,relative)
+        if digest(image_path)!=expected_sha:
+            raise ValueError(f"preprocessed image bytes do not match approved digest for {relative}")
+        masked_total+=count
+    return {
+        "manifest_sha256":digest(manifest_path),
+        "evidence_sha256":value["evidence_sha256"],
+        "detector_model_id":value["detector_model_id"],
+        "detector_source_revision":value["detector_source_revision"],
+        "detector_weights_sha256":value["detector_weights_sha256"],
+        "face_masked_before_inference":True,
+        "face_recognition":False,
+        "image_count":len(expected),
+        "faces_masked_total":masked_total,
+    }
+
+
 def _dcg(grades:list[int])->float:
     return sum((2**grade-1)/math.log2(index+2) for index,grade in enumerate(grades))
 
@@ -108,6 +180,9 @@ def run(args)->dict[str,Any]:
     if not records: raise ValueError("test dataset is empty")
     if len({r["query_id"] for r in records})!=len(records): raise ValueError("query IDs must be unique")
     root=args.media_root
+    privacy_preprocessing=validate_privacy_preprocessing_manifest(
+        args.privacy_preprocessing_manifest,records,root
+    )
     all_paths={}
     candidate_snapshot = None
     for row in records:
@@ -163,6 +238,7 @@ def run(args)->dict[str,Any]:
       "architecture":ARCHITECTURE,"model_source_revision":model_revision,
       "checkpoint_sha256":training["checkpoint_sha256"],"training_report_sha256":digest(args.training_report),
       "test_input_sha256":hashlib.sha256(raw).hexdigest(),"rights_manifest_sha256":rights["manifest_sha256"],
+      "privacy_preprocessing":privacy_preprocessing,
       "rights_evidence_sha256":rights["evidence_sha256"],"sample_count":len(records),
       "independent_query_clusters":len({r["cluster_id"] for r in records}),
       "candidate_image_count":len(candidate_snapshot or ()),"candidate_snapshot_sha256":hashlib.sha256(json.dumps(candidate_snapshot,separators=(",",":")).encode()).hexdigest(),
@@ -176,7 +252,8 @@ def run(args)->dict[str,Any]:
 def main()->int:
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--input",required=True,type=Path); p.add_argument("--media-root",required=True,type=Path)
-    p.add_argument("--rights-manifest",required=True,type=Path); p.add_argument("--checkpoint",required=True,type=Path)
+    p.add_argument("--rights-manifest",required=True,type=Path); p.add_argument("--privacy-preprocessing-manifest",required=True,type=Path)
+    p.add_argument("--checkpoint",required=True,type=Path)
     p.add_argument("--training-report",required=True,type=Path); p.add_argument("--output",required=True,type=Path)
     p.add_argument("--device",choices=("cpu","cuda"),default="cuda"); p.add_argument("--overwrite",action="store_true")
     args=p.parse_args()
