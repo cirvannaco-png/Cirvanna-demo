@@ -158,6 +158,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
     async def search(**kwargs):
         assert kwargs["data"] == b"reference-image"
         assert kwargs["content_type"] == "image/png"
+        assert kwargs["photographed_people_status"] == "adults_only"
         return {
             "status": "complete",
             "candidate_count": 3,
@@ -185,6 +186,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "true",
+            "photographed_people_status": "adults_only",
             "category": "dress",
             "limit": "5",
         },
