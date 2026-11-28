@@ -61,6 +61,7 @@ def main() -> int:
         raise ValueError("invalid optimization or GPU resource settings")
     source_revision=require_clean_source_revision(ROOT)
     dataset_info=validate_dataset(args.manifest,args.annotations,args.media_root,args.rights_manifest,args.images_per_product)
+    dataset_info["dataset_manifest_sha256"]=hashlib.sha256(args.manifest.read_bytes()).hexdigest()
     import torch
     import torchvision
     import torch.nn.functional as F
@@ -75,6 +76,7 @@ def main() -> int:
     rows=[json.loads(line) for line in args.annotations.read_text(encoding="utf-8").splitlines() if line.strip()]
     train_rows=[row for row in rows if row["split"]=="train"]
     validation_rows=[row for row in rows if row["split"]=="validation"]
+    test_rows=[row for row in rows if row["split"]=="test"]
     products=sorted({row["product_id"] for row in rows})
     product_to_label={product:index for index,product in enumerate(products)}
     class ProductImageDataset(Dataset):
@@ -152,13 +154,12 @@ def main() -> int:
     except Exception:
         temp.unlink(missing_ok=True); raise
     digest=hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-    try: revision=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
-    except Exception: revision="unknown"
     report={
         "schema_version":"1.0","model_id":"cirvanna-clickit-resnet50-supcon-v0",
         "architecture":"torchvision-resnet50-projection-head","initialization":"random",
-        "source_revision":revision,"checkpoint_sha256":digest,"embedding_dim":args.embedding_dim,
+        "source_revision":source_revision,"checkpoint_sha256":digest,"embedding_dim":args.embedding_dim,
         "dataset":dataset_info,
+        "held_out_test":{"status":"reserved_for_independent_evaluation","sample_count":len(test_rows)},
         "training":{"epochs":args.epochs,"products_per_batch":args.products_per_batch,"images_per_product":args.images_per_product,"temperature":args.temperature,"learning_rate":args.learning_rate,"seed":args.seed,"device":args.device,"max_gpu_memory_fraction":args.max_gpu_memory_fraction},
         "runtime":{"python":sys.version.split()[0],"torch":torch.__version__,"torchvision":torchvision.__version__,"cuda_runtime":torch.version.cuda,"cuda_available":torch.cuda.is_available(),"gpu_name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,"gpu_total_memory_bytes":torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else None},
         "history":history,"status":"research_candidate_not_qualified",

@@ -40,6 +40,11 @@ def _components(value: Any, field: str) -> list[dict[str, Any]]:
             raise ValueError(f"{field}[{index}] category is required")
         ids.add(component_id)
         component = {"component_id": component_id, "category": category.strip().casefold(), "bbox": _box(item.get("bbox"), f"{field}[{index}].bbox")}
+        if "confidence" in item:
+            confidence = item["confidence"]
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not math.isfinite(float(confidence)) or not 0 <= float(confidence) <= 1:
+                raise ValueError(f"{field}[{index}].confidence must be finite and in [0,1]")
+            component["confidence"] = float(confidence)
         if "product_id" in item:
             if not isinstance(item["product_id"], str) or not item["product_id"].strip():
                 raise ValueError(f"{field}[{index}].product_id must be a non-empty string")
@@ -100,6 +105,61 @@ def _prf(tp: int, fp: int, fn: int) -> dict[str, float | int]:
     f1 = 2*precision*recall/(precision+recall) if precision+recall else 0.0
     return {"tp": tp, "fp": fp, "fn": fn, "precision": round(precision,6), "recall": round(recall,6), "f1": round(f1,6)}
 
+
+def average_precision_by_category(records: list[dict[str, Any]], threshold: float) -> dict[str, float] | None:
+    if any("confidence" not in item for row in records for item in row["predicted_components"]):
+        return None
+    categories = sorted({item["category"] for row in records for item in row["ground_truth_components"]})
+    result = {}
+    for category in categories:
+        ground_truth = {
+            row["sample_id"]: [item for item in row["ground_truth_components"] if item["category"] == category]
+            for row in records
+        }
+        total_ground_truth = sum(len(items) for items in ground_truth.values())
+        detections = []
+        for row in records:
+            for item in row["predicted_components"]:
+                if item["category"] == category:
+                    score = float(item["confidence"])
+                    detections.append((score, row["sample_id"], item["component_id"], item["bbox"]))
+        detections.sort(key=lambda item: (-item[0], item[1], item[2]))
+        matched = {sample_id: set() for sample_id in ground_truth}
+        true_positives, false_positives = [], []
+        for _, sample_id, _, predicted_box in detections:
+            candidates = ground_truth[sample_id]
+            best_index, best_iou = None, -1.0
+            for index, target in enumerate(candidates):
+                if index in matched[sample_id]:
+                    continue
+                overlap = box_iou(tuple(predicted_box), target["bbox"])
+                if overlap > best_iou:
+                    best_index, best_iou = index, overlap
+            if best_index is not None and best_iou >= threshold:
+                matched[sample_id].add(best_index)
+                true_positives.append(1)
+                false_positives.append(0)
+            else:
+                true_positives.append(0)
+                false_positives.append(1)
+        if not detections or total_ground_truth == 0:
+            result[category] = 0.0
+            continue
+        tp = fp = 0
+        recalls, precisions = [], []
+        for hit, miss in zip(true_positives, false_positives):
+            tp += hit
+            fp += miss
+            recalls.append(tp / total_ground_truth)
+            precisions.append(tp / (tp + fp))
+        mrec = [0.0, *recalls, 1.0]
+        mpre = [0.0, *precisions, 0.0]
+        for index in range(len(mpre) - 2, -1, -1):
+            mpre[index] = max(mpre[index], mpre[index + 1])
+        ap = sum((mrec[index] - mrec[index - 1]) * mpre[index] for index in range(1, len(mrec)))
+        result[category] = round(ap, 6)
+    return result
+
 def evaluate(records: list[dict[str, Any]], threshold: float = IOU_THRESHOLD) -> dict[str, Any]:
     if not 0 < threshold <= 1: raise ValueError("IoU threshold must be in (0,1]")
     if not records: raise ValueError("evaluation dataset is empty")
@@ -155,17 +215,26 @@ def evaluate(records: list[dict[str, Any]], threshold: float = IOU_THRESHOLD) ->
     else:
         product_metrics = None
         product_status = "not_scored_missing_ground_truth_product_ids_or_retrieval_rankings"
+    average_precision = average_precision_by_category(records, threshold)
+    provenance_keys = ("model_id", "model_checkpoint_sha256", "training_report_sha256", "source_revision")
+    provenance_rows = [tuple(row.get(key) for key in provenance_keys) for row in records if any(key in row for key in provenance_keys)]
+    if provenance_rows and (len(provenance_rows) != len(records) or len(set(provenance_rows)) != 1):
+        raise ValueError("model provenance must be complete and identical across every evaluation record")
+    model_provenance = dict(zip(provenance_keys, provenance_rows[0])) if provenance_rows else None
     return {
         "schema_version": SCHEMA_VERSION, "task": "look_it_component_localization_bbox",
         "iou_threshold": threshold, "sample_count": len(records),
         "independent_cluster_count": len({r["cluster_id"] for r in records}),
         "overall": overall, "macro_f1": round(macro_f1,6),
+        "average_precision_iou50_per_category": average_precision,
+        "map_iou50": round(sum(average_precision.values())/len(average_precision),6) if average_precision else None,
+        "model_provenance": model_provenance,
         "exact_component_count_accuracy": round(exact_count/len(records),6),
         "mean_matched_iou": round(sum(matched_ious)/len(matched_ious),6) if matched_ious else None,
         "per_category": class_metrics,
         "product_matching": {"status": product_status, "metrics": product_metrics},
         "subgroups": {key: _prf(*value) for key,value in sorted(subgroup_totals.items())},
-        "limitations": ["Bounding-box localization does not measure pixel-accurate garment segmentation.", "This evaluator does not score product retrieval or image-generation quality.", "A score is scoped to the exact supplied labels, predictions, split and IoU threshold."]
+        "limitations": ["Bounding-box localization does not measure pixel-accurate garment segmentation.", "Product retrieval metrics are reported only when product labels and ranked retrieval evidence are supplied; this evaluator does not execute a retrieval model.", "A score is scoped to the exact supplied labels, predictions, split and IoU threshold."]
     }
 
 def load_records(path: Path) -> tuple[list[dict[str, Any]], str]:

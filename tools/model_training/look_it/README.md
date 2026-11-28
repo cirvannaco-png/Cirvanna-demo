@@ -28,7 +28,30 @@ Use an approved, isolated CUDA training image with a pinned PyTorch/TorchVision 
       --output-dir /restricted/look-it/run-001 \
       --device cuda --epochs 30 --batch-size 4
 
-The trainer fails rather than silently falling back from CUDA to CPU. It writes a checkpoint and private report with dataset/model/code provenance and loss history. It does not evaluate the held-out test split, calibrate match confidence, produce segmentation masks, or qualify a release. The model remains a research candidate until independent held-out evaluation, subgroup analysis, resource profiling, privacy review and signed release attestation pass.
+The trainer fails rather than silently falling back from CUDA to CPU. It writes a checkpoint and private report with dataset/model/code provenance and loss history. It deliberately does not open held-out test images; it records only the reserved test sample count. The model remains a research candidate until independent held-out evaluation, subgroup analysis, resource profiling, privacy review and signed release attestation pass.
+
+## Run held-out inference and score component extraction
+
+Run the frozen checkpoint on the test split in the exact clean source revision used for training:
+
+    python tools/model_evaluation/look_it_decomposition/predict.py \
+      --checkpoint /restricted/look-it/run-001/lookit-detector-state.pt \
+      --training-report /restricted/look-it/run-001/training-report.json \
+      --manifest /restricted/look-it/dataset.manifest.json \
+      --annotations /restricted/look-it/annotations.jsonl \
+      --media-root /restricted/look-it/media \
+      --rights-manifest /restricted/look-it/data-rights.manifest.json \
+      --output /restricted/look-it/run-001/held-out-predictions.jsonl \
+      --device cuda
+
+Then score predictions against independently labelled components:
+
+    python tools/model_evaluation/look_it_decomposition/evaluate.py \
+      --input /restricted/look-it/run-001/held-out-predictions.jsonl \
+      --rights-manifest /restricted/look-it/evaluation-rights.manifest.json \
+      --output /restricted/look-it/run-001/held-out-evaluation.json
+
+The evaluator reports per-category precision/recall/F1, IoU-0.5 average precision and mAP, subgroup metrics, and product Recall@K/MRR only when component-to-product ground truth and ranked retrieval evidence are present. Prediction rows bind the checkpoint, training report and source revision. Localization scores do not prove product matching or pixel-mask quality.
 
 ## Non-goals
 

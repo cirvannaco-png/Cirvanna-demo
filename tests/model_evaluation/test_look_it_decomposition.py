@@ -56,3 +56,42 @@ def test_product_matching_is_not_claimed_without_product_evidence():
     result = evaluate([validate_record(LookItDecompositionEvaluationTests().row(), 1)])
     assert result["product_matching"]["metrics"] is None
     assert result["product_matching"]["status"].startswith("not_scored")
+
+def test_detector_confidence_produces_per_category_map_at_iou_threshold():
+    row = LookItDecompositionEvaluationTests().row()
+    row["predicted_components"][0]["confidence"] = 0.95
+    row["predicted_components"][1]["confidence"] = 0.40
+    result = evaluate([validate_record(row, 1)])
+    assert result["average_precision_iou50_per_category"]["upper_body"] == 1.0
+    assert result["average_precision_iou50_per_category"]["lower_body"] == 0.0
+    assert result["map_iou50"] == 0.5
+
+
+def test_detector_confidence_must_be_finite_and_bounded():
+    row = LookItDecompositionEvaluationTests().row()
+    row["predicted_components"][0]["confidence"] = 1.5
+    with unittest.TestCase().assertRaisesRegex(ValueError, "confidence"):
+        validate_record(row, 1)
+
+
+def test_model_provenance_must_be_identical_across_evaluation_records():
+    first = LookItDecompositionEvaluationTests().row()
+    first.update({
+        "model_id": "cirvanna-lookit-fasterrcnn-v0",
+        "model_checkpoint_sha256": "a" * 64,
+        "training_report_sha256": "b" * 64,
+        "source_revision": "c" * 40,
+    })
+    second = LookItDecompositionEvaluationTests().row()
+    second["sample_id"] = "sample-2"
+    second.update(first)
+    second["sample_id"] = "sample-2"
+    second["model_checkpoint_sha256"] = "d" * 64
+    with unittest.TestCase().assertRaisesRegex(ValueError, "provenance"):
+        evaluate([validate_record(first, 1), validate_record(second, 2)])
+
+
+def test_average_precision_is_not_claimed_without_confidence_scores():
+    result = evaluate([validate_record(LookItDecompositionEvaluationTests().row(), 1)])
+    assert result["average_precision_iou50_per_category"] is None
+    assert result["map_iou50"] is None

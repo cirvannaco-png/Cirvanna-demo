@@ -42,6 +42,7 @@ def main() -> int:
         raise ValueError("max-gpu-memory-fraction must be between 0.1 and 0.95")
     source_revision = require_clean_source_revision(ROOT)
     dataset_info = validate_dataset(args.manifest, args.annotations, args.media_root, args.rights_manifest)
+    dataset_info["dataset_manifest_sha256"] = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
     if args.device == "cuda":
         try:
             import torch
@@ -91,6 +92,7 @@ def main() -> int:
         return tuple(zip(*batch))
     train_data = LookItDataset("train")
     validation_data = LookItDataset("validation")
+    test_rows = [row for row in rows if row["split"] == "test"]
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, collate_fn=collate, num_workers=0)
     validation_loader = DataLoader(validation_data, batch_size=1, shuffle=False, collate_fn=collate, num_workers=0)
     device = torch.device(args.device)
@@ -143,15 +145,12 @@ def main() -> int:
         temporary.unlink(missing_ok=True)
         raise
     digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-    try:
-        source_revision = subprocess.check_output(["git","rev-parse","HEAD"], cwd=ROOT, text=True).strip()
-    except Exception:
-        source_revision = "unknown"
     report = {
         "schema_version":"1.0", "model_id":"cirvanna-lookit-fasterrcnn-v0",
         "architecture":"torchvision-fasterrcnn-resnet50-fpn", "initialization":"random",
         "source_revision":source_revision, "checkpoint_sha256":digest,
         "dataset":dataset_info, "categories":categories,
+        "held_out_test":{"status":"reserved_for_independent_evaluation","sample_count":len(test_rows)},
         "training":{"epochs":args.epochs,"batch_size":args.batch_size,"learning_rate":args.learning_rate,"seed":args.seed,"device":args.device,"max_gpu_memory_fraction":args.max_gpu_memory_fraction},
         "runtime":{"python":sys.version.split()[0],"torch":torch.__version__,"torchvision":torchvision.__version__,"cuda_runtime":torch.version.cuda,"cuda_available":torch.cuda.is_available(),"gpu_name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,"gpu_total_memory_bytes":torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else None},
         "history":history, "status":"research_candidate_not_qualified",

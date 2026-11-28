@@ -45,5 +45,7 @@ jobs:
             tests/model_training \
             tests/model_evaluation/test_look_it_decomposition.py \
             tests/model_evaluation/test_data_rights.py
-      - name: Verify training CLI is import-safe without model weights
-        run: python tools/model_training/look_it/train_detector.py --help
+      - name: Verify training and held-out inference CLIs are import-safe without model weights
+        run: |
+          python tools/model_training/look_it/train_detector.py --help
+          python tools/model_evaluation/look_it_decomposition/predict.py --help
