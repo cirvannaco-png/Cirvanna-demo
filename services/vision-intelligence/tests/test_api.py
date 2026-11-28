@@ -610,6 +610,7 @@ def test_look_it_masks_faces_before_quality_embedding_and_decomposition(client, 
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
     assert events == ["mask", "quality", "catalog", "embedding", "decomposition"]
     assert response.json()["privacy"]["faces_masked"] == 1
     assert response.json()["privacy"]["face_recognition"] is False
