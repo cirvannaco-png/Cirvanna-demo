@@ -33,3 +33,26 @@ class LookItDecompositionEvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"empty"): evaluate([])
         with self.assertRaisesRegex(ValueError,"IoU"): evaluate([validate_record(self.row(),1)],0)
 if __name__=="__main__": unittest.main()
+
+def test_scores_component_product_retrieval_when_ground_truth_and_rankings_are_bound():
+    row = {
+        "sample_id": "sample-product-1",
+        "cluster_id": "person-session-product-1",
+        "split": "test",
+        "subgroups": {"lighting": "studio"},
+        "ground_truth_components": [
+            {"component_id": "gt-top", "category": "upper_body", "bbox": [0.1, 0.1, 0.6, 0.6], "product_id": "catalog-top-1"}
+        ],
+        "predicted_components": [
+            {"component_id": "pred-top", "category": "upper_body", "bbox": [0.1, 0.1, 0.6, 0.6], "retrieved_product_ids": ["catalog-top-1", "catalog-top-2"]}
+        ],
+    }
+    result = evaluate([validate_record(row, 1)])
+    assert result["product_matching"]["status"] == "scored_from_component_retrieval_evidence"
+    assert result["product_matching"]["metrics"]["top1_accuracy"] == 1.0
+    assert result["product_matching"]["metrics"]["mrr"] == 1.0
+
+def test_product_matching_is_not_claimed_without_product_evidence():
+    result = evaluate([validate_record(LookItDecompositionEvaluationTests().row(), 1)])
+    assert result["product_matching"]["metrics"] is None
+    assert result["product_matching"]["status"].startswith("not_scored")

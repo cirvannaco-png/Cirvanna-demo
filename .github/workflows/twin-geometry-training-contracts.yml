@@ -1,0 +1,40 @@
+name: Twin geometry training data contracts
+
+on:
+  pull_request:
+    paths:
+      - "tools/model_training/twin_geometry/**"
+      - "tools/model_evaluation/fashion_retrieval/data_rights.py"
+      - "tests/model_training/test_twin_geometry_dataset.py"
+      - ".github/workflows/twin-geometry-training-contracts.yml"
+  push:
+    branches: [main, "feat/cvi-foundation-2026-11-27"]
+    paths:
+      - "tools/model_training/twin_geometry/**"
+      - "tools/model_evaluation/fashion_retrieval/data_rights.py"
+      - "tests/model_training/test_twin_geometry_dataset.py"
+      - ".github/workflows/twin-geometry-training-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  geometry-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install geometry contract dependencies
+        run: python -m pip install --upgrade pip pytest numpy==2.2.6 trimesh==4.7.4 Pillow
+      - name: Compile Twin geometry tools
+        run: python -m compileall -q tools/model_training/twin_geometry
+      - name: Run consent, topology and shape-basis tests
+        run: python -m pytest -q tests/model_training/test_twin_geometry_dataset.py tests/model_training/test_twin_multiview_fit.py
+      - name: Verify training CLI help
+        run: |
+          python tools/model_training/twin_geometry/validate_dataset.py --help
+          python tools/model_training/twin_geometry/train_shape_model.py --help
+          python tools/model_training/twin_geometry/fit_multiview_capture.py --help

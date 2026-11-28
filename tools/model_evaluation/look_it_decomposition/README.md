@@ -18,7 +18,7 @@ Use a data-rights manifest with scope look_it_decomposition_evaluation, commerci
       --output /restricted/look-it/component-report.json \
       --iou-threshold 0.5
 
-Outputs are written atomically with owner-only permissions. The report records input and rights-manifest digests, sample and cluster counts, overall and per-category precision/recall/F1, macro F1, exact component-count accuracy, matched IoU and subgroup metrics. It never stores image bytes or absolute image paths.
+Outputs are written atomically with owner-only permissions. The report records input and rights-manifest digests, sample and cluster counts, overall and per-category precision/recall/F1, macro F1, exact component-count accuracy, matched IoU and subgroup metrics. When each ground-truth component includes product_id and each spatially matched prediction includes retrieved_product_ids, it also scores end-to-end component product Recall@1/5/10, MRR, top-1 accuracy and detected-component coverage. Missed detections count as failed product matches. If the evidence is incomplete, product matching is explicitly reported as not scored. It never stores image bytes or absolute image paths.
 
 ## Limitations
 

@@ -39,7 +39,17 @@ def _components(value: Any, field: str) -> list[dict[str, Any]]:
         if not isinstance(category, str) or not category.strip():
             raise ValueError(f"{field}[{index}] category is required")
         ids.add(component_id)
-        result.append({"component_id": component_id, "category": category.strip().casefold(), "bbox": _box(item.get("bbox"), f"{field}[{index}].bbox")})
+        component = {"component_id": component_id, "category": category.strip().casefold(), "bbox": _box(item.get("bbox"), f"{field}[{index}].bbox")}
+        if "product_id" in item:
+            if not isinstance(item["product_id"], str) or not item["product_id"].strip():
+                raise ValueError(f"{field}[{index}].product_id must be a non-empty string")
+            component["product_id"] = item["product_id"]
+        if "retrieved_product_ids" in item:
+            retrieved = item["retrieved_product_ids"]
+            if not isinstance(retrieved, list) or len(retrieved) > 100 or any(not isinstance(value, str) or not value.strip() for value in retrieved) or len(retrieved) != len(set(retrieved)):
+                raise ValueError(f"{field}[{index}].retrieved_product_ids must be a unique list of at most 100 product IDs")
+            component["retrieved_product_ids"] = retrieved
+        result.append(component)
     return result
 
 def validate_record(row: Any, line: int) -> dict[str, Any]:
@@ -97,6 +107,8 @@ def evaluate(records: list[dict[str, Any]], threshold: float = IOU_THRESHOLD) ->
     totals = defaultdict(lambda: [0,0,0])
     subgroup_totals: dict[str, list[int]] = defaultdict(lambda: [0,0,0])
     exact_count, matched_ious = 0, []
+    product_match_cases: list[tuple[str, list[str]]] = []
+    product_evidence_complete = True
     for row in records:
         gt, pred = row["ground_truth_components"], row["predicted_components"]
         matches = match_components(gt, pred, threshold)
@@ -104,6 +116,16 @@ def evaluate(records: list[dict[str, Any]], threshold: float = IOU_THRESHOLD) ->
         totals["all"][0] += tp; totals["all"][1] += fp; totals["all"][2] += fn
         exact_count += int(len(gt) == len(pred))
         matched_ious.extend(m[2] for m in matches)
+        matched_by_gt = {gi: pred[pi] for gi, pi, _ in matches}
+        for gi, ground_truth_component in enumerate(gt):
+            if "product_id" not in ground_truth_component:
+                product_evidence_complete = False
+                continue
+            predicted_component = matched_by_gt.get(gi)
+            if predicted_component is None or "retrieved_product_ids" not in predicted_component:
+                product_match_cases.append((ground_truth_component["product_id"], []))
+            else:
+                product_match_cases.append((ground_truth_component["product_id"], predicted_component["retrieved_product_ids"]))
         categories = {x["category"] for x in gt + pred}
         used_gt, used_pred = {m[0] for m in matches}, {m[1] for m in matches}
         for category in categories:
@@ -117,6 +139,22 @@ def evaluate(records: list[dict[str, Any]], threshold: float = IOU_THRESHOLD) ->
     class_metrics = {key: _prf(*value) for key,value in sorted(totals.items()) if key != "all"}
     overall = _prf(*totals["all"])
     macro_f1 = sum(v["f1"] for v in class_metrics.values())/len(class_metrics) if class_metrics else 0.0
+    if product_evidence_complete and product_match_cases:
+        product_metrics = {}
+        for k in (1, 5, 10):
+            hits = sum(bool(target and target in ranked[:k]) for target, ranked in product_match_cases)
+            product_metrics[f"recall@{k}"] = round(hits / len(product_match_cases), 6)
+        reciprocal_ranks = []
+        for target, ranked in product_match_cases:
+            reciprocal_ranks.append(1 / (ranked.index(target) + 1) if target in ranked else 0.0)
+        product_metrics["mrr"] = round(sum(reciprocal_ranks) / len(reciprocal_ranks), 6)
+        product_metrics["top1_accuracy"] = product_metrics["recall@1"]
+        product_metrics["component_count"] = len(product_match_cases)
+        product_metrics["detected_component_coverage"] = round(sum(bool(ranked) for _, ranked in product_match_cases) / len(product_match_cases), 6)
+        product_status = "scored_from_component_retrieval_evidence"
+    else:
+        product_metrics = None
+        product_status = "not_scored_missing_ground_truth_product_ids_or_retrieval_rankings"
     return {
         "schema_version": SCHEMA_VERSION, "task": "look_it_component_localization_bbox",
         "iou_threshold": threshold, "sample_count": len(records),
@@ -125,6 +163,7 @@ def evaluate(records: list[dict[str, Any]], threshold: float = IOU_THRESHOLD) ->
         "exact_component_count_accuracy": round(exact_count/len(records),6),
         "mean_matched_iou": round(sum(matched_ious)/len(matched_ious),6) if matched_ious else None,
         "per_category": class_metrics,
+        "product_matching": {"status": product_status, "metrics": product_metrics},
         "subgroups": {key: _prf(*value) for key,value in sorted(subgroup_totals.items())},
         "limitations": ["Bounding-box localization does not measure pixel-accurate garment segmentation.", "This evaluator does not score product retrieval or image-generation quality.", "A score is scoped to the exact supplied labels, predictions, split and IoU threshold."]
     }

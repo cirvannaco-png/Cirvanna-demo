@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "cirvanna-twin-geometry-v1",
+  "rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "annotations_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "sample_count": 0,
+  "units": "millimetres",
+  "coordinate_frame": "right_handed_x_right_y_up_z_forward",
+  "alignment_protocol_id": "REQUIRES_REGISTERED_MESH_PROTOCOL",
+  "measurement_protocol_id": "REQUIRES_ANTHROPOMETRIST_PROTOCOL",
+  "landmark_vertex_indices": {"head_top":0,"left_shoulder":1,"left_hip":2,"left_ankle":3,"right_ankle":4,"right_hip":5,"right_shoulder":6},
+  "template_topology_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "split_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+}

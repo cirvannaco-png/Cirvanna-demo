@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "capture_id": "capture-opaque-0001",
+  "capture_protocol_id": "front-side-calibrated-v1",
+  "camera_calibration_evidence_ref": "REQUIRES_CALIBRATION_EVIDENCE",
+  "rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "face_masked_before_inference": true,
+  "preprocessing_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "keypoint_model": {
+    "model_id": "REQUIRES_PINNED_KEYPOINT_MODEL",
+    "source_revision": "REPLACE_WITH_40_CHAR_COMMIT_SHA",
+    "weights_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+  },
+  "silhouette_model": {
+    "model_id": "REQUIRES_PINNED_SILHOUETTE_MODEL",
+    "source_revision": "REPLACE_WITH_40_CHAR_COMMIT_SHA",
+    "weights_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+  },
+  "views": [
+    {
+      "view_id": "front",
+      "image_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "image_width": 2000,
+      "image_height": 3000,
+      "camera_matrix": [[1200,0,1000,5000000],[0,-1200,1500,7500000],[0,0,1,5000]],
+      "keypoints": {
+        "head_top": [0.50,0.10,0.99],
+        "left_shoulder": [0.39,0.25,0.96],
+        "left_hip": [0.42,0.50,0.93],
+        "left_ankle": [0.47,0.90,0.91],
+        "right_ankle": [0.53,0.90,0.91],
+        "right_hip": [0.58,0.50,0.93],
+        "right_shoulder": [0.61,0.25,0.96]
+      },
+      "silhouette_mask_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "silhouette_bbox": [0.34,0.08,0.66,0.94],
+      "silhouette_confidence": 0.95
+    },
+    {
+      "view_id": "side",
+      "image_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "image_width": 2000,
+      "image_height": 3000,
+      "camera_matrix": [[1000,0,1200,5000000],[1500,-1200,0,7500000],[1,0,0,5000]],
+      "keypoints": {
+        "head_top": [0.50,0.10,0.99],
+        "left_shoulder": [0.52,0.25,0.90],
+        "left_hip": [0.52,0.50,0.90],
+        "left_ankle": [0.50,0.90,0.90],
+        "right_ankle": [0.50,0.90,0.90],
+        "right_hip": [0.52,0.50,0.90],
+        "right_shoulder": [0.52,0.25,0.90]
+      },
+      "silhouette_mask_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "silhouette_bbox": [0.45,0.08,0.58,0.94],
+      "silhouette_confidence": 0.95
+    }
+  ]
+}
