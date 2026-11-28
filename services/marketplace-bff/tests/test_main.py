@@ -2688,7 +2688,7 @@ class LookItLifecycleClient:
         if url == "https://identity.example.test/internal/v1/consents/verify":
             body = kwargs["json"]
             assert body["subject_id"] == "verified-customer-01"
-            assert {item["scope"] for item in self.receipts} == {"image_processing", "look_it", "photographed_people_adult_attestation"}
+            assert {item["scope"] for item in self.receipts} == {"image_processing", "look_it", "photographed_no_people_attestation"}
             return FakeResponse({
                 "verified": True, "active": True,
                 "subject_id": body["subject_id"],
@@ -2696,14 +2696,14 @@ class LookItLifecycleClient:
                 "resource_id": body["resource_id"],
                 "consent_version": body["consent_version"],
                 "expires_at": self.receipts[0]["expires_at"],
-                "granted_scopes": ["image_processing", "look_it", "photographed_people_adult_attestation"],
+                "granted_scopes": ["image_processing", "look_it", "photographed_no_people_attestation"],
             })
         if url == "https://pnelly.example.test/v1/marketplace/search/image":
             fields = kwargs["data"]
             assert fields["subject_id"] == "verified-customer-01"
             assert fields["consent_id"] == self.receipts[0]["consent_id"]
             assert fields["resource_id"] == self.receipts[0]["resource_id"]
-            assert fields["photographed_people_status"] == "adults_only"
+            assert fields["photographed_people_status"] == "no_people"
             assert kwargs["files"]["image"][1] == b"private-outfit-reference"
             return FakeResponse({
                 "status": "complete",
@@ -2743,7 +2743,7 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -2755,7 +2755,7 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     assert data["outfit_decomposition"]["status"] == "unavailable"
     assert response.headers["cache-control"] == "no-store, private"
     assert len(fake.receipts) == 3
-    assert {row["scope"] for row in fake.receipts} == {"image_processing", "look_it", "photographed_people_adult_attestation"}
+    assert {row["scope"] for row in fake.receipts} == {"image_processing", "look_it", "photographed_no_people_attestation"}
     assert len({row["consent_id"] for row in fake.receipts}) == 1
     assert len({row["resource_id"] for row in fake.receipts}) == 1
     assert all(row["expires_at"] for row in fake.receipts)
@@ -2773,7 +2773,7 @@ def test_look_it_revokes_partial_consent_write_before_returning_failure(client, 
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 503
@@ -2789,7 +2789,7 @@ def test_look_it_suppresses_results_when_consent_revocation_fails(client, monkey
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "no_people"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 503
@@ -2808,7 +2808,8 @@ def test_look_it_rejects_minor_or_missing_person_declaration_before_identity_cal
     monkeypatch.setattr(main, "_identity_learning_service", forbidden)
     monkeypatch.setattr(main, "_pnelly_internal_service", forbidden)
     for status, expected in (
-        ("contains_minor", "LOOK_IT_MINOR_IMAGES_UNSUPPORTED"),
+        ("contains_minor", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
+        ("adults_only", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
         ("", "LOOK_IT_PHOTOGRAPHED_PERSON_DECLARATION_REQUIRED"),
     ):
         response = client.post(
