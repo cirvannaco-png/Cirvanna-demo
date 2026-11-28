@@ -182,12 +182,13 @@ async def _verify_look_it_consent(subject_id: str, consent_id: str, resource_id:
 
 async def _execute_marketplace_image_search(
     *, data: bytes, filename: str, content_type: str, category: str | None, limit: int,
+    photographed_people_status: str,
 ) -> dict[str, object]:
     config = _marketplace_search_config()
     if config is None:
         raise HTTPException(503, detail={"code": "MARKETPLACE_SEARCH_NOT_CONFIGURED"})
     base, token = config
-    fields = {"consent_image_processing": "true", "consent_look_it": "true", "limit": str(limit)}
+    fields = {"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": photographed_people_status, "limit": str(limit)}
     if category and category.strip():
         fields["category"] = category.strip()
     try:
@@ -254,6 +255,7 @@ async def look_it_image_search(
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> JSONResponse:
@@ -264,6 +266,10 @@ async def look_it_image_search(
             raise HTTPException(422, detail={"code": "INVALID_VERIFIED_SUBJECT"})
         if not consent_image_processing or not consent_look_it:
             raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+        if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+            raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+        if photographed_people_status == "contains_minor":
+            raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
         content_type = (image.content_type or "").lower()
         if content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
@@ -281,6 +287,7 @@ async def look_it_image_search(
             content_type=content_type,
             category=category,
             limit=limit,
+            photographed_people_status=photographed_people_status,
         )
         decomposition = result["outfit_decomposition"]
         safe_components = []
