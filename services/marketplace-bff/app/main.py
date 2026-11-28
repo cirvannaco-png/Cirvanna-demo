@@ -6,9 +6,11 @@ fabricates decision, fit, Click It, Virtual Twin, or try-on outputs.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -76,13 +78,33 @@ SERVICE_PATHS = {
     ("POST", "checkout"),
 }
 
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Reuse bounded upstream connections for the lifetime of this BFF process."""
+    application.state.pnelly_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(15.0, connect=2.0),
+        limits=httpx.Limits(
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=30.0,
+        ),
+        trust_env=False,
+        follow_redirects=False,
+    )
+    try:
+        yield
+    finally:
+        await application.state.pnelly_http_client.aclose()
+
+
 app = FastAPI(
     title="Cirvanna Marketplace BFF",
     version="0.1.0",
     description="Same-origin marketplace, Wardrobe and governed merchant portals with verified account identity and private service proxies.",
+    lifespan=lifespan,
 )
 
-install_observability(app, SERVICE)
+install_observability(app, SERVICE, dependency_names=("pnelly",))
 
 app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
@@ -370,6 +392,14 @@ class OfferComparisonIn(BaseModel):
         return value
 
 
+def _get_pnelly_http_client() -> httpx.AsyncClient:
+    """Return the process-scoped PNELLY transport created by the app lifespan."""
+    client = getattr(app.state, "pnelly_http_client", None)
+    if client is None:
+        raise RuntimeError("PNELLY HTTP client lifespan has not started")
+    return client
+
+
 async def _safe_json_post(
     base: str,
     path: str,
@@ -377,16 +407,26 @@ async def _safe_json_post(
     payload: dict,
 ) -> dict:
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(15.0, connect=2.0),
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
+        client = _get_pnelly_http_client()
+        started = time.perf_counter()
+        upstream_status = 0
+        try:
             response = await client.post(
                 base + path,
                 headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
                 json=payload,
+                timeout=httpx.Timeout(15.0, connect=2.0),
             )
+            upstream_status = response.status_code
+        finally:
+            metrics = getattr(app.state, "request_metrics", None)
+            if metrics is not None:
+                metrics.record_dependency(
+                    "pnelly",
+                    "POST",
+                    upstream_status,
+                    max(0.0, time.perf_counter() - started),
+                )
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "VISION_SEARCH_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
