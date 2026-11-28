@@ -45,6 +45,10 @@ The mesh archive is an NPZ with arrays named vertices (N x 3 float) and faces (M
 
 PCA and measurement regression fit on the train split only. Validation and held-out test splits are reported separately. The checkpoint and report are written owner-only with digests. The test split must remain sealed until the shape dimension and ridge alpha are preregistered.
 
+## Production measurement acceptance gate
+
+The production target is no more than 4% relative error for each supported body measurement on a subject-disjoint, independently measured holdout cohort. Before opening the sealed test split, preregister the exact error statistic (for example, MAPE), supported measurement set, acceptable missingness, capture protocol, repeatability criteria and subgroup minimums. Report per-measurement MAE, median absolute error, P95, signed bias, relative error, confidence intervals and subgroup results; do not average away a failed measurement or subgroup. The current PCA/Ridge reports are research diagnostics only and do not demonstrate this target. No fit, size recommendation or body-measurement claim may be enabled until independent anthropometrists verify the holdout results and repeated-capture stability.
+
 ## Interpretation
 
 - Surface vertex errors measure reconstruction of registered scans using a low-dimensional shape basis. They do not measure photo-to-3D accuracy.
