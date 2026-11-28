@@ -141,9 +141,9 @@ def mask_face_regions(image: Image.Image, boxes: Iterable[tuple[int, int, int, i
             crop = output.crop((left, top, right, bottom))
             try:
                 # Scale blur strength with the face region so high-resolution uploads do not
-            # retain recognizable facial detail under a fixed, small pixel radius.
-            blur_radius = max(FACE_BLUR_RADIUS, int(min(right - left, bottom - top) * 0.22))
-            blurred = crop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+                # retain recognizable facial detail under a fixed, small pixel radius.
+                blur_radius = max(FACE_BLUR_RADIUS, int(min(right - left, bottom - top) * 0.22))
+                blurred = crop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
                 try:
                     output.paste(blurred, (left, top))
                 finally:
