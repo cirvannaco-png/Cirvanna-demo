@@ -200,6 +200,7 @@ class RetrievalRunnerTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             result = validate_privacy_preprocessing_manifest(manifest_path, cases, media)
             self.assertEqual(result["image_count"], 2)
+            self.assertEqual(result["faces_masked_total"], 3)
             self.assertTrue(result["face_masked_before_inference"])
             self.assertFalse(result["face_recognition"])
             manifest["images"]["candidate.jpg"]["processed_image_sha256"] = "c" * 64
