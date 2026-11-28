@@ -3407,8 +3407,6 @@ async def marketplace_look_it(request: Request) -> Response:
                 photographed_people_status = str(form.get("photographed_people_status", "unknown")).strip()
                 if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
                     raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
-                if photographed_people_status == "contains_minor":
-                    raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
                 uploaded = form.get("reference_image")
                 if not isinstance(uploaded, StarletteUploadFile):
                     raise HTTPException(422, detail={"code": "LOOK_IT_IMAGE_REQUIRED"})
