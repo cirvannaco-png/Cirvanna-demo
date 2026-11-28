@@ -250,6 +250,7 @@ class RetrievalRunnerTests(unittest.TestCase):
             (snapshot / "model.safetensors").write_bytes(b"test-model-artifact")
             cache = root / "cache"
             case = make_image_case()
+            case["candidate_image_paths"] = {"p1": "catalog/p1.jpg", "p2": "catalog/p2.jpg"}
             cases = [validate_case(case, 1)]
 
             class FakeCuda:
