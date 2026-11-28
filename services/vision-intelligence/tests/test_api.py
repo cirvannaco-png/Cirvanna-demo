@@ -356,7 +356,7 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "no_people"},
+        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -431,7 +431,7 @@ def test_click_it_uses_real_masking_function_before_embedding(client, monkeypatc
         data={
             "consent_image_processing": "true",
             "consent_click_it": "true",
-            "photographed_people_status": "no_people",
+            "photographed_people_status": "adults_only",
         },
         files={"image": ("product.png", payload, "image/png")},
     )
@@ -463,13 +463,9 @@ def test_click_it_detector_failure_blocks_embedding_and_catalog(client, monkeypa
     assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
 
 
-def test_declared_people_with_zero_detected_faces_fails_closed(client, monkeypatch):
-    from PIL import Image
-
-    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
-    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 0))
-    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unmasked image reached embedding"))
-    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("catalog must not be queried"))
+def test_click_it_rejects_minor_images_before_decoding_or_masking(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("minor images must not be decoded"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda *_: pytest.fail("minor images must not be processed"))
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
@@ -480,8 +476,8 @@ def test_declared_people_with_zero_detected_faces_fails_closed(client, monkeypat
         },
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"
 
 
 def test_look_it_requires_both_explicit_consents_before_decoding(client, monkeypatch):
@@ -737,3 +733,23 @@ def test_look_it_rejects_faces_when_declared_product_only(client, monkeypatch):
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
+def test_click_it_rejects_faces_when_image_is_declared_product_only(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 1))
+    monkeypatch.setattr(main, "evaluate_image_quality", lambda *_: pytest.fail("contradictory declaration must not proceed"))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("contradictory declaration must not reach embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("contradictory declaration must not query catalog"))
+    response = client.post(
+        "/v1/click-it/scan",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "no_people",
+        },
+        files={"image": ("product.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
