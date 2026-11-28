@@ -62,6 +62,14 @@ The privacy receipt binds the exact SHA-256 of all submitted assets, a user-bind
 
 The worker accepts no remote image URLs and performs no face recognition. It does not decide consent itself.
 
+## Durable one-time privacy receipt replay protection
+
+The worker consumes each signed privacy receipt through a SQLite ledger mounted on a persistent, single-writer volume at `/var/lib/cvi-tryon/replay-ledger.sqlite3`. Set `CVI_VTON_REPLAY_DB_PATH` to that path in the deployment. The ledger stores only the opaque receipt ID and UTC expiry timestamp; it never stores source images, output images, asset URLs, user identifiers or consent payloads.
+
+The database uses a primary-key uniqueness constraint and an immediate write transaction, so concurrent requests cannot consume the same receipt twice. Expired rows are pruned during consumption. The worker's `/ready` check verifies that the ledger can be opened, written and integrity-checked; missing, unsafe, read-only or corrupt storage keeps the worker unready or rejects inference.
+
+The Kubernetes template provisions a dedicated ReadWriteOnce PVC for this metadata ledger and mounts it separately from the model bundle and memory-backed request scratch space. Production operations must enable storage encryption at rest, restrict volume access to this worker identity, monitor capacity and I/O errors, and define a tested backup/restore policy. Restoring an old ledger snapshot can re-enable replay of receipts that were consumed after that snapshot; after any restore, keep the worker offline until the privacy-governance owner has confirmed the restore point and invalidated outstanding receipts by rotating the receipt-signing key or advancing the revocation epoch.
+
 ## Resource and deletion controls
 
 - One inference at a time; no batching.
