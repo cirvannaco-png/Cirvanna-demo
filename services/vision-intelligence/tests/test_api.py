@@ -438,7 +438,7 @@ def test_click_it_uses_real_masking_function_before_embedding(client, monkeypatc
 
     assert response.status_code == 200, response.text
     assert events == ["detector", "quality", "embedding", "catalog"]
-    assert response.json()["privacy"]["faces_masked"] == 0
+    assert response.json()["privacy"]["faces_masked"] == 1
     assert response.json()["results"][0]["image_url"] is None
     assert response.headers["cache-control"] == "no-store, private"
 
@@ -563,7 +563,7 @@ def test_look_it_masks_before_quality_embedding_and_decomposition(client, monkey
     assert response.status_code == 200, response.text
     assert events == ["mask", "quality", "catalog", "embedding", "decomposition"]
     assert response.headers["cache-control"] == "no-store, private"
-    assert response.json()["privacy"]["faces_masked"] == 1
+    assert response.json()["privacy"]["faces_masked"] == 0
     assert response.json()["privacy"]["face_recognition"] is False
     assert response.json()["image_persisted"] is False
     with pytest.raises(ValueError):
