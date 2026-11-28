@@ -392,6 +392,14 @@ class OfferComparisonIn(BaseModel):
         return value
 
 
+def _get_pnelly_http_client() -> httpx.AsyncClient:
+    """Return the process-scoped PNELLY transport created by the app lifespan."""
+    client = getattr(app.state, "pnelly_http_client", None)
+    if client is None:
+        raise RuntimeError("PNELLY HTTP client lifespan has not started")
+    return client
+
+
 async def _safe_json_post(
     base: str,
     path: str,
@@ -399,7 +407,7 @@ async def _safe_json_post(
     payload: dict,
 ) -> dict:
     try:
-        client = app.state.pnelly_http_client
+        client = _get_pnelly_http_client()
         started = time.perf_counter()
         upstream_status = 0
         try:
