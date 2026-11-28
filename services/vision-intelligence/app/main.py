@@ -815,6 +815,9 @@ async def click_it_scan(
     if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
         await image.close()
         raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+    if photographed_people_status == "contains_minor":
+        await image.close()
+        raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -837,7 +840,10 @@ async def click_it_scan(
         decoded.close()  # Drop the unmasked decoded image even when masking fails.
     # A caller who declares people in frame must receive a positive face detection
     # and masking result. Zero detections are not treated as proof of a safe image.
-    if photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1:
+    if (
+        (photographed_people_status == "adults_only" and faces_masked < 1)
+        or (photographed_people_status == "no_people" and faces_masked > 0)
+    ):
         privacy_safe_image.close()
         raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
     try:
