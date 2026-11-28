@@ -11,7 +11,7 @@ from typing import Any
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
-TASKS = {"image_to_catalog_text", "text_to_catalog_text"}
+TASKS = {"image_to_catalog_text", "text_to_catalog_text", "image_to_catalog_image"}
 
 
 def validate_registration(value: Any) -> dict[str, Any]:
@@ -45,6 +45,14 @@ def validate_registration(value: Any) -> dict[str, Any]:
         raise ValueError("status must be 'locked' before final-test evaluation")
     if value["task_id"] not in TASKS:
         raise ValueError(f"task_id must be one of: {', '.join(sorted(TASKS))}")
+    if value["task_id"] == "image_to_catalog_image":
+        privacy_fields = {"privacy_preprocessing_manifest_sha256", "privacy_preprocessing_manifest_path"}
+        missing_privacy = sorted(privacy_fields - set(value))
+        if missing_privacy:
+            raise ValueError(
+                "image_to_catalog_image preregistration requires privacy preprocessing fields: "
+                + ", ".join(missing_privacy)
+            )
     if value["split"] != "test":
         raise ValueError("final registration split must be 'test'")
     if value["primary_metric"] != "ndcg_at_k":
@@ -89,12 +97,17 @@ def validate_registration(value: Any) -> dict[str, Any]:
         if not isinstance(revision, str) or not SHA40.fullmatch(revision):
             raise ValueError(f"challenger {model_id!r} revision must be a full 40-character lowercase SHA")
 
-    for field in ("data_manifest_path", "qrels_manifest_path", "dependency_lock_path", "rights_manifest_path"):
+    path_fields = ["data_manifest_path", "qrels_manifest_path", "dependency_lock_path", "rights_manifest_path"]
+    digest_fields = ["data_manifest_sha256", "qrels_manifest_sha256", "dependency_lock_sha256", "rights_manifest_sha256"]
+    if value["task_id"] == "image_to_catalog_image":
+        path_fields.append("privacy_preprocessing_manifest_path")
+        digest_fields.append("privacy_preprocessing_manifest_sha256")
+    for field in path_fields:
         path = value[field]
         if not isinstance(path, str) or not path.strip():
             raise ValueError(f"{field} must be a non-empty private file path")
 
-    for field in ("data_manifest_sha256", "qrels_manifest_sha256", "dependency_lock_sha256", "rights_manifest_sha256"):
+    for field in digest_fields:
         digest = value[field]
         if not isinstance(digest, str) or not SHA256.fullmatch(digest):
             raise ValueError(f"{field} must be a full lowercase SHA-256 digest")

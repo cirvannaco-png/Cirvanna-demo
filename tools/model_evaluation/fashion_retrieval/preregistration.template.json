@@ -32,5 +32,7 @@
   "qrels_manifest_path": "/secure/evaluation/human-qrels.manifest.json",
   "dependency_lock_path": "/secure/evaluation/requirements-research.lock",
   "rights_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
-  "rights_manifest_path": "/secure/evaluation/data-rights.manifest.json"
+  "rights_manifest_path": "/secure/evaluation/data-rights.manifest.json",
+  "privacy_preprocessing_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256_FOR_IMAGE_TO_IMAGE",
+  "privacy_preprocessing_manifest_path": "/secure/evaluation/clickit-image-masking.manifest.json"
 }

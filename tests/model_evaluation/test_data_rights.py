@@ -53,6 +53,17 @@ class DataRightsGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "scope must be"):
                 validate_data_rights_manifest(value, path)
 
+    def test_accepts_capability_specific_rights_scope_only_when_requested(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path, value = self._fixture(Path(temp))
+            value["scope"] = "look_it_decomposition_evaluation"
+            with self.assertRaisesRegex(ValueError, "scope must be fashion_retrieval_evaluation"):
+                validate_data_rights_manifest(value, path)
+            accepted = validate_data_rights_manifest(
+                value, path, expected_scope="look_it_decomposition_evaluation"
+            )
+            self.assertEqual(accepted["scope"], "look_it_decomposition_evaluation")
+
     def test_rejects_missing_or_tampered_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
             path, value = self._fixture(Path(temp))

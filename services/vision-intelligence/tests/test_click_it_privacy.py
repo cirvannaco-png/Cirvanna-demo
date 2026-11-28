@@ -221,3 +221,55 @@ def test_anonymizer_closes_rgb_conversion_when_detector_raises(monkeypatch, tmp_
     assert error.value.detail["code"] == "CLICK_IT_PRIVACY_DETECTION_FAILED"
     assert any(image is not source for image in closed)
     source.close()
+
+
+def test_detector_cache_reloads_from_exact_newly_pinned_model_bytes(tmp_path, monkeypatch):
+    asset = tmp_path / "face_detector.task"
+    first_payload = b"first-pinned-model"
+    second_payload = b"second-pinned-model"
+    asset.write_bytes(first_payload)
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_PATH", str(asset))
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_SHA256", hashlib.sha256(first_payload).hexdigest())
+    monkeypatch.setattr(privacy, "_DETECTOR", None)
+    monkeypatch.setattr(privacy, "_DETECTOR_KEY", None)
+
+    loaded_assets = []
+
+    class ClosableDetector(FakeDetector):
+        def __init__(self):
+            super().__init__([])
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def create_detector(model_asset):
+        loaded_assets.append(model_asset)
+        return ClosableDetector()
+
+    monkeypatch.setattr(privacy, "_create_face_detector", create_detector)
+
+    first = privacy._face_detector()
+    assert privacy._face_detector() is first
+    assert loaded_assets == [first_payload]
+
+    asset.write_bytes(second_payload)
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_SHA256", hashlib.sha256(second_payload).hexdigest())
+
+    second = privacy._face_detector()
+    assert second is not first
+    assert first.closed is True
+    assert privacy._face_detector() is second
+    assert loaded_assets == [first_payload, second_payload]
+
+
+
+def test_detector_rejects_oversized_asset_before_loading(tmp_path, monkeypatch):
+    asset = tmp_path / "oversized-face-detector.task"
+    asset.write_bytes(b"0123456789")
+    monkeypatch.setattr(privacy, "MAX_FACE_DETECTOR_BYTES", 8)
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_PATH", str(asset))
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_SHA256", hashlib.sha256(asset.read_bytes()).hexdigest())
+    configured, reason = privacy.detector_configuration()
+    assert configured is False
+    assert reason == "face_detector_asset_too_large"

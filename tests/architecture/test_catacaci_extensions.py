@@ -36,6 +36,10 @@ class TALTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             append_event(TemporalState(), self.event("e1", "minimal", consent=False))
 
+    def test_non_boolean_consent_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.event("e1", "minimal", consent="false")
+
     def test_expired_latest_value_does_not_resurrect_stale_value(self):
         state = append_event(TemporalState(), self.event("e1", "minimal", "2026-10-14T09:00:00Z"))
         expiring = TemporalEvent(

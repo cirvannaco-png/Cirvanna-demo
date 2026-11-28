@@ -133,7 +133,11 @@ def install_providers(monkeypatch, *, twin_asset=PERSON_ASSET):
             "source_image_asset_ids": [twin_asset], "status": "active",
         }
 
+    async def dependency_ready(config):
+        return config is not None
+
     monkeypatch.setattr(main, "_trusted_base", trusted_base)
+    monkeypatch.setattr(main, "_dependency_ready", dependency_ready)
     monkeypatch.setattr(main, "_worker_ready", lambda: _ready())
     monkeypatch.setattr(main, "_verify_consent", verify)
     monkeypatch.setattr(main, "_verify_consent_bundle", verify_bundle)
@@ -167,6 +171,35 @@ def test_readiness_fails_closed_without_live_dependencies(client, monkeypatch):
 
 async def _not_ready():
     return None
+
+
+def test_readiness_rejects_configured_but_unreachable_dependencies(client, monkeypatch):
+    monkeypatch.setattr(
+        main, "_trusted_base",
+        lambda *_args: ("https://unreachable.internal", "service-token-with-more-than-32-bytes"),
+    )
+    monkeypatch.setattr(main, "_dependency_ready", lambda _config: _not_ready())
+    monkeypatch.setattr(main, "_worker_ready", _ready)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    missing = response.json()["detail"]["missing_dependencies"]
+    assert {"consent_provider", "asset_service", "twin_service"}.issubset(set(missing))
+    assert "gpu_renderer" not in missing
+
+
+def test_capabilities_report_dependencies_only_when_they_answer_ready(client, monkeypatch):
+    monkeypatch.setattr(
+        main, "_trusted_base",
+        lambda *_args: ("https://unreachable.internal", "service-token-with-more-than-32-bytes"),
+    )
+    monkeypatch.setattr(main, "_dependency_ready", lambda _config: _not_ready())
+    monkeypatch.setattr(main, "_worker_ready", _ready)
+    data = client.get("/capabilities").json()
+    assert data["renderer_configured"] is True
+    assert data["consent_verifier_configured"] is False
+    assert data["asset_service_configured"] is False
+    assert data["twin_service_configured"] is False
+    assert data["output_persistence"] is False
 
 
 def test_capabilities_never_claim_live_rendering_without_dependencies(client, monkeypatch):

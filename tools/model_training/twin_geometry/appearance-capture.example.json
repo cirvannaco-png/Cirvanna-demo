@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "capture_id": "appearance-capture-opaque-0001",
+  "rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "geometry_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "face_masked_before_inference": true,
+  "preprocessing_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "color_calibration_evidence_ref": "REQUIRES_COLOR_CHART_AND_CAMERA_CALIBRATION_RECORD",
+  "color_calibration_evidence_path": "calibration/color-calibration.json",
+  "color_calibration_evidence_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "views": [
+    {
+      "view_id": "front",
+      "image_path": "capture/front.png",
+      "image_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "body_mask_path": "masks/front-body.png",
+      "body_mask_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "face_mask_path": "masks/front-face.png",
+      "face_mask_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "image_width": 2000,
+      "image_height": 3000,
+      "camera_matrix": [[1200,0,1000,5000000],[0,-1200,1500,8520000],[0,0,1,5000]],
+      "color_calibration_matrix": [[1,0,0],[0,1,0],[0,0,1]],
+      "white_balance_gain": [1,1,1],
+      "view_confidence": 0.95
+    },
+    {
+      "view_id": "side",
+      "image_path": "capture/side.png",
+      "image_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "body_mask_path": "masks/side-body.png",
+      "body_mask_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "face_mask_path": "masks/side-face.png",
+      "face_mask_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+      "image_width": 2000,
+      "image_height": 3000,
+      "camera_matrix": [[1000,0,1200,4916000],[1500,-1200,0,8520000],[1,0,0,5000]],
+      "color_calibration_matrix": [[1,0,0],[0,1,0],[0,0,1]],
+      "white_balance_gain": [1,1,1],
+      "view_confidence": 0.95
+    }
+  ]
+}

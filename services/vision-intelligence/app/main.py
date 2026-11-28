@@ -50,7 +50,10 @@ app.include_router(dsi_vision_router)
 @app.middleware("http")
 async def dsi_no_store_headers(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith("/v1/dsi/"):
+    if (
+        request.url.path.startswith("/v1/dsi/")
+        or request.url.path in {"/v1/search/image", "/v1/click-it/scan"}
+    ):
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -531,6 +534,7 @@ def readiness() -> dict[str, Any]:
 def capabilities() -> dict[str, Any]:
     clip_configured, _ = _model_configured()
     pose_configured, _ = _pose_model_configured()
+    face_detector_ready, _ = detector_configuration()
     commerce_configured = bool(os.getenv("COMMERCE_API_URL", "").strip())
     catalog_configured = bool(os.getenv("CATALOG_API_URL", "").strip()) and bool(
         os.getenv("CATALOG_API_TOKEN", "").strip() or os.getenv("CATALOG_READ_TOKEN", "").strip()
@@ -539,7 +543,8 @@ def capabilities() -> dict[str, Any]:
         "service": SERVICE,
         "model_backed_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
         "description_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
-        "look_it_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "look_it_image_search": face_detector_ready and clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "look_it_face_anonymization": face_detector_ready,
         "outfit_decomposition": bool(os.getenv("OUTFIT_DECOMPOSITION_API_URL") and os.getenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256") and SHA256.fullmatch(os.getenv("OUTFIT_DECOMPOSITION_PRIVACY_APPROVAL_SHA256", "").strip().lower())),
         "pose_3d_landmark_inference": pose_configured and _POSE_LANDMARKER is not None,
         "full_surface_mesh": False,
@@ -601,7 +606,11 @@ async def _decompose_outfit(image: Image.Image) -> dict[str, Any]:
         return {"status": "unavailable", "reason": "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED", "components": []}
 
     buffer = io.BytesIO()
-    image.convert("RGB").save(buffer, format="JPEG", quality=92, optimize=True)
+    converted = image.convert("RGB")
+    try:
+        converted.save(buffer, format="JPEG", quality=92, optimize=True)
+    finally:
+        converted.close()
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(12.0, connect=2.0),
@@ -615,6 +624,8 @@ async def _decompose_outfit(image: Image.Image) -> dict[str, Any]:
             )
     except (httpx.TimeoutException, httpx.HTTPError):
         return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_UNAVAILABLE", "components": []}
+    finally:
+        buffer.close()
     if response.status_code != 200:
         return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_REJECTED", "components": []}
     try:
@@ -686,6 +697,7 @@ async def look_it_image_search(
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
@@ -693,6 +705,12 @@ async def look_it_image_search(
     if not consent_image_processing or not consent_look_it:
         await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+    if photographed_people_status == "contains_minor":
+        await image.close()
+        raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -704,49 +722,82 @@ async def look_it_image_search(
         raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
 
     decoded = _decode_image(data, content_type)
-    quality = evaluate_image_quality(decoded)
-    if not quality["passed"]:
+    del data  # Drop the raw upload buffer after bounded decode.
+    privacy_ready, privacy_reason = detector_configuration()
+    if not privacy_ready:
+        decoded.close()
         raise HTTPException(
-            422,
-            detail={
-                "code": "IMAGE_QUALITY_REJECTED",
-                "quality": quality,
-                "message": "Retake the reference with better light, focus and framing.",
-            },
+            503,
+            detail={"code": "LOOK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
         )
+    try:
+        privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    except HTTPException:
+        decoded.close()
+        raise
+    except Exception as exc:
+        decoded.close()
+        raise HTTPException(503, detail={"code": "LOOK_IT_PRIVACY_MASKING_FAILED"}) from exc
+    decoded.close()  # The unmasked reference must not reach quality, embedding or decomposition.
+    if (
+        (photographed_people_status == "adults_only" and faces_masked < 1)
+        or (photographed_people_status == "no_people" and faces_masked > 0)
+    ):
+        privacy_safe_image.close()
+        raise HTTPException(503, detail={"code": "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"})
+    try:
+        quality = evaluate_image_quality(privacy_safe_image)
+        if not quality["passed"]:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "IMAGE_QUALITY_REJECTED",
+                    "quality": quality,
+                    "message": "Retake the reference with better light, focus and framing.",
+                },
+            )
 
-    offers, truncated = await _live_offers()
-    if category and category.strip():
-        selected = category.strip().casefold()
-        offers = [
-            item for item in offers
-            if str(item.get("category", "")).casefold() == selected
-            or str((item.get("product") or {}).get("category", "")).casefold() == selected
-        ]
-    image_vector = _image_embedding(decoded)
-    ranked = _rank_offers(image_vector, offers, limit)
-    decomposition = await _decompose_outfit(decoded)
-    decomposition = await _component_match_counts(decomposition, offers, limit)
+        offers, truncated = await _live_offers()
+        if category and category.strip():
+            selected = category.strip().casefold()
+            offers = [
+                item for item in offers
+                if str(item.get("category", "")).casefold() == selected
+                or str((item.get("product") or {}).get("category", "")).casefold() == selected
+            ]
+        image_vector = _image_embedding(privacy_safe_image)
+        ranked = _rank_offers(image_vector, offers, limit)
+        decomposition = await _decompose_outfit(privacy_safe_image)
+        decomposition = await _component_match_counts(decomposition, offers, limit)
 
-    # Candidate records and merchant prices do not leave Vision Intelligence.
-    # CAL and Commerce own the later display and landed-cost comparison boundary.
-    return {
-        "status": "complete",
-        "search_mode": "look_it_image_to_catalog_text_similarity",
-        "candidate_count": len(ranked),
-        "catalog_offer_count": len(offers),
-        "catalog_truncated": truncated,
-        "image_quality": quality,
-        "image_persisted": False,
-        "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
-        "scores_are_probabilities": False,
-        "outfit_decomposition": decomposition,
-        "merchant_comparison": {
-            "status": "pending_cal",
-            "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
-            "landed_cost_included": False,
-        },
-    }
+        # Candidate records and merchant prices do not leave Vision Intelligence.
+        # CAL and Commerce own the later display and landed-cost comparison boundary.
+        return {
+            "status": "complete",
+            "search_mode": "look_it_image_to_catalog_text_similarity",
+            "candidate_count": len(ranked),
+            "catalog_offer_count": len(offers),
+            "catalog_truncated": truncated,
+            "image_quality": quality,
+            "privacy": {
+                "face_detection": "completed",
+                "faces_masked": faces_masked,
+                "face_recognition": False,
+                "original_image_persisted": False,
+            },
+            "image_persisted": False,
+            "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
+            "scores_are_probabilities": False,
+            "outfit_decomposition": decomposition,
+            "merchant_comparison": {
+                "status": "pending_cal",
+                "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
+                "landed_cost_included": False,
+            },
+        }
+    
+    finally:
+        privacy_safe_image.close()  # Release the masked working image on success and every failure path.
 
 
 @app.post("/v1/click-it/scan", dependencies=[Depends(require_worker_auth)], tags=["click-it"])
@@ -764,6 +815,9 @@ async def click_it_scan(
     if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
         await image.close()
         raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+    if photographed_people_status == "contains_minor":
+        await image.close()
+        raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -786,7 +840,10 @@ async def click_it_scan(
         decoded.close()  # Drop the unmasked decoded image even when masking fails.
     # A caller who declares people in frame must receive a positive face detection
     # and masking result. Zero detections are not treated as proof of a safe image.
-    if photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1:
+    if (
+        (photographed_people_status == "adults_only" and faces_masked < 1)
+        or (photographed_people_status == "no_people" and faces_masked > 0)
+    ):
         privacy_safe_image.close()
         raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
     try:

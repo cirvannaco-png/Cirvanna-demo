@@ -9,7 +9,7 @@ on:
       - "services/catalog-service/**"
       - ".github/workflows/vision-intelligence.yml"
   pull_request:
-    branches: [main]
+    branches: [main, "fix/**"]
     paths:
       - "services/vision-intelligence/**"
       - "services/virtual-twin/**"

@@ -161,7 +161,14 @@ def test_eepl_wardrobe_context_requires_explicit_timestamp_and_source():
     assert normalized.location is None
     assert normalized.occasion is None
     assert normalized.climate is None
-    assert all(item["status"] == "missing_value_or_provenance" for item in evidence.values())
+    assert all(
+        evidence[field]["status"] == "missing_value_or_provenance"
+        for field in ("location", "occasion", "climate")
+    )
+    # Age eligibility is verified through a separate signed age-evidence attestation,
+    # not ordinary discovery context or the location/occasion/climate provenance map.
+    assert normalized.age_years is None
+    assert "age" not in evidence
 
 
 def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(client, monkeypatch):
