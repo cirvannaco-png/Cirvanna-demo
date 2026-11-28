@@ -278,6 +278,89 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def validate_privacy_preprocessing_manifest(
+    manifest_path: str | Path,
+    cases: list[dict[str, Any]],
+    media_root: str | Path,
+) -> dict[str, Any]:
+    """Verify reviewer approval and exact digests for every pre-masked image."""
+    path = Path(manifest_path).expanduser().resolve()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    required = {
+        "schema_version", "approval_status", "scope", "reviewed_by", "reviewed_at_utc",
+        "evidence_path", "evidence_sha256", "face_masked_before_inference",
+        "face_recognition", "detector_model_id", "detector_source_revision",
+        "detector_weights_sha256", "images",
+    }
+    missing = sorted(required - set(value)) if isinstance(value, dict) else sorted(required)
+    if missing:
+        raise ValueError(f"privacy preprocessing manifest missing fields: {', '.join(missing)}")
+    if value["schema_version"] != "1.0" or value["approval_status"] != "approved":
+        raise ValueError("privacy preprocessing manifest is not an approved version 1.0 record")
+    if value["scope"] != "click_it_image_to_image_benchmark":
+        raise ValueError("privacy preprocessing scope must be click_it_image_to_image_benchmark")
+    if not isinstance(value["reviewed_by"], str) or not value["reviewed_by"].strip():
+        raise ValueError("privacy preprocessing reviewer must be identified")
+    try:
+        reviewed = datetime.fromisoformat(str(value["reviewed_at_utc"]).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("privacy preprocessing reviewed_at_utc must be ISO-8601") from exc
+    if reviewed.tzinfo is None or reviewed > datetime.now(timezone.utc):
+        raise ValueError("privacy preprocessing review timestamp is invalid")
+    if value["face_masked_before_inference"] is not True or value["face_recognition"] is not False:
+        raise ValueError("image-to-image benchmark requires face masking and prohibits face recognition")
+    if not isinstance(value["detector_model_id"], str) or not value["detector_model_id"].strip():
+        raise ValueError("privacy preprocessing detector_model_id is required")
+    if not isinstance(value["detector_source_revision"], str) or not SHA40.fullmatch(value["detector_source_revision"]):
+        raise ValueError("privacy preprocessing detector_source_revision must be a full commit SHA")
+    if not isinstance(value["detector_weights_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["detector_weights_sha256"]):
+        raise ValueError("privacy preprocessing detector_weights_sha256 must be a full SHA-256 digest")
+    evidence_path = Path(str(value["evidence_path"])).expanduser()
+    if not evidence_path.is_absolute():
+        evidence_path = path.parent / evidence_path
+    evidence_path = evidence_path.resolve()
+    evidence_digest = value["evidence_sha256"]
+    if not isinstance(evidence_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", evidence_digest):
+        raise ValueError("privacy preprocessing evidence_sha256 must be a full SHA-256 digest")
+    if not evidence_path.is_file() or sha256_file(evidence_path) != evidence_digest:
+        raise ValueError("privacy preprocessing approval evidence is missing or has a digest mismatch")
+
+    required_images = set()
+    for case in cases:
+        if case["task_id"] not in {"image_to_catalog_image"}:
+            continue
+        required_images.add(case["query_image_path"])
+        required_images.update(case["candidate_image_paths"].values())
+    image_records = value["images"]
+    if not isinstance(image_records, dict) or set(image_records) != required_images:
+        raise ValueError("privacy preprocessing manifest must cover every query and candidate image exactly once")
+    for relative_path in sorted(required_images):
+        record = image_records[relative_path]
+        if not isinstance(record, dict):
+            raise ValueError(f"privacy preprocessing record is invalid for {relative_path}")
+        image_path = resolve_media_path(media_root, relative_path)
+        expected_digest = record.get("processed_image_sha256")
+        if not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            raise ValueError(f"processed image digest is invalid for {relative_path}")
+        if sha256_file(image_path) != expected_digest:
+            raise ValueError(f"preprocessed image digest mismatch for {relative_path}")
+        masked_count = record.get("faces_masked")
+        if isinstance(masked_count, bool) or not isinstance(masked_count, int) or masked_count < 0:
+            raise ValueError(f"faces_masked must be a non-negative integer for {relative_path}")
+    return {
+        "manifest_sha256": sha256_file(path),
+        "evidence_sha256": evidence_digest,
+        "approval_status": value["approval_status"],
+        "scope": value["scope"],
+        "face_masked_before_inference": True,
+        "face_recognition": False,
+        "detector_model_id": value["detector_model_id"],
+        "detector_source_revision": value["detector_source_revision"],
+        "detector_weights_sha256": value["detector_weights_sha256"],
+        "image_count": len(required_images),
+    }
+
+
 def hash_snapshot(snapshot_dir: str | Path) -> dict[str, dict[str, Any]]:
     root = Path(snapshot_dir).resolve()
     files = {}
@@ -601,6 +684,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Private JSONL query/candidate cases")
     parser.add_argument("--rights-manifest", required=True, help="Approved private data-rights manifest; inference is blocked without it")
+    parser.add_argument("--privacy-preprocessing-manifest", help="Approved face-masking manifest required for image_to_catalog_image")
     parser.add_argument("--media-root", required=True, help="Root directory for query_image_path and candidate_image_paths")
     parser.add_argument("--output", required=True, help="Private output JSONL path")
     parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing rankings and manifest")
@@ -644,6 +728,13 @@ def main() -> int:
 
     cases = read_cases(args.input)
     media_root = Path(args.media_root).expanduser().resolve()
+    privacy_preprocessing = None
+    if cases[0]["task_id"] == "image_to_catalog_image":
+        if not args.privacy_preprocessing_manifest:
+            raise ValueError("--privacy-preprocessing-manifest is required for image_to_catalog_image")
+        privacy_preprocessing = validate_privacy_preprocessing_manifest(
+            args.privacy_preprocessing_manifest, cases, media_root
+        )
     image_digest_manifest = {}
     for case in cases:
         if case["task_id"] in {"image_to_catalog_text", "image_to_catalog_image"}:
@@ -718,6 +809,7 @@ def main() -> int:
         "model_revisions": revisions,
         "models": model_manifest,
         "query_image_digests": image_digest_manifest,
+        "privacy_preprocessing": privacy_preprocessing,
         "rankings_output_sha256": sha256_file(output_path),
         "runtime": {
             "python": platform.python_version(),
