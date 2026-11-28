@@ -789,16 +789,23 @@ class WardrobeTryOnIn(BaseModel):
 
 
 
-async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
+async def _verified_commerce_subject(
+    client: httpx.AsyncClient,
+    request: Request,
+    *,
+    timeout: httpx.Timeout | None = None,
+) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not user_token.strip():
         raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
     commerce_base = _upstream_base("COMMERCE_API_URL")
     try:
+        request_options = {"timeout": timeout} if timeout is not None else {}
         identity = await client.get(
             commerce_base + "/me",
             headers={"Authorization": "Bearer " + user_token.strip(), "Accept": "application/json"},
+            **request_options,
         )
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "USER_IDENTITY_TIMEOUT"}) from exc
@@ -1175,17 +1182,20 @@ async def put_style_color_profile(request: Request, payload: ColorProfileIn) -> 
 
 @app.get("/api/wardrobe/items")
 async def wardrobe_items(request: Request) -> Response:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
-        subject, _ = await _verified_commerce_subject(client, request)
-        base, token = _wardrobe_service()
-        try:
-            response = await client.get(
-                base + "/v1/items",
-                params={"owner_user_id": subject, "include_archived": "false"},
-                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-            )
-        except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "WARDROBE_SERVICE_UNAVAILABLE"}) from exc
+    """Read the verified subject's active closet through the shared BFF connection pool."""
+    client = _get_pnelly_http_client()
+    request_timeout = httpx.Timeout(8.0, connect=2.0)
+    subject, _ = await _verified_commerce_subject(client, request, timeout=request_timeout)
+    base, token = _wardrobe_service()
+    try:
+        response = await client.get(
+            base + "/v1/items",
+            params={"owner_user_id": subject, "include_archived": "false"},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            timeout=request_timeout,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_SERVICE_UNAVAILABLE"}) from exc
     if response.status_code != 200:
         raise HTTPException(503, detail={"code": "WARDROBE_SERVICE_UNAVAILABLE"})
     try:
