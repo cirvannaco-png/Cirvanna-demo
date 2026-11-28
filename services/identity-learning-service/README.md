@@ -6,6 +6,8 @@ Internal service for persistent User Style Index profiles and consented Temporal
 
 This service is the canonical API owner for explicit positive style preferences and consented temporal observations. It uses its own table namespace (`identity_usi_*` and `identity_tal_*`) in the existing managed PostgreSQL database. Point `IDENTITY_DATABASE_URL` at the existing approved database instance (for example the Commerce Postgres instance); do not create a second database merely for this service. No Commerce tables are read or modified by this service.
 
+The namespace is physically isolated in the non-exposed `identity_private` schema. PostgreSQL connections are pinned to `search_path=identity_private` by the service engine; migrations create/use that schema explicitly. Do not add `identity_private` to Supabase API Exposed Schemas. The current application connection still requires a database login with the documented schema privileges; a dedicated least-privilege login/credential must be provisioned before deployment and must not be replaced by the broad project `postgres` credential.
+
 The API is internal-only. The API Gateway must first resolve the end-user bearer token through Commerce `GET /me`, then pass the verified subject ID using its machine credential. A caller-supplied subject ID is not proof of identity.
 
 
@@ -15,7 +17,7 @@ The service owns a short-lived, subject-scoped store for normalized PNELLY disco
 
 Only structured discovery fields are retained (latest query, category, currency, declared location/occasion/climate, bounded constraints and owned-item exclusion choice). **Raw conversation messages and transcripts are not stored.** This table is not a language model, intent parser or conversation generator; the conversational orchestration/provider still has to interpret follow-up language and map it into this typed state before using CAL-protected discovery.
 
-Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`, then `0006_consent_revocation_outbox.sql`, `0007_dsi_capture_challenges.sql`, and `0008_cil_provider_consent_revocation.sql`. The identity workflow tests the migration chain and isolated PostgreSQL restore.
+Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`, then `0006_consent_revocation_outbox.sql`, `0007_dsi_capture_challenges.sql`, and `0008_cil_provider_consent_revocation.sql`. Apply `0009_foreign_key_indexes.sql` last. Apply `0010_runtime_role_grants.sql` after that; create a separate LOGIN role with a managed password at deployment and grant it membership in `identity_learning_service`. Apply `0011_supabase_auth_app_role_hook.sql` to install the private Custom Access Token Hook. Enable it explicitly in Supabase Authentication → Hooks and set Commerce `COMMERCE_JWT_ROLE_CLAIM=app_role`. The hook copies only server-controlled `app_metadata.app_role` (default `customer`) into the top-level claim; Supabase's reserved `role=authenticated` remains unchanged. Merchant/admin promotion must come only from a verified server-side role-assignment workflow. The identity workflow tests the migration chain and isolated PostgreSQL restore.
 
 ## Local setup
 

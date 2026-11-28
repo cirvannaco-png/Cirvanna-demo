@@ -5,6 +5,7 @@
 ## Single sources of truth
 
 - **Twin Registry** owns the persistent Twin ID, owner, model/release provenance, validation-report digest, representation type and source-asset references.
+- Its tables live in the non-exposed `twin_private` PostgreSQL schema. The service pins database connections to `search_path=twin_private`; migrations create/use that schema explicitly. Never add `twin_private` to Supabase API Exposed Schemas. A dedicated least-privilege database login with only the required schema privileges remains a deployment prerequisite; do not use the broad project `postgres` credential at runtime.
 - **Asset Service** remains the only authority for binary bytes, asset IDs, tenant ownership, active/revoked state, private storage and deletion lifecycle. Twin Registry does not duplicate its asset table or store object keys. The Twin representation must be one privately stored GLB 2.0 `twin_representation`; its exact owner/Twin parent must also contain at least one normalized PNG source image. Asset Service performs container checks only; the separate mesh validator must inspect the stored bytes before registration.
 - **Identity Learning / Consent** remains the only authority for resource-bound consent. Twin Registry verifies the exact subject, consent ID, consent version, Twin resource ID and required scopes on creation and every authorization.
 - **Virtual Try-On** owns renderer orchestration and job persistence; it asks Twin Registry for the owner-bound full-body mesh and source-image asset IDs, then resolves bytes through Asset Service.
@@ -36,7 +37,7 @@ No endpoint accepts or returns public URLs, file-system paths, object-store keys
 - `CONSENT_API_URL` / `CONSENT_API_TOKEN`: current Identity Consent service.
 - `ASSET_SERVICE_URL` / `ASSET_SERVICE_TOKEN`: current private Asset Service.
 
-Apply `migrations/0001_twin_registry.sql` followed by `migrations/0002_twin_registry_deletion_outbox.sql` through the approved migration process. The `0002` downgrade must only be used after no record remains in `deletion_pending`/`deleted` state and the outbox is empty. Do not enable production auto-create schema. CI applies both migrations, exercises the downgrade/re-upgrade path, and verifies a PostgreSQL dump/restore.
+Apply `migrations/0001_twin_registry.sql` followed by `migrations/0002_twin_registry_deletion_outbox.sql` through the approved migration process. Apply `migrations/0003_deletion_outbox_fk_index.sql` last. Apply `0004_runtime_role_grants.sql` after that; create a separate LOGIN role with a managed password at deployment and grant it membership in `twin_registry_service`. The `0002` downgrade must only be used after no record remains in `deletion_pending`/`deleted` state and the outbox is empty. Do not enable production auto-create schema. CI applies both migrations, exercises the downgrade/re-upgrade path, and verifies a PostgreSQL dump/restore.
 
 ## Remaining release gates
 

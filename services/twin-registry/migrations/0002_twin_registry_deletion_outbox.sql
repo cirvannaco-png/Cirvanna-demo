@@ -1,3 +1,5 @@
+SET search_path TO twin_private;
+
 -- Canonical Twin registry deletion/revocation lifecycle.
 -- Binary objects remain in the private Asset Service; this outbox holds only opaque IDs.
 BEGIN;

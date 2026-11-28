@@ -1,3 +1,5 @@
+SET search_path TO twin_private;
+
 -- Downgrade only the Twin Registry deletion lifecycle migration.
 -- Caller must ensure no Twin row remains in deletion_pending/deleted state.
 BEGIN;
