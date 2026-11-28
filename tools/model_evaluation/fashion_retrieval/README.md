@@ -148,6 +148,17 @@ The baseline alone is not a comparison. Include the baseline and at least one ch
       --models cirvanna-fashion-clip marqo-fashionclip marqo-fashionsiglip \
       --device auto --batch-size 16
 
+For the separate Click It image-to-image track, use an input JSONL whose task is `image_to_catalog_image` and pass the reviewed masking record:
+
+    python tools/model_evaluation/fashion_retrieval/run_retrieval.py \
+      --input /secure/evaluation/clickit-image-to-image-test.jsonl \
+      --rights-manifest /secure/evaluation/clickit-catalog-data-rights.json \
+      --privacy-preprocessing-manifest /secure/evaluation/clickit-image-masking.manifest.json \
+      --media-root /secure/evaluation/clickit-masked-media \
+      --output /secure/evaluation/clickit-image-to-image-rankings.jsonl \
+      --models cirvanna-fashion-clip marqo-fashionclip marqo-fashionsiglip \
+      --device auto --batch-size 16
+
 Add --overwrite only when deliberately replacing both rankings and their manifest.
 
 This first run uses the two frozen Marqo revisions from the model registry. Add ZooClaw only after its full commit SHA has been verified, using `--revision zooclaw-fashionsiglip2=<FULL_40_CHAR_COMMIT_SHA>`. Models are loaded sequentially to reduce peak memory. If using CPU, measure runtime and memory; do not treat a CPU smoke run as production throughput evidence.
