@@ -532,7 +532,7 @@ def test_look_it_returns_only_candidate_counts_and_optional_validated_components
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -606,7 +606,7 @@ def test_look_it_masks_faces_before_quality_embedding_and_decomposition(client, 
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -626,7 +626,7 @@ def test_look_it_detector_unavailable_blocks_all_visual_inference(client, monkey
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 503
@@ -647,7 +647,7 @@ def test_look_it_masking_uncertainty_blocks_visual_inference(client, monkeypatch
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 503
@@ -678,3 +678,59 @@ def test_capabilities_advertise_look_it_only_when_masking_and_dependencies_are_r
     capabilities = main.capabilities()
     assert capabilities["look_it_face_anonymization"] is True
     assert capabilities["look_it_image_search"] is True
+
+
+def test_look_it_rejects_unknown_or_minor_photographed_people_status(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("safety status must be checked before decoding"))
+    for status in ("unknown", "contains_minor"):
+        response = client.post(
+            "/v1/search/image",
+            headers=auth(),
+            data={
+                "consent_image_processing": "true",
+                "consent_look_it": "true",
+                "photographed_people_status": status,
+            },
+            files={"image": ("outfit.png", image_bytes(), "image/png")},
+        )
+        assert response.status_code == 403
+        expected = "MINOR_IMAGE_PROCESSING_NOT_ALLOWED" if status == "contains_minor" else "CHILD_SAFETY_STATUS_UNCONFIRMED"
+        assert response.json()["detail"]["code"] == expected
+
+
+def test_look_it_requires_face_detection_for_declared_adult_images(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 0))
+    monkeypatch.setattr(main, "evaluate_image_quality", lambda *_: pytest.fail("zero face detections must not proceed"))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("zero face detections must not proceed"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("zero face detections must not query catalog"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "photographed_people_status": "adults_only",
+        },
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
+def test_look_it_rejects_faces_when_declared_product_only(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 1))
+    monkeypatch.setattr(main, "evaluate_image_quality", lambda *_: pytest.fail("contradictory status must not proceed"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "photographed_people_status": "no_people",
+        },
+        files={"image": ("product.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"
