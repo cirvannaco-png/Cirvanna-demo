@@ -58,10 +58,10 @@ def model_bundle(root:Path,private:Ed25519PrivateKey,validity_days=60):
     return fields
 
 class FakeReplayStore:
-    def __init__(self): self.keys=set()
+    def __init__(self): self.keys=set(); self.ttls={}
     def set(self,key,value,nx=False,ex=None):
         if nx and key in self.keys: return None
-        self.keys.add(key); return True
+        self.keys.add(key); self.ttls[key]=ex; return True
 
 def privacy_receipt(private,public_key_id,asset_digests,preprocessing_digest,*,expires=None,receipt_id="receipt-opaque-001"):
     payload={
@@ -133,6 +133,28 @@ def test_privacy_receipt_binds_assets_user_scope_expiry_and_masking():
     changed=dict(assets); changed["person_image"]="e"*64
     with pytest.raises(ValueError,match="exact submitted assets"):
         worker.verify_privacy_attestation(json.dumps(receipt),public,"privacy-governance-key",changed,preprocessing)
+
+def test_redis_replay_ttl_rounds_up_to_signed_receipt_expiry(monkeypatch):
+    private,public=key_pair()
+    assets={role:(str(index+1)*64) for index,role in enumerate(worker.ASSET_ROLES)}
+    preprocessing="f"*64
+    fixed_now=datetime.datetime.now(datetime.timezone.utc)
+    receipt=privacy_receipt(
+        private,"privacy-governance-key",assets,preprocessing,
+        expires=(fixed_now+datetime.timedelta(seconds=1.1)).isoformat(),
+        receipt_id="receipt-ttl-rounding",
+    )
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls,tz=None):
+            return fixed_now
+    monkeypatch.setattr(worker,"datetime",FixedDateTime)
+    store=FakeReplayStore()
+    worker.verify_privacy_attestation(
+        json.dumps(receipt),public,"privacy-governance-key",assets,preprocessing,replay_store=store
+    )
+    assert list(store.ttls.values()) == [2]
+
 
 def test_privacy_receipt_rejects_expired_or_unmasked_assets():
     private,public=key_pair()
