@@ -218,6 +218,39 @@ def verify_privacy_attestation(
     consume_receipt_once(receipt_id, expires)
     return receipt_id
 
+def _receipt_ledger_path() -> Path:
+    configured = os.getenv("CVI_VTON_REPLAY_DB_PATH", "/var/lib/cvi-tryon/replay-ledger.sqlite3").strip()
+    if not configured:
+        raise RuntimeError("durable privacy receipt ledger is not configured")
+    db_path = Path(configured)
+    try:
+        db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if db_path.parent.is_symlink() or db_path.is_symlink():
+            raise RuntimeError("privacy receipt ledger path must not contain a symlink")
+    except OSError as exc:
+        raise RuntimeError("durable privacy receipt ledger is unavailable") from exc
+    return db_path
+
+
+def check_receipt_ledger() -> None:
+    """Verify that the durable replay ledger is readable, writable and healthy."""
+    db_path = _receipt_ledger_path()
+    try:
+        with sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None) as connection:
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS consumed_privacy_receipts ("
+                "receipt_id TEXT PRIMARY KEY, expires_at TEXT NOT NULL)"
+            )
+            result = connection.execute("PRAGMA quick_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError("durable privacy receipt ledger integrity check failed")
+        os.chmod(db_path, 0o600)
+    except (OSError, sqlite3.Error) as exc:
+        raise RuntimeError("durable privacy receipt ledger is unavailable") from exc
+
+
 def consume_receipt_once(receipt_id: str, expires_at: datetime) -> None:
     """Atomically consume a privacy receipt in durable storage.
 
@@ -225,18 +258,11 @@ def consume_receipt_once(receipt_id: str, expires_at: datetime) -> None:
     stores image bytes, asset URLs, user IDs, or consent payloads. A missing,
     unsafe, read-only, or unavailable ledger is a hard failure.
     """
-    configured = os.getenv("CVI_VTON_REPLAY_DB_PATH", "/var/lib/cvi-tryon/replay-ledger.sqlite3").strip()
-    if not configured:
-        raise RuntimeError("durable privacy receipt ledger is not configured")
-    db_path = Path(configured)
+    db_path = _receipt_ledger_path()
+    now = datetime.now(timezone.utc)
+    now_text = now.isoformat(timespec="microseconds")
+    expiry_text = expires_at.astimezone(timezone.utc).isoformat(timespec="microseconds")
     try:
-        parent = db_path.parent
-        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if parent.is_symlink() or db_path.is_symlink():
-            raise RuntimeError("privacy receipt ledger path must not contain a symlink")
-        now = datetime.now(timezone.utc)
-        now_text = now.isoformat(timespec="microseconds")
-        expiry_text = expires_at.astimezone(timezone.utc).isoformat(timespec="microseconds")
         with sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None) as connection:
             connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("PRAGMA synchronous=FULL")
@@ -257,8 +283,7 @@ def consume_receipt_once(receipt_id: str, expires_at: datetime) -> None:
                 connection.execute("ROLLBACK")
                 raise ValueError("privacy receipt replay detected") from exc
             connection.execute("COMMIT")
-        if db_path.exists():
-            os.chmod(db_path, 0o600)
+        os.chmod(db_path, 0o600)
     except ValueError:
         raise
     except (OSError, sqlite3.Error) as exc:
@@ -419,6 +444,10 @@ def ready():
     runtime,error=get_runtime()
     if runtime is None:
         raise HTTPException(status_code=503,detail="qualified GPU model is not ready")
+    try:
+        check_receipt_ledger()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503,detail="durable privacy receipt ledger is not ready") from exc
     return {
         "status":"ready","model_id":runtime["manifest"]["model_id"],
         "gpu":runtime["gpu_name"],"gpu_memory_bytes":runtime["gpu_memory_bytes"],
