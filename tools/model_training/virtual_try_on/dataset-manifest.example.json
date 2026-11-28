@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "cirvanna-tryon-paired-v1",
+  "person_rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "garment_rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "annotations_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "sample_count": 0,
+  "pose_protocol_id": "REQUIRES_PINNED_17_KEYPOINT_PROTOCOL",
+  "mask_protocol_id": "REQUIRES_PINNED_MASK_PROTOCOL",
+  "split_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+}

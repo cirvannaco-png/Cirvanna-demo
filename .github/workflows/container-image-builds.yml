@@ -9,6 +9,8 @@ on:
       - "services/marketplace-bff/**"
       - "packages/http_observability/**"
       - "services/asset-service/**"
+      - "services/virtual-try-on/cvi-worker/**"
+      - "tools/model_training/virtual_try_on/model.py"
       - "services/appearance-intelligence-service/**"
       - "packages/appearance_intelligence/**"
       - "services/privacy-governance-service/**"
@@ -25,6 +27,8 @@ on:
       - "services/marketplace-bff/**"
       - "packages/http_observability/**"
       - "services/asset-service/**"
+      - "services/virtual-try-on/cvi-worker/**"
+      - "tools/model_training/virtual_try_on/model.py"
       - "services/appearance-intelligence-service/**"
       - "packages/appearance_intelligence/**"
       - "services/vision-intelligence/**"
@@ -39,7 +43,7 @@ permissions:
 jobs:
   build-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Build Catalog service image
@@ -52,6 +56,11 @@ jobs:
         run: docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff:ci .
       - name: Build private Asset service image
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
+      - name: Build Cirvanna-owned Virtual Try-On GPU worker image
+        env:
+          CUDA_BASE_IMAGE: nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6
+          IMAGE_TAG: cirvanna-cvi-vton-worker:ci
+        run: bash services/virtual-try-on/cvi-worker/scripts/build_image.sh
       - name: Build private Appearance Intelligence service image
         run: docker build -f services/appearance-intelligence-service/Dockerfile -t cirvanna-appearance-intelligence:ci .
       - name: Build Vision Intelligence image

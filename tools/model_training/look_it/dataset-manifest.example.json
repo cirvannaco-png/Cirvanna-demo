@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "cirvanna-lookit-v1",
+  "rights_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "annotations_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "sample_count": 0,
+  "categories": [
+    "upper_body",
+    "lower_body",
+    "dress",
+    "outerwear",
+    "footwear",
+    "accessory"
+  ],
+  "split_manifest_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+}

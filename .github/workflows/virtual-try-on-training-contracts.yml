@@ -1,0 +1,49 @@
+name: Virtual Try-On training data contracts
+
+on:
+  pull_request:
+    paths:
+      - "tools/model_training/virtual_try_on/**"
+      - "tools/model_evaluation/virtual_try_on/**"
+      - "tests/model_evaluation/test_virtual_try_on_evaluation.py"
+      - "tools/model_evaluation/fashion_retrieval/data_rights.py"
+      - "tests/model_training/test_virtual_try_on_dataset.py"
+      - "tests/model_training/test_training_provenance.py"
+      - "tools/model_training/provenance.py"
+      - ".github/workflows/virtual-try-on-training-contracts.yml"
+  push:
+    branches: [main, "feat/cvi-foundation-2026-11-27"]
+    paths:
+      - "tools/model_training/virtual_try_on/**"
+      - "tools/model_evaluation/virtual_try_on/**"
+      - "tests/model_evaluation/test_virtual_try_on_evaluation.py"
+      - "tools/model_evaluation/fashion_retrieval/data_rights.py"
+      - "tests/model_training/test_virtual_try_on_dataset.py"
+      - "tests/model_training/test_training_provenance.py"
+      - "tools/model_training/provenance.py"
+      - ".github/workflows/virtual-try-on-training-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  paired-data-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install data-contract dependencies
+        run: python -m pip install --upgrade pip pytest numpy pillow
+      - name: Compile Try-On training and evaluation code
+        run: |
+          python -m compileall -q tools/model_training/virtual_try_on
+          python -m compileall -q tools/model_evaluation/virtual_try_on
+      - name: Run rights, paired-dataset and held-out evaluation contract tests
+        run: python -m pytest -q tests/model_training/test_virtual_try_on_dataset.py tests/model_training/test_training_provenance.py tests/model_evaluation/test_virtual_try_on_evaluation.py
+      - name: Verify trainer and independent evaluator CLIs without loading model weights
+        run: |
+          python tools/model_training/virtual_try_on/train_warp_net.py --help
+          python tools/model_evaluation/virtual_try_on/evaluate.py --help
