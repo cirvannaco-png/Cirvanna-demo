@@ -316,7 +316,8 @@ def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypat
     assert offers == []
 
 
-def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monkeypatch):
+@pytest.mark.parametrize("people_status", ["adults_only", "contains_minor"])
+def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monkeypatch, people_status):
     events = []
     decoded_refs = []
     masked = Image.new("RGB", (240, 320), (80, 100, 120))
@@ -356,7 +357,7 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": people_status},
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -463,23 +464,6 @@ def test_click_it_detector_failure_blocks_embedding_and_catalog(client, monkeypa
     assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
 
 
-def test_click_it_rejects_minor_images_before_decoding_or_masking(client, monkeypatch):
-    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("minor images must not be decoded"))
-    monkeypatch.setattr(main, "anonymize_click_it_image", lambda *_: pytest.fail("minor images must not be processed"))
-    response = client.post(
-        "/v1/click-it/scan",
-        headers=auth(),
-        data={
-            "consent_image_processing": "true",
-            "consent_click_it": "true",
-            "photographed_people_status": "contains_minor",
-        },
-        files={"image": ("product.png", image_bytes(), "image/png")},
-    )
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"
-
-
 def test_look_it_requires_both_explicit_consents_before_decoding(client, monkeypatch):
     monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("Look It must reject before decoding without consent"))
     response = client.post(
@@ -531,7 +515,7 @@ def test_look_it_returns_only_candidate_counts_and_optional_validated_components
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": people_status},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -565,7 +549,8 @@ def test_outfit_decomposition_requires_privacy_approval_digest(monkeypatch):
     assert result["reason"] == "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED"
 
 
-def test_look_it_masks_faces_before_quality_embedding_and_decomposition(client, monkeypatch):
+@pytest.mark.parametrize("people_status", ["adults_only", "contains_minor"])
+def test_look_it_masks_faces_before_quality_embedding_and_decomposition(client, monkeypatch, people_status):
     events = []
     unmasked_refs = []
 
