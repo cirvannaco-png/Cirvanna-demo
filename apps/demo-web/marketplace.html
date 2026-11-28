@@ -331,9 +331,10 @@ footer{
         <select id="lookItPeopleStatus" class="wide" required>
           <option value="">Choose an image type</option>
           <option value="no_people">Product or outfit only — no people shown</option>
-          <option value="adults_only">Adults wearing the outfit — no minors shown</option>
+          <option value="adults_only">Adults wearing the outfit</option>
+          <option value="contains_minor">A minor is present — blur all faces before analysis</option>
         </select>
-        <p class="wide">Do not upload images containing children or anyone whose consent you do not have. Adult-worn images are face-masked before visual analysis.</p>
+        <p class="wide">Every detected face is blurred before visual analysis, including faces of minors. Do not upload an image unless you have the right to use it. If detection or masking is uncertain, processing is blocked.</p>
         <label class="consent-line wide"><input id="lookItImageConsent" type="checkbox" required><span>I consent to ephemeral image processing for this Look It request.</span></label>
         <label class="consent-line wide"><input id="lookItPurposeConsent" type="checkbox" required><span>I separately consent to using this image for PNELLY Look It outfit discovery.</span></label>
         <button class="btn primary wide" id="lookItBtn">Search this outfit with Look It</button>
@@ -911,7 +912,7 @@ footer{
     if(!image){setAiStatus("lookItStatus","Choose an outfit reference image first.",true);return}
     if(!$("lookItImageConsent").checked||!$("lookItPurposeConsent").checked){setAiStatus("lookItStatus","Both separate Look It consent controls are required.",true);return}
     const peopleStatus=$("lookItPeopleStatus").value;
-    if(!["no_people","adults_only"].includes(peopleStatus)){setAiStatus("lookItStatus","Confirm whether the reference contains people before processing.",true);return}
+    if(!["no_people","adults_only","contains_minor"].includes(peopleStatus)){setAiStatus("lookItStatus","Confirm whether the reference contains people before processing.",true);return}
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("lookItStatus","Choose a JPEG, PNG or WebP image.",true);return}
     if(image.size>10*1024*1024){setAiStatus("lookItStatus","The image exceeds the 10 MiB upload limit.",true);return}
     setAiBusy("lookItBtn",true,"Searching…");
