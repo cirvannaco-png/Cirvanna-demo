@@ -2769,6 +2769,13 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     assert data["image_persisted"] is False
     assert data["outfit_decomposition"]["status"] == "unavailable"
     assert response.headers["cache-control"] == "no-store, private"
+    forwarded = [
+        kwargs["data"]
+        for _method, url, kwargs in fake.calls
+        if url == "https://pnelly.example.test/v1/marketplace/search/image"
+    ]
+    assert len(forwarded) == 1
+    assert forwarded[0]["photographed_people_status"] == "adults_only"
     assert len(fake.receipts) == 2
     assert {row["scope"] for row in fake.receipts} == {"image_processing", "look_it"}
     assert len({row["consent_id"] for row in fake.receipts}) == 1
