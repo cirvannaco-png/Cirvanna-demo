@@ -708,9 +708,6 @@ async def look_it_image_search(
     if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
         await image.close()
         raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
-    if photographed_people_status == "contains_minor":
-        await image.close()
-        raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -740,7 +737,7 @@ async def look_it_image_search(
         raise HTTPException(503, detail={"code": "LOOK_IT_PRIVACY_MASKING_FAILED"}) from exc
     decoded.close()  # The unmasked reference must not reach quality, embedding or decomposition.
     if (
-        (photographed_people_status == "adults_only" and faces_masked < 1)
+        (photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1)
         or (photographed_people_status == "no_people" and faces_masked > 0)
     ):
         privacy_safe_image.close()
@@ -815,9 +812,6 @@ async def click_it_scan(
     if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
         await image.close()
         raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
-    if photographed_people_status == "contains_minor":
-        await image.close()
-        raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -841,7 +835,7 @@ async def click_it_scan(
     # A caller who declares people in frame must receive a positive face detection
     # and masking result. Zero detections are not treated as proof of a safe image.
     if (
-        (photographed_people_status == "adults_only" and faces_masked < 1)
+        (photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1)
         or (photographed_people_status == "no_people" and faces_masked > 0)
     ):
         privacy_safe_image.close()
