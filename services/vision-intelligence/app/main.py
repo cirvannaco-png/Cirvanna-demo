@@ -752,31 +752,32 @@ async def look_it_image_search(
         decomposition = await _decompose_outfit(privacy_safe_image)
         decomposition = await _component_match_counts(decomposition, offers, limit)
 
-    # Candidate records and merchant prices do not leave Vision Intelligence.
-    # CAL and Commerce own the later display and landed-cost comparison boundary.
-    return {
-        "status": "complete",
-        "search_mode": "look_it_image_to_catalog_text_similarity",
-        "candidate_count": len(ranked),
-        "catalog_offer_count": len(offers),
-        "catalog_truncated": truncated,
-        "image_quality": quality,
-        "privacy": {
-            "face_detection": "completed",
-            "faces_masked": faces_masked,
-            "face_recognition": False,
-            "original_image_persisted": False,
-        },
-        "image_persisted": False,
-        "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
-        "scores_are_probabilities": False,
-        "outfit_decomposition": decomposition,
-        "merchant_comparison": {
-            "status": "pending_cal",
-            "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
-            "landed_cost_included": False,
-        },
-    }
+        # Candidate records and merchant prices do not leave Vision Intelligence.
+        # CAL and Commerce own the later display and landed-cost comparison boundary.
+        return {
+            "status": "complete",
+            "search_mode": "look_it_image_to_catalog_text_similarity",
+            "candidate_count": len(ranked),
+            "catalog_offer_count": len(offers),
+            "catalog_truncated": truncated,
+            "image_quality": quality,
+            "privacy": {
+                "face_detection": "completed",
+                "faces_masked": faces_masked,
+                "face_recognition": False,
+                "original_image_persisted": False,
+            },
+            "image_persisted": False,
+            "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
+            "scores_are_probabilities": False,
+            "outfit_decomposition": decomposition,
+            "merchant_comparison": {
+                "status": "pending_cal",
+                "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
+                "landed_cost_included": False,
+            },
+        }
+    
     finally:
         privacy_safe_image.close()  # Release the masked working image on success and every failure path.
 
