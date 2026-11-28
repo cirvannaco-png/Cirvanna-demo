@@ -590,7 +590,7 @@ def test_look_it_masks_faces_before_quality_embedding_and_decomposition(client, 
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": people_status},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
