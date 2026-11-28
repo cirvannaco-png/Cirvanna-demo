@@ -32,6 +32,14 @@ def client():
         yield test_client
 
 
+def test_pnelly_http_client_is_lifespan_scoped_and_reused():
+    with TestClient(main.app):
+        pooled = main._get_pnelly_http_client()
+        assert pooled is main._get_pnelly_http_client()
+        assert pooled.is_closed is False
+    assert pooled.is_closed is True
+
+
 def configure_upstreams(monkeypatch):
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
