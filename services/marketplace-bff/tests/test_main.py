@@ -936,7 +936,7 @@ def test_wardrobe_recommendations_block_revoked_conversation_before_gateway(clie
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"detail": {"code": "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"}}, status_code=403),
     ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post(
         "/api/wardrobe/recommendations",
         headers={"Authorization": "Bearer signed-session"},
@@ -949,6 +949,7 @@ def test_wardrobe_recommendations_block_revoked_conversation_before_gateway(clie
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"
     assert len(fake.calls) == 2
+    assert all(call[2]["timeout"].connect == 2.0 and call[2]["timeout"].read == 12.0 for call in fake.calls)
 
 
 def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway(client, monkeypatch):
