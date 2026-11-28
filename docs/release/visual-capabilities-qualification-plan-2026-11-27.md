@@ -32,7 +32,7 @@ Do not place private user images, secrets, raw consent tokens or biometric data 
 
 ## REL-24 — Virtual Try-On
 
-**Initial scope:** person image + flat-lay garment image only. Model-worn garment photos remain disabled until a separately licensed parser and checkpoint are qualified.
+**Initial intended scope:** person image + flat-lay garment image only. However, the unmodified upstream FASHN VTON 1.5 pipeline imports and initializes `FashnHumanParser` unconditionally and calls `predict()` for both person and garment images even when `garment_photo_type="flat-lay"` and `segmentation_free=True`. The parser package explicitly inherits the NVIDIA SegFormer Source Code License, whose §3.3 limits the Work and derivatives to non-commercial research/evaluation. Therefore flat-lay mode alone does **not** clear the current upstream pipeline for commercial use. Virtual Try-On remains blocked until Cirvanna obtains an explicit commercial grant covering this parser or removes/replaces it with an independently licensed commercial-safe implementation and proves by import/runtime/artifact tests that no parser package, weights or inference are present in the production path. Model-worn garment photos remain disabled until separately qualified.
 
 **Required proof**
 1. Exact FASHN VTON 1.5 source revision, model weight digests, DWPose artifacts, dependency SBOM and complete commercial licence/provenance review.
