@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -21,7 +22,10 @@ FACE_DETECTOR_CANDIDATE_THRESHOLD = 0.10
 FACE_BLUR_RADIUS = 18
 FACE_PADDING_FRACTION = 0.22
 SHA256_LENGTH = 64
+MAX_FACE_DETECTOR_BYTES = 64 * 1024 * 1024
 _DETECTOR = None
+_DETECTOR_KEY: tuple[str, str] | None = None
+_DETECTOR_LOCK = threading.Lock()
 
 
 def detector_configuration() -> tuple[bool, str]:
@@ -32,6 +36,11 @@ def detector_configuration() -> tuple[bool, str]:
     path = Path(model_path)
     if not path.is_file():
         return False, "face_detector_asset_missing"
+    try:
+        if path.stat().st_size > MAX_FACE_DETECTOR_BYTES:
+            return False, "face_detector_asset_too_large"
+    except OSError:
+        return False, "face_detector_asset_unreadable"
     digest = hashlib.sha256()
     try:
         with path.open("rb") as stream:
@@ -44,26 +53,66 @@ def detector_configuration() -> tuple[bool, str]:
     return True, "configured"
 
 
+def _create_face_detector(model_asset: bytes):
+    """Construct the detector from the exact bytes whose digest was verified."""
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+
+    options = vision.FaceDetectorOptions(
+        base_options=python.BaseOptions(model_asset_buffer=model_asset),
+        running_mode=vision.RunningMode.IMAGE,
+        min_detection_confidence=FACE_DETECTOR_CANDIDATE_THRESHOLD,
+    )
+    return vision.FaceDetector.create_from_options(options)
+
+
 def _face_detector():
-    global _DETECTOR
+    global _DETECTOR, _DETECTOR_KEY
     configured, reason = detector_configuration()
     if not configured:
         raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": reason})
-    if _DETECTOR is None:
-        try:
-            import mediapipe as mp
-            from mediapipe.tasks import python
-            from mediapipe.tasks.python import vision
 
-            options = vision.FaceDetectorOptions(
-                base_options=python.BaseOptions(model_asset_path=os.environ["CLICK_IT_FACE_DETECTOR_MODEL_PATH"]),
-                running_mode=vision.RunningMode.IMAGE,
-                min_detection_confidence=FACE_DETECTOR_CANDIDATE_THRESHOLD,
-            )
-            _DETECTOR = vision.FaceDetector.create_from_options(options)
+    model_path = Path(os.environ["CLICK_IT_FACE_DETECTOR_MODEL_PATH"].strip())
+    expected = os.environ["CLICK_IT_FACE_DETECTOR_MODEL_SHA256"].strip().lower()
+    try:
+        resolved_path = model_path.resolve(strict=True)
+        with resolved_path.open("rb") as stream:
+            model_asset = stream.read(MAX_FACE_DETECTOR_BYTES + 1)
+        if len(model_asset) > MAX_FACE_DETECTOR_BYTES:
+            raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": "face_detector_asset_too_large"})
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": "face_detector_asset_unreadable"}) from exc
+
+    # Hash the bytes passed to MediaPipe, not merely the file path checked earlier.
+    # This closes the file-replacement window between readiness validation and model loading.
+    actual = hashlib.sha256(model_asset).hexdigest()
+    if not hmac.compare_digest(actual, expected):
+        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": "face_detector_asset_sha256_mismatch"})
+
+    detector_key = (str(resolved_path), expected)
+    with _DETECTOR_LOCK:
+        if _DETECTOR is not None and _DETECTOR_KEY == detector_key:
+            return _DETECTOR
+
+        previous = _DETECTOR
+        _DETECTOR = None
+        _DETECTOR_KEY = None
+        if previous is not None:
+            close = getattr(previous, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_RELOAD_FAILED"}) from exc
+
+        try:
+            detector = _create_face_detector(model_asset)
         except Exception as exc:
             raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_LOAD_FAILED"}) from exc
-    return _DETECTOR
+
+        _DETECTOR = detector
+        _DETECTOR_KEY = detector_key
+        return detector
 
 
 def mask_face_regions(image: Image.Image, boxes: Iterable[tuple[int, int, int, int]]) -> tuple[Image.Image, int]:
