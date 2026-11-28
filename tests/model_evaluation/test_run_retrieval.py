@@ -31,6 +31,19 @@ def make_case():
     }
 
 
+def make_image_case():
+    row = make_case()
+    row["task_id"] = "image_to_catalog_image"
+    row.pop("query_text")
+    row.pop("candidate_texts")
+    row["query_image_path"] = "queries/q1.jpg"
+    row["candidate_image_paths"] = {
+        "p1": "catalog/p1-front.jpg",
+        "p2": "catalog/p2-front.jpg",
+    }
+    return row
+
+
 class RetrievalRunnerTests(unittest.TestCase):
     def test_known_model_registry_uses_expected_loader_families(self):
         self.assertEqual(MODEL_SPECS["cirvanna-fashion-clip"]["loader"], "transformers_clip")
@@ -119,6 +132,27 @@ class RetrievalRunnerTests(unittest.TestCase):
         row.pop("query_image_path")
         with self.assertRaisesRegex(ValueError, "query_image_path"):
             validate_case(row, 1)
+
+    def test_image_to_image_case_requires_one_catalog_image_per_candidate(self):
+        row = make_image_case()
+        validated = validate_case(row, 1)
+        self.assertEqual(
+            validated["candidate_image_paths"],
+            {"p1": "catalog/p1-front.jpg", "p2": "catalog/p2-front.jpg"},
+        )
+        row["candidate_image_paths"].pop("p2")
+        with self.assertRaisesRegex(ValueError, "candidate_image_paths must map every candidate_id"):
+            validate_case(row, 1)
+
+    def test_image_to_image_case_rejects_mixed_candidate_text(self):
+        row = make_image_case()
+        row["candidate_texts"] = {"p1": "shirt", "p2": "coat"}
+        with self.assertRaisesRegex(ValueError, "must not supply candidate_texts"):
+            validate_case(row, 1)
+
+    def test_candidate_image_paths_cannot_escape_approved_media_root(self):
+        with self.assertRaisesRegex(ValueError, "inside --media-root"):
+            resolve_media_path("/tmp/cirvanna-media", "../private-catalog/secret.jpg")
 
     def test_openclip_tokenizer_is_repointed_to_the_pinned_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
