@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install contract test dependencies
-        run: python -m pip install --upgrade pip pytest pillow numpy==2.2.6 trimesh==4.7.4 networkx==3.4.2
+        run: python -m pip install --upgrade pip pytest pillow numpy==2.2.6 trimesh==4.7.4 networkx==3.4.2 httpx==0.28.1 fastapi==0.115.8 pydantic==2.10.6 python-multipart==0.0.20
       - name: Compile the training and evaluation tools
         run: |
           python -m compileall -q tools/model_training/look_it
