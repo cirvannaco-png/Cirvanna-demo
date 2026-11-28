@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble a digest-bound CVI Try-On model bundle; does not grant release approval."""
 from __future__ import annotations
-import argparse, hashlib, json, os, re, shutil, sys
+import argparse, hashlib, json, math, os, re, shutil, sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[4]
@@ -53,12 +53,33 @@ def main()->int:
     if training.get("model_id")!="cirvanna-tryon-warp-refine-v0" or training.get("architecture")!="custom-unet-flow-warp-alpha-residual":
         raise ValueError("training report does not describe the CVI Try-On candidate")
     if training.get("source_revision")!=args.source_revision: raise ValueError("source revision differs from training report")
+    if training.get("dataset",{}).get("dataset_manifest_sha256")!=digest(args.dataset_manifest):
+        raise ValueError("training report dataset manifest digest differs from supplied dataset")
     if training.get("dataset",{}).get("person_rights_manifest_sha256")!=person_rights["manifest_sha256"] or training.get("dataset",{}).get("garment_rights_manifest_sha256")!=garment_rights["manifest_sha256"]:
         raise ValueError("training report rights digests differ from supplied rights manifests")
-    if evaluation.get("model_id")!="cirvanna-tryon-warp-refine-v0":
-        raise ValueError("independent evaluation report model ID is invalid")
+    if evaluation.get("task")!="virtual_try_on_independent_held_out_evaluation" or evaluation.get("status")!="independent_held_out_evaluation_not_qualified":
+        raise ValueError("evaluation report is not the independent held-out Try-On evaluation artifact")
+    if evaluation.get("model_id")!="cirvanna-tryon-warp-refine-v0" or evaluation.get("source_revision")!=args.source_revision:
+        raise ValueError("independent evaluation report model identity or source revision is invalid")
     if evaluation.get("checkpoint_sha256")!=digest(args.checkpoint) or evaluation.get("dataset_manifest_sha256")!=digest(args.dataset_manifest):
         raise ValueError("independent evaluation report is not bound to this checkpoint and dataset")
+    if evaluation.get("training_report_sha256")!=digest(args.training_report):
+        raise ValueError("independent evaluation report is not bound to the training report")
+    if evaluation.get("person_rights_manifest_sha256")!=person_rights["manifest_sha256"] or evaluation.get("garment_rights_manifest_sha256")!=garment_rights["manifest_sha256"]:
+        raise ValueError("independent evaluation report rights digests do not match the bundle")
+    sample_count=evaluation.get("sample_count")
+    held_out=training.get("held_out_test",{})
+    if isinstance(sample_count,bool) or not isinstance(sample_count,int) or sample_count<1 or held_out.get("status")!="reserved_for_independent_evaluation" or held_out.get("sample_count")!=sample_count:
+        raise ValueError("independent evaluation sample count does not match the reserved held-out split")
+    for field in ("subject_cluster_count","garment_family_count"):
+        if isinstance(evaluation.get(field),bool) or not isinstance(evaluation.get(field),int) or evaluation[field]<1:
+            raise ValueError(f"independent evaluation {field} is invalid")
+    metrics=evaluation.get("metrics_macro_sample_mean")
+    required_metrics=("image_mae","psnr_db","ssim_global","garment_region_mae","alpha_mask_iou","warped_garment_mask_iou")
+    if not isinstance(metrics,dict) or any(isinstance(metrics.get(key),bool) or not isinstance(metrics.get(key),(int,float)) or not math.isfinite(float(metrics[key])) for key in required_metrics):
+        raise ValueError("independent evaluation metrics are missing or non-finite")
+    if not 0<=metrics["image_mae"]<=1 or not 0<=metrics["garment_region_mae"]<=1 or not 0<=metrics["psnr_db"]<=100 or not -1<=metrics["ssim_global"]<=1 or any(not 0<=metrics[key]<=1 for key in ("alpha_mask_iou","warped_garment_mask_iou")):
+        raise ValueError("independent evaluation metrics are outside valid bounds")
     base_channels=training.get("training",{}).get("base_channels")
     if not isinstance(base_channels,int) or not 8<=base_channels<=64: raise ValueError("training report base_channels is invalid")
     args.bundle_dir.mkdir(parents=True,exist_ok=True,mode=0o700)

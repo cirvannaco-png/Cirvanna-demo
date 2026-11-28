@@ -51,6 +51,7 @@ def main()->int:
         raise ValueError("invalid optimizer or GPU resource configuration")
     source_revision=require_clean_source_revision(ROOT)
     dataset=validate_dataset(args.manifest,args.annotations,args.media_root,args.person_rights_manifest,args.garment_rights_manifest)
+    dataset["dataset_manifest_sha256"]=hashlib.sha256(args.manifest.read_bytes()).hexdigest()
     try:
         import torch
         import torch.nn.functional as F
@@ -99,10 +100,10 @@ def main()->int:
                 "target":self._image(row,"target_image"),
                 "target_mask":self._image(row,"target_garment_mask",True),
             }
-    train_data=TryOnDataset("train"); validation_data=TryOnDataset("validation"); test_data=TryOnDataset("test")
+    train_data=TryOnDataset("train"); validation_data=TryOnDataset("validation")
+    test_rows=[row for row in rows if row["split"]=="test"]
     train_loader=DataLoader(train_data,batch_size=args.batch_size,shuffle=True,num_workers=0)
     validation_loader=DataLoader(validation_data,batch_size=args.batch_size,shuffle=False,num_workers=0)
-    test_loader=DataLoader(test_data,batch_size=args.batch_size,shuffle=False,num_workers=0)
     device=torch.device(args.device)
     model=build_model(args.base_channels).to(device)
     if args.device=="cuda": torch.cuda.reset_peak_memory_stats()
@@ -146,7 +147,7 @@ def main()->int:
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
         history.append({"epoch":epoch+1,"train_loss":sum(losses)/max(1,len(losses)),"validation":evaluate(validation_loader)})
-    test_metrics=evaluate(test_loader)
+    # The held-out test split remains sealed for the independent evaluator.
     if args.device=="cuda": torch.cuda.synchronize()
     peak_gpu_allocated=torch.cuda.max_memory_allocated() if args.device=="cuda" else None
     peak_gpu_reserved=torch.cuda.max_memory_reserved() if args.device=="cuda" else None
@@ -160,11 +161,11 @@ def main()->int:
         "source_revision":source_revision,"checkpoint_sha256":checkpoint_digest,"dataset":dataset,
         "training":{"epochs":args.epochs,"batch_size":args.batch_size,"learning_rate":args.learning_rate,"base_channels":args.base_channels,"seed":args.seed,"device":args.device,"max_gpu_memory_fraction":args.max_gpu_memory_fraction},
         "runtime":{"python":sys.version.split()[0],"torch":torch.__version__,"cuda_runtime":torch.version.cuda,"cuda_available":torch.cuda.is_available(),"gpu_name":torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,"gpu_total_memory_bytes":torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else None,"peak_gpu_memory_allocated_bytes":peak_gpu_allocated,"peak_gpu_memory_reserved_bytes":peak_gpu_reserved},
-        "history":history,"held_out_test":test_metrics,"status":"research_candidate_not_qualified",
+        "history":history,"held_out_test":{"status":"reserved_for_independent_evaluation","sample_count":len(test_rows)},"status":"research_candidate_not_qualified",
         "limitations":["256x256 baseline; no high-resolution detail preservation claim.","No pretrained perceptual backbone or diffusion prior is used.","Metrics do not prove garment identity, pattern/logo preservation, occlusion realism or human preference.","No independent subgroup confidence intervals are included in this baseline report.","No GPU training was run in the development environment.","No production inference, consent revocation or deletion proof is implied."]
     }
     write_private_text(args.output_dir/"training-report.json",json.dumps(report,indent=2,sort_keys=True)+"\n")
-    print(json.dumps({"status":report["status"],"checkpoint_sha256":checkpoint_digest,"test_metrics":test_metrics,"output_dir":str(args.output_dir)}))
+    print(json.dumps({"status":report["status"],"checkpoint_sha256":checkpoint_digest,"held_out_test":"reserved_for_independent_evaluation","output_dir":str(args.output_dir)}))
     return 0
 
 if __name__=="__main__": raise SystemExit(main())

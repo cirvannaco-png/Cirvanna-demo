@@ -286,7 +286,9 @@ def test_artifact_builder_creates_unsigned_bundle_that_worker_refuses(tmp_path):
         "model_id":"cirvanna-tryon-warp-refine-v0",
         "architecture":"custom-unet-flow-warp-alpha-residual",
         "source_revision":"a"*40,"training":{"base_channels":32},
+        "held_out_test":{"status":"reserved_for_independent_evaluation","sample_count":1},
         "dataset":{
+            "dataset_manifest_sha256":hashlib.sha256(dataset_manifest.read_bytes()).hexdigest(),
             "person_rights_manifest_sha256":dataset_result["person_rights_manifest_sha256"],
             "garment_rights_manifest_sha256":dataset_result["garment_rights_manifest_sha256"]
         }
@@ -294,9 +296,20 @@ def test_artifact_builder_creates_unsigned_bundle_that_worker_refuses(tmp_path):
     training_path=source_root/"training-report.json"
     training_path.write_text(json.dumps(training))
     evaluation={
+        "task":"virtual_try_on_independent_held_out_evaluation",
+        "status":"independent_held_out_evaluation_not_qualified",
         "model_id":"cirvanna-tryon-warp-refine-v0",
+        "source_revision":"a"*40,
         "checkpoint_sha256":hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
-        "dataset_manifest_sha256":hashlib.sha256(dataset_manifest.read_bytes()).hexdigest()
+        "training_report_sha256":hashlib.sha256(training_path.read_bytes()).hexdigest(),
+        "dataset_manifest_sha256":hashlib.sha256(dataset_manifest.read_bytes()).hexdigest(),
+        "person_rights_manifest_sha256":dataset_result["person_rights_manifest_sha256"],
+        "garment_rights_manifest_sha256":dataset_result["garment_rights_manifest_sha256"],
+        "sample_count":1,"subject_cluster_count":1,"garment_family_count":1,
+        "metrics_macro_sample_mean":{
+            "image_mae":0.1,"psnr_db":20.0,"ssim_global":0.8,
+            "garment_region_mae":0.12,"alpha_mask_iou":0.7,"warped_garment_mask_iou":0.68
+        }
     }
     evaluation_path=source_root/"evaluation-report.json"
     evaluation_path.write_text(json.dumps(evaluation))

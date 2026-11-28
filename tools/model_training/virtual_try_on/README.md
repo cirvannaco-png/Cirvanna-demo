@@ -37,7 +37,24 @@ Use a pinned CUDA image and an approved isolated GPU worker. The current develop
       --output-dir /restricted/try-on/run-001 \
       --device cuda --epochs 50 --batch-size 2
 
-The training report includes image MAE, PSNR, garment-region MAE, alpha-mask IoU and warped-garment-mask IoU on validation and held-out test data. It also records the exact dataset/rights digests, code revision, runtime, GPU and peak allocated/reserved memory. The PyTorch allocator fraction is a soft process limit, not a substitute for container-level GPU isolation.
+The trainer evaluates validation data only. It does not open held-out test images; it records the reserved test sample count and exact dataset/rights digests, code revision, runtime, GPU and peak allocated/reserved training memory. The PyTorch allocator fraction is a soft process limit, not a substitute for container-level GPU isolation.
+
+## Independent held-out evaluation
+
+After the trainer has frozen the checkpoint, evaluate the held-out test split in the exact same clean source revision:
+
+    python tools/model_evaluation/virtual_try_on/evaluate.py \
+      --checkpoint /restricted/try-on/run-001/cvi-tryon-warp-net-state.pt \
+      --training-report /restricted/try-on/run-001/training-report.json \
+      --manifest /restricted/try-on/dataset.manifest.json \
+      --annotations /restricted/try-on/annotations.jsonl \
+      --media-root /restricted/try-on/media \
+      --person-rights-manifest /restricted/try-on/person-rights.manifest.json \
+      --garment-rights-manifest /restricted/try-on/garment-rights.manifest.json \
+      --output /restricted/try-on/run-001/independent-evaluation.json \
+      --device cuda --batch-size 1
+
+The evaluator verifies the checkpoint, source revision, dataset manifest, split and both rights digests before loading only the held-out test samples. It reports image MAE, PSNR, global SSIM, garment-region MAE, alpha-mask IoU, warped-garment-mask IoU, latency, peak GPU memory and subgroup slices. These pixel and mask metrics do not prove garment identity, logo/pattern preservation, realistic drape, occlusion or human preference; those require blinded human review and additional perceptual/garment-specific metrics.
 
 ## Important limitations
 
