@@ -564,3 +564,90 @@ def test_outfit_decomposition_requires_privacy_approval_digest(monkeypatch):
     result = asyncio.run(main._decompose_outfit(Image.new("RGB", (128, 128), (120, 120, 120))))
     assert result["status"] == "unavailable"
     assert result["reason"] == "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED"
+
+
+def test_look_it_masks_faces_before_quality_embedding_and_decomposition(client, monkeypatch):
+    events = []
+    unmasked_refs = []
+
+    def mask(original):
+        events.append("mask")
+        unmasked_refs.append(original)
+        return original.copy(), 1
+
+    def quality(image):
+        events.append("quality")
+        with pytest.raises(ValueError):
+            unmasked_refs[0].getpixel((0, 0))
+        return {"passed": True, "width": image.width, "height": image.height}
+
+    def embedding(image):
+        events.append("embedding")
+        assert image.size == (240, 320)
+        return [0.5, 0.5]
+
+    async def offers():
+        events.append("catalog")
+        return ([{"variant_id": "variant-1", "product_name": "linen shirt"}], False)
+
+    async def decomposition(image):
+        events.append("decomposition")
+        assert image.size == (240, 320)
+        return {"status": "unavailable", "components": []}
+
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", mask)
+    monkeypatch.setattr(main, "evaluate_image_quality", quality)
+    monkeypatch.setattr(main, "_image_embedding", embedding)
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_decompose_outfit", decomposition)
+    monkeypatch.setattr(main, "_rank_offers", lambda *_args: [])
+
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert events == ["mask", "quality", "catalog", "embedding", "decomposition"]
+    assert response.json()["privacy"]["faces_masked"] == 1
+    assert response.json()["privacy"]["face_recognition"] is False
+    assert response.json()["image_persisted"] is False
+
+
+def test_look_it_detector_unavailable_blocks_all_visual_inference(client, monkeypatch):
+    monkeypatch.setattr(main, "detector_configuration", lambda: (False, "detector_missing"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda *_: pytest.fail("masker must not run"))
+    monkeypatch.setattr(main, "evaluate_image_quality", lambda *_: pytest.fail("unmasked quality check must not run"))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unmasked image reached embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("catalog must not be queried"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_PRIVACY_DETECTOR_NOT_READY"
+
+
+def test_look_it_masking_uncertainty_blocks_visual_inference(client, monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+
+    def fail_mask(_image):
+        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
+
+    monkeypatch.setattr(main, "anonymize_click_it_image", fail_mask)
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unmasked image reached embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("catalog must not be queried"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
