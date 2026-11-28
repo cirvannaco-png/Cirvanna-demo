@@ -1,6 +1,8 @@
+import hashlib
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tools.model_evaluation.fashion_retrieval.run_retrieval import (
@@ -11,7 +13,9 @@ from tools.model_evaluation.fashion_retrieval.run_retrieval import (
     candidate_text_for_embedding,
     prepare_open_clip_local_dir,
     resolve_media_path,
+    sha256_file,
     validate_case,
+    validate_privacy_preprocessing_manifest,
 )
 
 
@@ -153,6 +157,77 @@ class RetrievalRunnerTests(unittest.TestCase):
     def test_candidate_image_paths_cannot_escape_approved_media_root(self):
         with self.assertRaisesRegex(ValueError, "inside --media-root"):
             resolve_media_path("/tmp/cirvanna-media", "../private-catalog/secret.jpg")
+
+    def test_image_to_image_requires_reviewed_face_masking_manifest_bound_to_image_digests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            media = root / "media"
+            media.mkdir()
+            (media / "query.jpg").write_bytes(b"masked-query-image")
+            (media / "candidate.jpg").write_bytes(b"masked-catalog-image")
+            evidence = root / "privacy-review.txt"
+            evidence.write_text("independent privacy preprocessing review", encoding="utf-8")
+            cases = [{
+                **make_image_case(),
+                "query_image_path": "query.jpg",
+                "candidate_image_paths": {"p1": "candidate.jpg", "p2": "candidate.jpg"},
+            }]
+            manifest = {
+                "schema_version": "1.0",
+                "approval_status": "approved",
+                "scope": "click_it_image_to_image_benchmark",
+                "reviewed_by": "privacy-reviewer",
+                "reviewed_at_utc": datetime.now(timezone.utc).isoformat(),
+                "evidence_path": "privacy-review.txt",
+                "evidence_sha256": sha256_file(evidence),
+                "face_masked_before_inference": True,
+                "face_recognition": False,
+                "detector_model_id": "cirvanna-face-masker",
+                "detector_source_revision": "a" * 40,
+                "detector_weights_sha256": "b" * 64,
+                "images": {
+                    "query.jpg": {
+                        "processed_image_sha256": sha256_file(media / "query.jpg"),
+                        "faces_masked": 1,
+                    },
+                    "candidate.jpg": {
+                        "processed_image_sha256": sha256_file(media / "candidate.jpg"),
+                        "faces_masked": 2,
+                    },
+                },
+            }
+            manifest_path = root / "privacy-preprocessing.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            result = validate_privacy_preprocessing_manifest(manifest_path, cases, media)
+            self.assertEqual(result["image_count"], 2)
+            self.assertTrue(result["face_masked_before_inference"])
+            self.assertFalse(result["face_recognition"])
+            manifest["images"]["candidate.jpg"]["processed_image_sha256"] = "c" * 64
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                validate_privacy_preprocessing_manifest(manifest_path, cases, media)
+
+    def test_image_to_image_privacy_manifest_rejects_face_recognition(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = root / "privacy-preprocessing.json"
+            manifest.write_text(json.dumps({
+                "schema_version": "1.0",
+                "approval_status": "approved",
+                "scope": "click_it_image_to_image_benchmark",
+                "reviewed_by": "reviewer",
+                "reviewed_at_utc": datetime.now(timezone.utc).isoformat(),
+                "evidence_path": "missing.txt",
+                "evidence_sha256": "b" * 64,
+                "face_masked_before_inference": True,
+                "face_recognition": True,
+                "detector_model_id": "detector",
+                "detector_source_revision": "a" * 40,
+                "detector_weights_sha256": "b" * 64,
+                "images": {},
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "prohibits face recognition"):
+                validate_privacy_preprocessing_manifest(manifest, [make_image_case()], root)
 
     def test_openclip_tokenizer_is_repointed_to_the_pinned_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
