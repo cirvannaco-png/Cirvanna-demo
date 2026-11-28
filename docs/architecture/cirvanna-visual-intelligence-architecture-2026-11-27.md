@@ -36,13 +36,17 @@ The first implementation candidates are intentionally trained from random initia
 - **Virtual Try-On:** custom U-Net garment warp-and-refine network predicting sampling flow, blend alpha and image residual, with garment-region and warped-mask losses. Initial training resolution is 256x256.
 - **Virtual Twin:** registered-scan PCA shape basis, tape-measure ridge calibration and calibrated multi-view landmark/silhouette fitting, with mesh-only GLB export.
 
-These are training and geometry foundations, not trained production models. The current workspace has no approved image/scan corpora, no PyTorch/TorchVision runtime or NVIDIA GPU. Synthetic tests validate contracts and algorithms only. No model quality or production readiness is claimed.
+These are training and geometry foundations, not trained production models. The current workspace has no approved image/scan corpora and no local NVIDIA GPU. A digest-pinned private CUDA inference-worker image is now included in CI, but it is not yet a provisioned training environment or deployed GPU service. Synthetic tests validate contracts and algorithms only. No model quality or production readiness is claimed.
+
+Held-out test data is now kept out of the Twin shape-model and Try-On training loops. Separate evaluators at tools/model_evaluation/twin_geometry/evaluate.py and tools/model_evaluation/virtual_try_on/evaluate.py load frozen artifacts, verify exact source/dataset/rights provenance and evaluate only the reserved test split. Their outputs remain research evidence, not qualification certificates. The Click It image-to-image evaluator is tools/model_evaluation/click_it_image_retrieval/run.py; it requires an approved fixed catalogue candidate pool. The Look It evaluator remains a separate component-localization and conditional product-retrieval benchmark.
 
 ## Release qualification
 
 The package at packages/cirvanna_visual_intelligence defines the initial fail-closed model/dataset/evaluation evidence contract, including pinned inference resource budgets. A model is not qualified unless the exact capability scope, source revision, weights digest, runtime digest, bounded resource profile, commercial rights evidence, dataset provenance, evaluation report, independent review, privacy review and resource/deletion evidence bind together.
 
-The first Look It component-localization evaluator now computes category-aware bounding-box IoU matching, per-category precision/recall/F1, exact component-count accuracy and subgroup metrics. It requires a dedicated look_it_decomposition_evaluation rights scope and writes private, digest-bound reports. It is intentionally not a pixel-segmentation benchmark and has not been run on an approved catalogue/outfit corpus.\n\nThis contract validates evidence shape and cross-binding only. It intentionally cannot return qualified: even a complete metadata set remains evidence_complete_pending_trusted_attestation. Production adoption requires a trusted cryptographic signature verifier, immutable evidence storage, role-separated approver identities, and deployment-policy integration.
+The first Look It component-localization evaluator now computes category-aware bounding-box IoU matching, per-category precision/recall/F1, exact component-count accuracy and subgroup metrics. It requires a dedicated look_it_decomposition_evaluation rights scope and writes private, digest-bound reports. It is intentionally not a pixel-segmentation benchmark and has not been run on an approved catalogue/outfit corpus.
+
+This contract validates evidence shape and cross-binding only. It intentionally cannot return qualified: even a complete metadata set remains evidence_complete_pending_trusted_attestation. Production adoption requires a trusted cryptographic signature verifier, immutable evidence storage, role-separated approver identities, and deployment-policy integration.
 
 ## Capability-specific evidence
 
