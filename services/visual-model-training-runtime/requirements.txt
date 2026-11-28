@@ -1,0 +1,6 @@
+numpy==2.2.6
+Pillow==11.1.0
+trimesh==4.7.4
+networkx==3.4.2
+cryptography==44.0.2
+redis==5.2.1

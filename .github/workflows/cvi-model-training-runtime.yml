@@ -1,0 +1,27 @@
+name: CVI model training runtime image
+
+on:
+  pull_request:
+    paths:
+      - "services/visual-model-training-runtime/**"
+      - ".github/workflows/cvi-model-training-runtime.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/visual-model-training-runtime/**"
+      - ".github/workflows/cvi-model-training-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-training-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke-test pinned CUDA training runtime
+        env:
+          CUDA_BASE_IMAGE: nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6
+          IMAGE_TAG: cirvanna-visual-model-training:ci
+        run: bash services/visual-model-training-runtime/build_image.sh
