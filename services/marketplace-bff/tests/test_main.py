@@ -2788,7 +2788,7 @@ def test_look_it_revokes_partial_consent_write_before_returning_failure(client, 
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 503
@@ -2804,7 +2804,7 @@ def test_look_it_suppresses_results_when_consent_revocation_fails(client, monkey
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 503
@@ -2820,7 +2820,7 @@ def test_look_it_authenticates_before_multipart_parser(client, monkeypatch):
     monkeypatch.setattr(Request, "stream", forbidden)
     response = client.post(
         "/api/vision/look-it",
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 401
@@ -4643,3 +4643,24 @@ def test_cal_discovery_envelope_requires_authority_request_id_and_complete_count
             main._validate_cal_discovery_envelope(payload, error_code="INVALID")
         assert exc.value.status_code == 502
         assert exc.value.detail["code"] == "INVALID"
+
+
+def test_look_it_rejects_unknown_or_minor_image_status_before_consent_creation(client, monkeypatch):
+    fake = LookItLifecycleClient()
+    _configure_look_it_bff(monkeypatch, fake)
+    for status in ("unknown", "contains_minor"):
+        response = client.post(
+            "/api/vision/look-it",
+            headers={"Authorization": "Bearer signed-user-session-token"},
+            data={
+                "consent_image_processing": "true",
+                "consent_look_it": "true",
+                "photographed_people_status": status,
+            },
+            files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+        )
+        assert response.status_code == 403
+        expected = "MINOR_IMAGE_PROCESSING_NOT_ALLOWED" if status == "contains_minor" else "CHILD_SAFETY_STATUS_UNCONFIRMED"
+        assert response.json()["detail"]["code"] == expected
+    assert fake.receipts == []
+    assert not any(url == "https://pnelly.example.test/v1/marketplace/search/image" for _m, url, _k in fake.calls)
