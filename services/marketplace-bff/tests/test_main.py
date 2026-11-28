@@ -372,7 +372,7 @@ def test_description_search_forwards_to_legacy_xari_alias_but_suppresses_all_can
         "scores_are_probabilities": False,
     })])
     # Inject into the lifespan-owned slot; production requests share the pool.
-    monkeypatch.setattr(main.app.state, "pnelly_http_client", fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
     assert response.status_code == 200, response.text
     data = response.json()
@@ -544,7 +544,7 @@ def test_description_search_keeps_xari_credentials_as_legacy_fallback(client, mo
         "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
     })])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
@@ -567,7 +567,7 @@ def test_description_search_prefers_pnelly_credentials_over_xari_and_tari(client
         "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
     })])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://pnelly.example.test/v1/marketplace/search"
@@ -601,7 +601,7 @@ def test_description_search_uses_tari_only_as_the_final_legacy_fallback(client, 
         "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
     })])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://legacy-tari.example.test/v1/marketplace/search"
