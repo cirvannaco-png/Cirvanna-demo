@@ -327,4 +327,4 @@ def test_readiness_fails_closed_without_durable_replay_ledger(monkeypatch):
     monkeypatch.setattr(worker, "get_runtime", lambda: (runtime, None))
     response = TestClient(worker.app).get("/ready")
     assert response.status_code == 503
-    assert "replay ledger" in response.text
+    assert "privacy receipt ledger" in response.text
