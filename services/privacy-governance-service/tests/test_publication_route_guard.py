@@ -99,6 +99,16 @@ def test_no_public_media_publication_or_restore_route_bypasses_privacy_gate():
             )
             if private_vton_worker_response:
                 continue
+            private_cvi_vton_worker_response = (
+                source_relative == "services/virtual-try-on/cvi-worker/app/main.py"
+                and route == "/v1/render"
+                and any(isinstance(item, ast.Name) and item.id == "verify_privacy_attestation" for item in ast.walk(handler))
+                and any(isinstance(item, ast.Name) and item.id == "wipe_sensitive_buffers" for item in ast.walk(handler))
+                and any(isinstance(item, ast.Name) and item.id == "read_limited" for item in ast.walk(handler))
+                and "no-store, no-cache, must-revalidate, private" in source
+            )
+            if private_cvi_vton_worker_response:
+                continue
             guarded = any(
                 isinstance(item, ast.Name) and item.id == "require_publication_gate"
                 for item in ast.walk(handler)

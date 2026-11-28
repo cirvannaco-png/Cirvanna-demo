@@ -274,6 +274,30 @@ def validate_private_artifact_manifests(registration: dict[str, Any]) -> dict[st
         raise ValueError("prepared-data manifest does not bind the preregistered human-qrels manifest")
     if loaded["data"].get("query_cases_sha256") != loaded["qrels"].get("output_sha256"):
         raise ValueError("prepared-data manifest does not bind the reviewed qrels artifact digest")
+    if registration["task_id"] == "image_to_catalog_image":
+        privacy_path = registration["privacy_preprocessing_manifest_path"]
+        if sha256_file(privacy_path) != registration["privacy_preprocessing_manifest_sha256"]:
+            raise ValueError("privacy preprocessing manifest differs from locked preregistration")
+        privacy = json.loads(Path(privacy_path).read_text(encoding="utf-8"))
+        if (
+            not isinstance(privacy, dict)
+            or privacy.get("schema_version") != "1.0"
+            or privacy.get("approval_status") != "approved"
+            or privacy.get("scope") != "click_it_image_to_image_benchmark"
+            or privacy.get("face_masked_before_inference") is not True
+            or privacy.get("face_recognition") is not False
+        ):
+            raise ValueError("privacy preprocessing manifest is not approved for masked image-to-image evaluation")
+        evidence_path = Path(str(privacy.get("evidence_path", ""))).expanduser()
+        if not evidence_path.is_absolute():
+            evidence_path = Path(privacy_path).expanduser().resolve().parent / evidence_path
+        evidence_path = evidence_path.resolve()
+        if (
+            not evidence_path.is_file()
+            or privacy.get("evidence_sha256") != sha256_file(evidence_path)
+        ):
+            raise ValueError("privacy preprocessing reviewer evidence is missing or has a digest mismatch")
+        loaded["privacy_preprocessing"] = privacy
     return loaded
 
 
@@ -305,6 +329,15 @@ def validate_run_manifest(
         raise ValueError("runner manifest split must be test for final evaluation")
     if manifest.get("task_id") != registration["task_id"]:
         raise ValueError("runner manifest task_id differs from the locked preregistration")
+    if registration["task_id"] == "image_to_catalog_image":
+        privacy = manifest.get("privacy_preprocessing")
+        if (
+            not isinstance(privacy, dict)
+            or privacy.get("manifest_sha256") != registration["privacy_preprocessing_manifest_sha256"]
+            or privacy.get("face_masked_before_inference") is not True
+            or privacy.get("face_recognition") is not False
+        ):
+            raise ValueError("runner privacy preprocessing does not match the locked masking manifest")
 
 
 def validate_final_test_registration(

@@ -35,6 +35,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install evaluator contract dependencies
+        run: python -m pip install --upgrade pip pillow
       - name: Compile evaluator and model runner
         run: |
           python -m py_compile tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py

@@ -220,5 +220,46 @@ class FinalTestGateTests(unittest.TestCase):
         }
         self.assertFalse(evaluate_preregistered_challenger_gates(report, registration)["marqo-fashionclip"]["overall_passed"])
 
+    def test_image_to_image_final_gate_requires_exact_masking_manifest_digest(self):
+        registration = valid_registration()
+        registration["task_id"] = "image_to_catalog_image"
+        registration["privacy_preprocessing_manifest_sha256"] = "f" * 64
+        registration["privacy_preprocessing_manifest_path"] = "/private/clickit-masking.json"
+        rankings = Path(tempfile.gettempdir()) / "cirvanna-clickit-final-rankings.jsonl"
+        rankings.write_text("{}\\n", encoding="utf-8")
+        manifest = {
+            "schema_version": "1.0",
+            "data_rights": {"manifest_sha256": registration["rights_manifest_sha256"]},
+            "model_revisions": {
+                "cirvanna-fashion-clip": registration["baseline"]["revision"],
+                **registration["challengers"],
+            },
+            "rankings_output_sha256": hashlib.sha256(rankings.read_bytes()).hexdigest(),
+            "input_sha256": "b" * 64,
+            "query_count": 100,
+            "candidate_pool_sizes": [100],
+            "split": "test",
+            "task_id": "image_to_catalog_image",
+            "privacy_preprocessing": {
+                "manifest_sha256": "f" * 64,
+                "face_masked_before_inference": True,
+                "face_recognition": False,
+            },
+        }
+        validate_run_manifest(manifest, registration, rankings, {
+            "output_sha256": "b" * 64,
+            "query_count": 100,
+            "candidate_pool_sizes": [100],
+        })
+        manifest["privacy_preprocessing"]["manifest_sha256"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "locked masking manifest"):
+            validate_run_manifest(manifest, registration, rankings, {
+                "output_sha256": "b" * 64,
+                "query_count": 100,
+                "candidate_pool_sizes": [100],
+            })
+        rankings.unlink()
+
+
 if __name__ == "__main__":
     unittest.main()

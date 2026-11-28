@@ -2704,7 +2704,7 @@ class LookItLifecycleClient:
         if url == "https://identity.example.test/internal/v1/consents/verify":
             body = kwargs["json"]
             assert body["subject_id"] == "verified-customer-01"
-            assert {item["scope"] for item in self.receipts} == {"image_processing", "look_it"}
+            assert {item["scope"] for item in self.receipts} == {"image_processing", "look_it", "photographed_people_adult_attestation"}
             return FakeResponse({
                 "verified": True, "active": True,
                 "subject_id": body["subject_id"],
@@ -2712,7 +2712,7 @@ class LookItLifecycleClient:
                 "resource_id": body["resource_id"],
                 "consent_version": body["consent_version"],
                 "expires_at": self.receipts[0]["expires_at"],
-                "granted_scopes": ["image_processing", "look_it"],
+                "granted_scopes": ["image_processing", "look_it", "photographed_people_adult_attestation"],
             })
         if url == "https://pnelly.example.test/v1/marketplace/search/image":
             fields = kwargs["data"]
@@ -2758,7 +2758,7 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -2769,14 +2769,21 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     assert data["image_persisted"] is False
     assert data["outfit_decomposition"]["status"] == "unavailable"
     assert response.headers["cache-control"] == "no-store, private"
-    assert len(fake.receipts) == 2
-    assert {row["scope"] for row in fake.receipts} == {"image_processing", "look_it"}
+    forwarded = [
+        kwargs["data"]
+        for _method, url, kwargs in fake.calls
+        if url == "https://pnelly.example.test/v1/marketplace/search/image"
+    ]
+    assert len(forwarded) == 1
+    assert forwarded[0]["photographed_people_status"] == "adults_only"
+    assert len(fake.receipts) == 3
+    assert {row["scope"] for row in fake.receipts} == {"image_processing", "look_it", "photographed_people_adult_attestation"}
     assert len({row["consent_id"] for row in fake.receipts}) == 1
     assert len({row["resource_id"] for row in fake.receipts}) == 1
     assert all(row["expires_at"] for row in fake.receipts)
     assert any(url.endswith("/internal/v1/consents/verify") for _method, url, _kwargs in fake.calls)
     revoke_urls = [url for _method, url, _kwargs in fake.calls if url.endswith("/revoke")]
-    assert len(revoke_urls) == 2
+    assert len(revoke_urls) == 3
     assert {url.rsplit("/", 2)[-2] for url in revoke_urls} == {row["receipt_id"] for row in fake.receipts}
     for forbidden in ("variant_id", "product_name", "price_minor", "merchant_id", "image_urls"):
         assert forbidden not in response.text
@@ -2788,7 +2795,7 @@ def test_look_it_revokes_partial_consent_write_before_returning_failure(client, 
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 503
@@ -2804,7 +2811,7 @@ def test_look_it_suppresses_results_when_consent_revocation_fails(client, monkey
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 503
@@ -2820,7 +2827,7 @@ def test_look_it_authenticates_before_multipart_parser(client, monkeypatch):
     monkeypatch.setattr(Request, "stream", forbidden)
     response = client.post(
         "/api/vision/look-it",
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 401
@@ -4662,3 +4669,22 @@ def test_wardrobe_items_use_lifespan_pool_with_original_timeout(client, monkeypa
     assert fake.calls[0][2]["timeout"].read == 8.0
     assert fake.calls[1][2]["timeout"].connect == 2.0
     assert fake.calls[1][2]["timeout"].read == 8.0
+def test_look_it_rejects_unknown_or_minor_image_status_before_consent_creation(client, monkeypatch):
+    fake = LookItLifecycleClient()
+    _configure_look_it_bff(monkeypatch, fake)
+    for status in ("unknown", "contains_minor"):
+        response = client.post(
+            "/api/vision/look-it",
+            headers={"Authorization": "Bearer signed-user-session-token"},
+            data={
+                "consent_image_processing": "true",
+                "consent_look_it": "true",
+                "photographed_people_status": status,
+            },
+            files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+        )
+        assert response.status_code == 403
+        expected = "MINOR_IMAGE_PROCESSING_NOT_ALLOWED" if status == "contains_minor" else "CHILD_SAFETY_STATUS_UNCONFIRMED"
+        assert response.json()["detail"]["code"] == expected
+    assert fake.receipts == []
+    assert not any(url == "https://pnelly.example.test/v1/marketplace/search/image" for _m, url, _k in fake.calls)

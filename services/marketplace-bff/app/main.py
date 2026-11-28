@@ -3344,7 +3344,7 @@ async def _record_look_it_consent(
 
 async def _verify_look_it_bundle(
     client: httpx.AsyncClient, *, base: str, token: str, subject: str,
-    consent_id: str, resource_id: str, consent_version: str,
+    consent_id: str, resource_id: str, consent_version: str, declaration_scope: str,
 ) -> None:
     response = await client.post(
         base + "/internal/v1/consents/verify",
@@ -3352,7 +3352,7 @@ async def _verify_look_it_bundle(
         json={
             "subject_id": subject, "consent_id": consent_id,
             "resource_id": resource_id, "consent_version": consent_version,
-            "required_scopes": ["image_processing", "look_it"],
+            "required_scopes": ["image_processing", "look_it", declaration_scope],
         },
     )
     if response.status_code != 200:
@@ -3373,7 +3373,7 @@ async def _verify_look_it_bundle(
         isinstance(data, dict) and data.get("verified") is True and data.get("active") is True
         and data.get("subject_id") == subject and data.get("consent_id") == consent_id
         and data.get("resource_id") == resource_id and data.get("consent_version") == consent_version
-        and isinstance(scopes, list) and {"image_processing", "look_it"}.issubset(set(scopes))
+        and isinstance(scopes, list) and {"image_processing", "look_it", declaration_scope}.issubset(set(scopes))
         and expiry is not None and expiry.astimezone(timezone.utc) > datetime.now(timezone.utc)
     ):
         raise HTTPException(403, detail={"code": "LOOK_IT_CONSENT_NOT_VERIFIED"})
@@ -3414,6 +3414,12 @@ async def marketplace_look_it(request: Request) -> Response:
                 look_it_consent = str(form.get("consent_look_it", "")).strip().lower() == "true"
                 if not image_consent or not look_it_consent:
                     raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+                photographed_people_status = str(form.get("photographed_people_status", "unknown")).strip()
+                if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+                    raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+                if photographed_people_status == "contains_minor":
+                    raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
+                declaration_scope = ("photographed_no_people_attestation" if photographed_people_status == "no_people" else "photographed_people_adult_attestation")
                 uploaded = form.get("reference_image")
                 if not isinstance(uploaded, StarletteUploadFile):
                     raise HTTPException(422, detail={"code": "LOOK_IT_IMAGE_REQUIRED"})
@@ -3431,7 +3437,7 @@ async def marketplace_look_it(request: Request) -> Response:
                 consent_version = "pnelly-look-it-2026-11-v1"
                 expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
 
-                for scope in ("image_processing", "look_it"):
+                for scope in ("image_processing", "look_it", declaration_scope):
                     receipt_id = str(uuid.uuid4())
                     # Track before write: a network failure may follow a committed receipt.
                     consent_receipt_ids.append(receipt_id)
@@ -3455,6 +3461,7 @@ async def marketplace_look_it(request: Request) -> Response:
                     consent_id=consent_id,
                     resource_id=resource_id,
                     consent_version=consent_version,
+                    declaration_scope=declaration_scope,
                 )
 
                 content = await reference_image.read(MAX_VISION_IMAGE_BYTES + 1)
@@ -3469,6 +3476,7 @@ async def marketplace_look_it(request: Request) -> Response:
                     "resource_id": resource_id,
                     "consent_image_processing": "true",
                     "consent_look_it": "true",
+                    "photographed_people_status": photographed_people_status,
                     "limit": "10",
                 }
                 # The category is an optional hint; only accept a bounded string.

@@ -152,12 +152,13 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
     monkeypatch.setenv("PNELLY_API_TOKEN", TOKEN)
     verified = {}
 
-    async def verify(subject_id, consent_id, resource_id):
-        verified.update({"subject_id": subject_id, "consent_id": consent_id, "resource_id": resource_id})
+    async def verify(subject_id, consent_id, resource_id, declaration_scope):
+        verified.update({"subject_id": subject_id, "consent_id": consent_id, "resource_id": resource_id, "declaration_scope": declaration_scope})
 
     async def search(**kwargs):
         assert kwargs["data"] == b"reference-image"
         assert kwargs["content_type"] == "image/png"
+        assert kwargs["photographed_people_status"] == "adults_only"
         return {
             "status": "complete",
             "candidate_count": 3,
@@ -185,6 +186,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "true",
+            "photographed_people_status": "adults_only",
             "category": "dress",
             "limit": "5",
         },
@@ -196,6 +198,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
         "subject_id": "customer-123",
         "consent_id": "consent-look-it-0001",
         "resource_id": "look-it-request-0001",
+        "declaration_scope": "photographed_people_adult_attestation",
     }
     assert body["candidate_count"] == 3
     assert body["display_authorized"] is False
@@ -229,3 +232,29 @@ def test_look_it_rejects_request_when_consent_is_incomplete(monkeypatch):
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"
+
+
+def test_look_it_rejects_unknown_and_minor_people_status_before_consent_verification(monkeypatch):
+    monkeypatch.setenv("PNELLY_API_TOKEN", TOKEN)
+
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail("unsafe photographed-person status must be rejected before consent verification")
+
+    monkeypatch.setattr(main, "_verify_look_it_consent", forbidden)
+    for status in ("unknown", "contains_minor"):
+        response = client.post(
+            "/v1/marketplace/search/image",
+            headers=auth(),
+            data={
+                "subject_id": "customer-123",
+                "consent_id": "consent-look-it-0001",
+                "resource_id": "look-it-request-0001",
+                "consent_image_processing": "true",
+                "consent_look_it": "true",
+                "photographed_people_status": status,
+            },
+            files={"image": ("outfit.png", b"reference-image", "image/png")},
+        )
+        assert response.status_code == 403
+        expected = "MINOR_IMAGE_PROCESSING_NOT_ALLOWED" if status == "contains_minor" else "CHILD_SAFETY_STATUS_UNCONFIRMED"
+        assert response.json()["detail"]["code"] == expected

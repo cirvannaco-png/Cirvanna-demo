@@ -158,8 +158,10 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
             raise ValueError(f"{prefix}: {field} must be a non-empty string")
     if row["schema_version"] != "1.0":
         raise ValueError(f"{prefix}: schema_version must be 1.0")
-    if row["task_id"] not in {"image_to_catalog_text", "text_to_catalog_text"}:
-        raise ValueError(f"{prefix}: supported tasks are image_to_catalog_text and text_to_catalog_text")
+    if row["task_id"] not in {"image_to_catalog_text", "text_to_catalog_text", "image_to_catalog_image"}:
+        raise ValueError(
+            f"{prefix}: supported tasks are image_to_catalog_text, text_to_catalog_text and image_to_catalog_image"
+        )
     candidate_ids = row.get("candidate_ids")
     if not isinstance(candidate_ids, list) or not candidate_ids:
         raise ValueError(f"{prefix}: candidate_ids must be a non-empty array")
@@ -168,10 +170,19 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError(f"{prefix}: candidate_ids must be unique")
     candidate_texts = row.get("candidate_texts")
-    if not isinstance(candidate_texts, dict) or set(candidate_texts) != set(candidate_ids):
-        raise ValueError(f"{prefix}: candidate_texts must map every candidate_id exactly once")
-    if any(not isinstance(value, str) or not value.strip() for value in candidate_texts.values()):
-        raise ValueError(f"{prefix}: candidate_texts must contain non-empty strings")
+    candidate_image_paths = row.get("candidate_image_paths")
+    if row["task_id"] == "image_to_catalog_image":
+        if not isinstance(candidate_image_paths, dict) or set(candidate_image_paths) != set(candidate_ids):
+            raise ValueError(f"{prefix}: candidate_image_paths must map every candidate_id exactly once")
+        if any(not isinstance(value, str) or not value.strip() for value in candidate_image_paths.values()):
+            raise ValueError(f"{prefix}: candidate_image_paths must contain non-empty relative paths")
+        if candidate_texts is not None:
+            raise ValueError(f"{prefix}: image-to-image cases must not supply candidate_texts")
+    else:
+        if not isinstance(candidate_texts, dict) or set(candidate_texts) != set(candidate_ids):
+            raise ValueError(f"{prefix}: candidate_texts must map every candidate_id exactly once")
+        if any(not isinstance(value, str) or not value.strip() for value in candidate_texts.values()):
+            raise ValueError(f"{prefix}: candidate_texts must contain non-empty strings")
     qrels = row.get("qrels")
     if not isinstance(qrels, dict) or set(qrels) != set(candidate_ids):
         raise ValueError(f"{prefix}: qrels must contain an explicit grade for every candidate ID")
@@ -196,9 +207,9 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
     subgroups = row.get("subgroups", {})
     if not isinstance(subgroups, dict):
         raise ValueError(f"{prefix}: subgroups must be an object")
-    if row["task_id"] == "image_to_catalog_text":
+    if row["task_id"] in {"image_to_catalog_text", "image_to_catalog_image"}:
         if not isinstance(row.get("query_image_path"), str) or not row["query_image_path"].strip():
-            raise ValueError(f"{prefix}: query_image_path is required for image_to_catalog_text")
+            raise ValueError(f"{prefix}: query_image_path is required for image retrieval tasks")
     if row["task_id"] == "text_to_catalog_text":
         if not isinstance(row.get("query_text"), str) or not row["query_text"].strip():
             raise ValueError(f"{prefix}: query_text is required for text_to_catalog_text")
@@ -206,6 +217,7 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
         **row,
         "candidate_ids": candidate_ids,
         "candidate_texts": candidate_texts,
+        "candidate_image_paths": candidate_image_paths,
         "qrels": qrels,
         "excluded_product_ids": excluded,
         "human_exclusion_violation_ids": human_violations,
@@ -264,6 +276,92 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def validate_privacy_preprocessing_manifest(
+    manifest_path: str | Path,
+    cases: list[dict[str, Any]],
+    media_root: str | Path,
+) -> dict[str, Any]:
+    """Verify reviewer approval and exact digests for every pre-masked image."""
+    path = Path(manifest_path).expanduser().resolve()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    required = {
+        "schema_version", "approval_status", "scope", "reviewed_by", "reviewed_at_utc",
+        "evidence_path", "evidence_sha256", "face_masked_before_inference",
+        "face_recognition", "detector_model_id", "detector_source_revision",
+        "detector_weights_sha256", "images",
+    }
+    missing = sorted(required - set(value)) if isinstance(value, dict) else sorted(required)
+    if missing:
+        raise ValueError(f"privacy preprocessing manifest missing fields: {', '.join(missing)}")
+    if value["schema_version"] != "1.0" or value["approval_status"] != "approved":
+        raise ValueError("privacy preprocessing manifest is not an approved version 1.0 record")
+    if value["scope"] != "click_it_image_to_image_benchmark":
+        raise ValueError("privacy preprocessing scope must be click_it_image_to_image_benchmark")
+    if not isinstance(value["reviewed_by"], str) or not value["reviewed_by"].strip():
+        raise ValueError("privacy preprocessing reviewer must be identified")
+    try:
+        reviewed = datetime.fromisoformat(str(value["reviewed_at_utc"]).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("privacy preprocessing reviewed_at_utc must be ISO-8601") from exc
+    if reviewed.tzinfo is None or reviewed > datetime.now(timezone.utc):
+        raise ValueError("privacy preprocessing review timestamp is invalid")
+    if value["face_masked_before_inference"] is not True or value["face_recognition"] is not False:
+        raise ValueError("image-to-image benchmark requires face masking and prohibits face recognition")
+    if not isinstance(value["detector_model_id"], str) or not value["detector_model_id"].strip():
+        raise ValueError("privacy preprocessing detector_model_id is required")
+    if not isinstance(value["detector_source_revision"], str) or not SHA40.fullmatch(value["detector_source_revision"]):
+        raise ValueError("privacy preprocessing detector_source_revision must be a full commit SHA")
+    if not isinstance(value["detector_weights_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["detector_weights_sha256"]):
+        raise ValueError("privacy preprocessing detector_weights_sha256 must be a full SHA-256 digest")
+    evidence_path = Path(str(value["evidence_path"])).expanduser()
+    if not evidence_path.is_absolute():
+        evidence_path = path.parent / evidence_path
+    evidence_path = evidence_path.resolve()
+    evidence_digest = value["evidence_sha256"]
+    if not isinstance(evidence_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", evidence_digest):
+        raise ValueError("privacy preprocessing evidence_sha256 must be a full SHA-256 digest")
+    if not evidence_path.is_file() or sha256_file(evidence_path) != evidence_digest:
+        raise ValueError("privacy preprocessing approval evidence is missing or has a digest mismatch")
+
+    required_images = set()
+    for case in cases:
+        if case["task_id"] not in {"image_to_catalog_image"}:
+            continue
+        required_images.add(case["query_image_path"])
+        required_images.update(case["candidate_image_paths"].values())
+    image_records = value["images"]
+    if not isinstance(image_records, dict) or set(image_records) != required_images:
+        raise ValueError("privacy preprocessing manifest must cover every query and candidate image exactly once")
+    faces_masked_total = 0
+    for relative_path in sorted(required_images):
+        record = image_records[relative_path]
+        if not isinstance(record, dict):
+            raise ValueError(f"privacy preprocessing record is invalid for {relative_path}")
+        image_path = resolve_media_path(media_root, relative_path)
+        expected_digest = record.get("processed_image_sha256")
+        if not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+            raise ValueError(f"processed image digest is invalid for {relative_path}")
+        if sha256_file(image_path) != expected_digest:
+            raise ValueError(f"preprocessed image digest mismatch for {relative_path}")
+        masked_count = record.get("faces_masked")
+        if isinstance(masked_count, bool) or not isinstance(masked_count, int) or masked_count < 0:
+            raise ValueError(f"faces_masked must be a non-negative integer for {relative_path}")
+        faces_masked_total += masked_count
+    return {
+        "manifest_sha256": sha256_file(path),
+        "evidence_sha256": evidence_digest,
+        "approval_status": value["approval_status"],
+        "scope": value["scope"],
+        "face_masked_before_inference": True,
+        "face_recognition": False,
+        "detector_model_id": value["detector_model_id"],
+        "detector_source_revision": value["detector_source_revision"],
+        "detector_weights_sha256": value["detector_weights_sha256"],
+        "image_count": len(required_images),
+        "faces_masked_total": faces_masked_total,
+    }
 
 
 def hash_snapshot(snapshot_dir: str | Path) -> dict[str, dict[str, Any]]:
@@ -478,33 +576,65 @@ def run_model(
     adapter = EmbeddingAdapter.load(model_id, snapshot, device)
     model_load_seconds = time.perf_counter() - model_load_started
     try:
-        all_texts = sorted({
-            candidate_text_for_embedding(str(text))
-            for case in cases
-            for text in case["candidate_texts"].values()
-        })
         candidate_text_vectors: dict[str, list[float]] = {}
-        candidate_embedding_started = time.perf_counter()
-        for batch in chunks(all_texts, batch_size):
-            vectors = adapter.encode_texts(batch, batch_size=batch_size)
-            if len(vectors) != len(batch):
-                raise RuntimeError("text encoder returned an unexpected number of embeddings")
-            candidate_text_vectors.update(zip(batch, vectors))
-        candidate_embedding_seconds = time.perf_counter() - candidate_embedding_started
+        candidate_image_vectors: dict[str, list[float]] = {}
+        candidate_text_embedding_seconds = 0.0
+        candidate_image_embedding_seconds = 0.0
+        task_id = cases[0]["task_id"]
+        if task_id == "image_to_catalog_image":
+            relative_paths = sorted({
+                relative_path
+                for case in cases
+                for relative_path in case["candidate_image_paths"].values()
+            })
+            resolved_paths = {
+                relative_path: resolve_media_path(media_root, relative_path)
+                for relative_path in relative_paths
+            }
+            candidate_embedding_started = time.perf_counter()
+            vectors = adapter.encode_images(list(resolved_paths.values()), batch_size=batch_size)
+            if len(vectors) != len(resolved_paths):
+                raise RuntimeError("candidate image encoder returned an unexpected number of embeddings")
+            candidate_image_vectors.update(zip(resolved_paths.keys(), vectors))
+            candidate_image_embedding_seconds = time.perf_counter() - candidate_embedding_started
+        else:
+            all_texts = sorted({
+                candidate_text_for_embedding(str(text))
+                for case in cases
+                for text in case["candidate_texts"].values()
+            })
+            candidate_embedding_started = time.perf_counter()
+            for batch in chunks(all_texts, batch_size):
+                vectors = adapter.encode_texts(batch, batch_size=batch_size)
+                if len(vectors) != len(batch):
+                    raise RuntimeError("text encoder returned an unexpected number of embeddings")
+                candidate_text_vectors.update(zip(batch, vectors))
+            candidate_text_embedding_seconds = time.perf_counter() - candidate_embedding_started
 
         rankings: dict[str, list[str]] = {}
         score_maps: dict[str, dict[str, float]] = {}
         query_latency_ms: list[float] = []
         for case in cases:
             query_started = time.perf_counter()
-            candidate_vectors = {
-                candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
-                for candidate_id in case["candidate_ids"]
-            }
-            if case["task_id"] == "image_to_catalog_text":
+            if case["task_id"] == "image_to_catalog_image":
+                candidate_vectors = {
+                    candidate_id: candidate_image_vectors[case["candidate_image_paths"][candidate_id]]
+                    for candidate_id in case["candidate_ids"]
+                }
+                image_path = resolve_media_path(media_root, case["query_image_path"])
+                query_vector = adapter.encode_images([image_path], batch_size=1)[0]
+            elif case["task_id"] == "image_to_catalog_text":
+                candidate_vectors = {
+                    candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
+                    for candidate_id in case["candidate_ids"]
+                }
                 image_path = resolve_media_path(media_root, case["query_image_path"])
                 query_vector = adapter.encode_images([image_path], batch_size=1)[0]
             else:
+                candidate_vectors = {
+                    candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
+                    for candidate_id in case["candidate_ids"]
+                }
                 query_text = build_text_query(case["query_text"])
                 query_vector = adapter.encode_texts([query_text], batch_size=1)[0]
             ordered, scores = rank_candidates(query_vector, candidate_vectors)
@@ -522,13 +652,15 @@ def run_model(
                 path: item for path, item in artifact_manifest.items()
                 if path.endswith((".safetensors", ".bin", ".pt"))
             },
-            "embedding_dimension": len(next(iter(candidate_text_vectors.values()))),
+            "embedding_dimension": len(next(iter(candidate_image_vectors.values() if candidate_image_vectors else candidate_text_vectors.values()))),
+            "candidate_embedding_mode": "image" if task_id == "image_to_catalog_image" else "text",
             "device": device,
             "timings_seconds": {
                 "snapshot_download": round(snapshot_download_seconds, 3),
                 "artifact_hashing": round(artifact_hash_seconds, 3),
                 "model_load": round(model_load_seconds, 3),
-                "candidate_text_embedding": round(candidate_embedding_seconds, 3),
+                "candidate_text_embedding": round(candidate_text_embedding_seconds, 3),
+                "candidate_image_embedding": round(candidate_image_embedding_seconds, 3),
                 "total_run": round(total_run_seconds, 3),
             },
             "query_to_topk_latency_ms": {
@@ -555,7 +687,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Private JSONL query/candidate cases")
     parser.add_argument("--rights-manifest", required=True, help="Approved private data-rights manifest; inference is blocked without it")
-    parser.add_argument("--media-root", required=True, help="Root directory for relative query_image_path values")
+    parser.add_argument("--privacy-preprocessing-manifest", help="Approved face-masking manifest required for image_to_catalog_image")
+    parser.add_argument("--media-root", required=True, help="Root directory for query_image_path and candidate_image_paths")
     parser.add_argument("--output", required=True, help="Private output JSONL path")
     parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing rankings and manifest")
     parser.add_argument("--models", nargs="+", required=True, choices=sorted(MODEL_SPECS))
@@ -598,14 +731,32 @@ def main() -> int:
 
     cases = read_cases(args.input)
     media_root = Path(args.media_root).expanduser().resolve()
+    privacy_preprocessing = None
+    if cases[0]["task_id"] == "image_to_catalog_image":
+        if not args.privacy_preprocessing_manifest:
+            raise ValueError("--privacy-preprocessing-manifest is required for image_to_catalog_image")
+        privacy_preprocessing = validate_privacy_preprocessing_manifest(
+            args.privacy_preprocessing_manifest, cases, media_root
+        )
     image_digest_manifest = {}
     for case in cases:
-        if case["task_id"] == "image_to_catalog_text":
-            image_path = resolve_media_path(media_root, case["query_image_path"])
-            image_digest_manifest[case["query_id"]] = {
-                "sha256": sha256_file(image_path),
-                "size_bytes": image_path.stat().st_size,
+        if case["task_id"] in {"image_to_catalog_text", "image_to_catalog_image"}:
+            query_path = resolve_media_path(media_root, case["query_image_path"])
+            digest_entry: dict[str, Any] = {
+                "query": {
+                    "sha256": sha256_file(query_path),
+                    "size_bytes": query_path.stat().st_size,
+                }
             }
+            if case["task_id"] == "image_to_catalog_image":
+                digest_entry["candidates"] = {}
+                for candidate_id, relative_path in case["candidate_image_paths"].items():
+                    candidate_path = resolve_media_path(media_root, relative_path)
+                    digest_entry["candidates"][candidate_id] = {
+                        "sha256": sha256_file(candidate_path),
+                        "size_bytes": candidate_path.stat().st_size,
+                    }
+            image_digest_manifest[case["query_id"]] = digest_entry
     cache_dir = Path(args.cache_dir).expanduser().resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
     model_rankings: dict[str, dict[str, list[str]]] = {}
@@ -660,7 +811,8 @@ def main() -> int:
         "candidate_pool_sizes": sorted({len(case["candidate_ids"]) for case in cases}),
         "model_revisions": revisions,
         "models": model_manifest,
-        "query_image_digests": image_digest_manifest,
+        "image_asset_digests": image_digest_manifest,
+        "privacy_preprocessing": privacy_preprocessing,
         "rankings_output_sha256": sha256_file(output_path),
         "runtime": {
             "python": platform.python_version(),

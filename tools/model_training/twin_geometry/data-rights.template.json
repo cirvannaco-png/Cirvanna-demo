@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "approval_status": "pending",
+  "scope": "twin_geometry_training",
+  "reviewed_by": "REQUIRES_DATA_RIGHTS_OWNER",
+  "reviewer_role": "REQUIRES_APPROVED_ROLE",
+  "reviewed_at_utc": "REQUIRES_REVIEW_TIMESTAMP",
+  "source_provenance": "REQUIRES_3D_SCAN_SOURCE_AND_RIGHTS_REGISTER",
+  "evidence_path": "REQUIRES_RESTRICTED_CONSENT_AND_RIGHTS_EVIDENCE",
+  "evidence_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "commercial_evaluation_permitted": false,
+  "human_review_permitted": false,
+  "retention_until": "REQUIRES_APPROVED_EXPIRY_YYYY-MM-DD",
+  "contains_personal_images": true,
+  "depicted_person_consent_status": "unknown"
+}

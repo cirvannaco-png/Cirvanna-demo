@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cirvanna-cvi-tryon-worker
+  namespace: cirvanna-private
+  labels:
+    app: cirvanna-cvi-tryon-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cirvanna-cvi-tryon-worker
+  template:
+    metadata:
+      labels:
+        app: cirvanna-cvi-tryon-worker
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: REPLACE_WITH_IMMUTABLE_CVI_WORKER_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: CVI_VTON_MODEL_BUNDLE
+              value: /models/cvi-tryon
+            - name: CVI_VTON_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cirvanna-cvi-tryon-secrets
+                  key: worker-bearer-token
+            - name: CVI_VTON_QUALIFICATION_PUBLIC_KEY_B64
+              valueFrom:
+                secretKeyRef:
+                  name: cirvanna-cvi-tryon-secrets
+                  key: qualification-public-key-b64
+            - name: CVI_VTON_QUALIFICATION_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cirvanna-cvi-tryon-secrets
+                  key: qualification-key-id
+            - name: CVI_VTON_PRIVACY_PUBLIC_KEY_B64
+              valueFrom:
+                secretKeyRef:
+                  name: cirvanna-cvi-tryon-secrets
+                  key: privacy-public-key-b64
+            - name: CVI_VTON_PRIVACY_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cirvanna-cvi-tryon-secrets
+                  key: privacy-key-id
+            - name: CVI_VTON_RUNTIME_IMAGE_DIGEST
+              value: REPLACE_WITH_ACTUAL_64_CHAR_IMAGE_DIGEST
+            - name: CVI_VTON_REPLAY_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cirvanna-cvi-tryon-secrets
+                  key: replay-redis-url
+            - name: CVI_VTON_MAX_IMAGE_BYTES
+              value: "10485760"
+            - name: CVI_VTON_MAX_POSE_BYTES
+              value: "5242880"
+            - name: CVI_VTON_MAX_IMAGE_PIXELS
+              value: "20000000"
+            - name: CVI_VTON_MAX_REQUEST_BYTES
+              value: "62914560"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              ephemeral-storage: 1Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: 24Gi
+              ephemeral-storage: 2Gi
+              nvidia.com/gpu: "1"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: model-bundle
+              mountPath: /models/cvi-tryon
+              readOnly: true
+            - name: request-tmp
+              mountPath: /tmp
+      volumes:
+        - name: model-bundle
+          persistentVolumeClaim:
+            claimName: cirvanna-cvi-tryon-qualified-model-bundle
+            readOnly: true
+        - name: request-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cirvanna-cvi-tryon-worker
+  namespace: cirvanna-private
+spec:
+  type: ClusterIP
+  selector:
+    app: cirvanna-cvi-tryon-worker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cirvanna-cvi-tryon-worker-restrict
+  namespace: cirvanna-private
+spec:
+  podSelector:
+    matchLabels:
+      app: cirvanna-cvi-tryon-worker
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: cirvanna-virtual-try-on-orchestrator
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: cirvanna-cvi-replay-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

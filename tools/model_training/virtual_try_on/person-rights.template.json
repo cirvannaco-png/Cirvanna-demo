@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "approval_status": "pending",
+  "scope": "virtual_try_on_training",
+  "reviewed_by": "REQUIRES_PRIVACY_AND_DATA_RIGHTS_OWNER",
+  "reviewer_role": "REQUIRES_APPROVED_ROLE",
+  "reviewed_at_utc": "REQUIRES_REVIEW_TIMESTAMP",
+  "source_provenance": "REQUIRES_PERSON_AND_TARGET_IMAGE_SOURCE_REGISTER",
+  "evidence_path": "REQUIRES_RESTRICTED_SUBJECT_CONSENT_EVIDENCE",
+  "evidence_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "commercial_evaluation_permitted": false,
+  "human_review_permitted": false,
+  "retention_until": "REQUIRES_APPROVED_EXPIRY_YYYY-MM-DD",
+  "contains_personal_images": true,
+  "depicted_person_consent_status": "unknown"
+}

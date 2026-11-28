@@ -36,9 +36,24 @@ def valid_registration():
     }
 
 
+def valid_image_registration():
+    row = valid_registration()
+    row["task_id"] = "image_to_catalog_image"
+    row["privacy_preprocessing_manifest_sha256"] = "e" * 64
+    row["privacy_preprocessing_manifest_path"] = "/private/clickit-masking.manifest.json"
+    return row
+
+
 class PreregistrationTests(unittest.TestCase):
     def test_accepts_complete_locked_registration(self):
         self.assertEqual(validate_registration(valid_registration())["status"], "locked")
+
+    def test_image_to_image_registration_requires_locked_masking_manifest(self):
+        row = valid_image_registration()
+        self.assertEqual(validate_registration(row)["task_id"], "image_to_catalog_image")
+        row.pop("privacy_preprocessing_manifest_sha256")
+        with self.assertRaisesRegex(ValueError, "privacy preprocessing fields"):
+            validate_registration(row)
 
     def test_rejects_unlocked_template(self):
         row = valid_registration()

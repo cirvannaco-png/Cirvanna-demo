@@ -10,6 +10,7 @@ The current code establishes useful fail-closed boundaries:
 
 - Marketplace BFF returns `503 CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED` without reading or parsing the uploaded body.
 - Vision's internal `/v1/click-it/scan` checks explicit processing/purpose consent and photographed-person declaration, requires detector readiness, masks before quality scoring/embedding, closes the unmasked decoded image, and closes the masked working image on success and failure.
+- The internal Vision worker rejects `contains_minor` before decoding because no guardian-verification receipt is currently bound to this worker request. It also rejects contradictory `no_people` declarations when the detector finds a face, and rejects `adults_only` declarations when no face is detected. These are fail-closed consistency checks, not age verification; the public Click It route remains disabled.
 - Privacy Governance owns purpose-bound consent receipts, signed jurisdiction policy bundles, photographed-person rights cases, urgent quarantine requests, requester-authority checks and required deletion-surface assertions.
 - The privacy route-guard test scans service media routes and static mounts in both service and app source roots; the media-delivery inventory also records the known private binary read paths, the one repository-owned public static root, and currently unverified external origins. These are code-level inventory guards, not proof that external object storage, CDN, caches, backups or provider systems behave correctly.
 

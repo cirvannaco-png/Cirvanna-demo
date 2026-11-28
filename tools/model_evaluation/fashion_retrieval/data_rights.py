@@ -30,7 +30,7 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
-def validate_data_rights_manifest(value: Any, manifest_path: str | Path) -> dict[str, Any]:
+def validate_data_rights_manifest(value: Any, manifest_path: str | Path, *, expected_scope: str = "fashion_retrieval_evaluation") -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("data-rights manifest must be a JSON object")
     missing = sorted(REQUIRED - set(value))
@@ -40,8 +40,8 @@ def validate_data_rights_manifest(value: Any, manifest_path: str | Path) -> dict
         raise ValueError("data-rights schema_version must be 1.0")
     if value["approval_status"] != "approved":
         raise ValueError("data-rights approval_status must be 'approved'; evaluation is blocked")
-    if value["scope"] != "fashion_retrieval_evaluation":
-        raise ValueError("data-rights scope must be fashion_retrieval_evaluation")
+    if value["scope"] != expected_scope:
+        raise ValueError(f"data-rights scope must be {expected_scope}")
     for field in ("reviewed_by", "reviewer_role", "source_provenance"):
         if not isinstance(value[field], str) or not value[field].strip():
             raise ValueError(f"data-rights {field} must be a non-empty string")
@@ -87,13 +87,13 @@ def validate_data_rights_manifest(value: Any, manifest_path: str | Path) -> dict
     return {**value, "evidence_path": str(evidence_path), "manifest_sha256": sha256_file(manifest_path)}
 
 
-def load_and_validate_data_rights_manifest(path: str | Path) -> dict[str, Any]:
+def load_and_validate_data_rights_manifest(path: str | Path, *, expected_scope: str = "fashion_retrieval_evaluation") -> dict[str, Any]:
     manifest_path = Path(path).expanduser().resolve()
     try:
         value = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid data-rights JSON: {exc.msg}") from exc
-    return validate_data_rights_manifest(value, manifest_path)
+    return validate_data_rights_manifest(value, manifest_path, expected_scope=expected_scope)
 
 
 def rights_manifest_summary(rights: dict[str, Any]) -> dict[str, str]:
