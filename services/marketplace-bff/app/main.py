@@ -3404,6 +3404,11 @@ async def marketplace_look_it(request: Request) -> Response:
                 look_it_consent = str(form.get("consent_look_it", "")).strip().lower() == "true"
                 if not image_consent or not look_it_consent:
                     raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+                photographed_people_status = str(form.get("photographed_people_status", "unknown")).strip()
+                if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+                    raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+                if photographed_people_status == "contains_minor":
+                    raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
                 uploaded = form.get("reference_image")
                 if not isinstance(uploaded, StarletteUploadFile):
                     raise HTTPException(422, detail={"code": "LOOK_IT_IMAGE_REQUIRED"})
@@ -3459,6 +3464,7 @@ async def marketplace_look_it(request: Request) -> Response:
                     "resource_id": resource_id,
                     "consent_image_processing": "true",
                     "consent_look_it": "true",
+                    "photographed_people_status": photographed_people_status,
                     "limit": "10",
                 }
                 # The category is an optional hint; only accept a bounded string.
