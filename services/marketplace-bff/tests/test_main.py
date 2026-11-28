@@ -371,7 +371,8 @@ def test_description_search_forwards_to_legacy_xari_alias_but_suppresses_all_can
         "decision_status": "SHOW",
         "scores_are_probabilities": False,
     })])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    # Inject into the lifespan-owned slot; production requests share the pool.
+    monkeypatch.setattr(main.app.state, "pnelly_http_client", fake)
     response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
     assert response.status_code == 200, response.text
     data = response.json()
