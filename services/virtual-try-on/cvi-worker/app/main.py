@@ -1,6 +1,6 @@
 """Private, GPU-only inference worker for Cirvanna's own Try-On model."""
 from __future__ import annotations
-import asyncio, base64, hashlib, hmac, io, json, os, re, threading
+import asyncio, base64, hashlib, hmac, io, json, math, os, re, threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -222,7 +222,7 @@ def verify_privacy_attestation(
     if not isinstance(signature,str): raise ValueError("privacy receipt signature is missing")
     verify_ed25519(privacy_attestation_payload(attestation),signature,public_key_b64)
     if replay_store is not None:
-        ttl=max(1,int((expires-now).total_seconds()))
+        ttl=max(1,math.ceil((expires-now).total_seconds()))
         replay_key="cvi:vton:privacy-receipt:"+sha256_bytes(receipt_id.encode("utf-8"))
         try:
             consumed=replay_store.set(replay_key,"1",nx=True,ex=ttl)
