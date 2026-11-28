@@ -4380,109 +4380,110 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         "constraints": payload.constraints,
         "exclude_owned_products": payload.exclude_owned_products,
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
-        subject, user_token = await _verified_commerce_subject(client, request)
-        if payload.conversation_id:
-            if not payload.conversation_turn_id:
-                raise HTTPException(422, detail={"code": "PNELLY_CONVERSATION_TURN_ID_REQUIRED"})
-            identity_base, identity_token = _identity_learning_service()
-            identity_headers = {"Authorization": "Bearer " + identity_token, "Accept": "application/json"}
-            try:
-                stored = await client.get(
-                    identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
-                    params={"subject_id": subject},
-                    headers=identity_headers,
-                )
-            except httpx.HTTPError as exc:
-                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"}) from exc
-            if stored.status_code in {403, 404}:
-                raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
-            if stored.status_code != 200:
-                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"})
-            try:
-                stored_data = stored.json()
-                previous_context = stored_data.get("context", {}) if isinstance(stored_data, dict) else {}
-                current_version = stored_data.get("state_version") if isinstance(stored_data, dict) else None
-            except ValueError as exc:
-                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"}) from exc
-            if not isinstance(previous_context, dict) or isinstance(current_version, bool) or not isinstance(current_version, int):
-                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"})
-            for key in ("category", "currency", "location", "occasion", "climate"):
-                if effective[key] is None:
-                    effective[key] = previous_context.get(key)
-            if not effective["constraints"]:
-                effective["constraints"] = previous_context.get("constraints", [])
-            context_state = {
-                **effective,
-                "query": effective["query"],
-            }
-            try:
-                conversation_update_response = await client.put(
-                    identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
-                    params={"subject_id": subject},
-                    headers=identity_headers,
-                    json={
-                        "expected_version": current_version,
-                        "turn_id": payload.conversation_turn_id,
-                        "context": context_state,
-                    },
-                )
-            except httpx.HTTPError as exc:
-                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_UNAVAILABLE"}) from exc
-            if conversation_update_response.status_code == 409:
-                raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_CONCURRENT_TURN"})
-            if conversation_update_response.status_code in {403, 404}:
-                raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
-            if conversation_update_response.status_code != 200:
-                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_FAILED"})
-            try:
-                conversation_update = conversation_update_response.json()
-            except ValueError as exc:
-                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_UPDATE_RESPONSE_INVALID"}) from exc
-            if (
-                not isinstance(conversation_update, dict)
-                or conversation_update.get("conversation_id") != payload.conversation_id
-                or isinstance(conversation_update.get("state_version"), bool)
-                or not isinstance(conversation_update.get("state_version"), int)
-                or conversation_update.get("status") not in {"updated", "replayed"}
-            ):
-                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_UPDATE_RESPONSE_INVALID"})
-        base, token = _decision_gateway()
-        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        context: dict[str, str] = {}
-        if effective["location"]:
-            context.update({"location": effective["location"], "location_source": "user_declared", "location_observed_at": now})
-        if effective["occasion"]:
-            context.update({"occasion": effective["occasion"], "occasion_source": "user_declared", "occasion_observed_at": now})
-        if effective["climate"]:
-            context.update({"climate": effective["climate"], "climate_source": "user_declared", "climate_observed_at": now})
-        search_query = " ".join(
-            [effective["query"], *effective["constraints"]]
-        ).strip()
-        body = {
-            "user_id": subject,
-            "query": search_query,
-            "category": effective["category"],
-            "currency": effective["currency"],
-            "limit": payload.limit,
-            "context": context,
-            "use_wardrobe_context": True,
-            "exclude_owned_products": effective["exclude_owned_products"],
+    client = _get_pnelly_http_client()
+    request_timeout = httpx.Timeout(12.0, connect=2.0)
+    subject, user_token = await _verified_commerce_subject(client, request, timeout=request_timeout)
+    if payload.conversation_id:
+        if not payload.conversation_turn_id:
+            raise HTTPException(422, detail={"code": "PNELLY_CONVERSATION_TURN_ID_REQUIRED"})
+        identity_base, identity_token = _identity_learning_service()
+        identity_headers = {"Authorization": "Bearer " + identity_token, "Accept": "application/json"}
+        try:
+            stored = await client.get(
+                identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
+                params={"subject_id": subject},
+                headers=identity_headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"}) from exc
+        if stored.status_code in {403, 404}:
+            raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
+        if stored.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"})
+        try:
+            stored_data = stored.json()
+            previous_context = stored_data.get("context", {}) if isinstance(stored_data, dict) else {}
+            current_version = stored_data.get("state_version") if isinstance(stored_data, dict) else None
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"}) from exc
+        if not isinstance(previous_context, dict) or isinstance(current_version, bool) or not isinstance(current_version, int):
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"})
+        for key in ("category", "currency", "location", "occasion", "climate"):
+            if effective[key] is None:
+                effective[key] = previous_context.get(key)
+        if not effective["constraints"]:
+            effective["constraints"] = previous_context.get("constraints", [])
+        context_state = {
+            **effective,
+            "query": effective["query"],
         }
         try:
-            response = await client.post(
-                base + "/v1/discover",
-                headers={
-                    "Authorization": "Bearer " + token,
-                    "X-End-User-Authorization": "Bearer " + user_token,
-                    "Accept": "application/json",
+            conversation_update_response = await client.put(
+                identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
+                params={"subject_id": subject},
+                headers=identity_headers,
+                json={
+                    "expected_version": current_version,
+                    "turn_id": payload.conversation_turn_id,
+                    "context": context_state,
                 },
-                json=body,
             )
-        except httpx.TimeoutException as exc:
-            raise HTTPException(504, detail={"code": "WARDROBE_RECOMMENDATIONS_TIMEOUT"}) from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "WARDROBE_RECOMMENDATIONS_UNAVAILABLE"}) from exc
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_UNAVAILABLE"}) from exc
+        if conversation_update_response.status_code == 409:
+            raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_CONCURRENT_TURN"})
+        if conversation_update_response.status_code in {403, 404}:
+            raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
+        if conversation_update_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_FAILED"})
+        try:
+            conversation_update = conversation_update_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_UPDATE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(conversation_update, dict)
+            or conversation_update.get("conversation_id") != payload.conversation_id
+            or isinstance(conversation_update.get("state_version"), bool)
+            or not isinstance(conversation_update.get("state_version"), int)
+            or conversation_update.get("status") not in {"updated", "replayed"}
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_UPDATE_RESPONSE_INVALID"})
+    base, token = _decision_gateway()
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    context: dict[str, str] = {}
+    if effective["location"]:
+        context.update({"location": effective["location"], "location_source": "user_declared", "location_observed_at": now})
+    if effective["occasion"]:
+        context.update({"occasion": effective["occasion"], "occasion_source": "user_declared", "occasion_observed_at": now})
+    if effective["climate"]:
+        context.update({"climate": effective["climate"], "climate_source": "user_declared", "climate_observed_at": now})
+    search_query = " ".join(
+        [effective["query"], *effective["constraints"]]
+    ).strip()
+    body = {
+        "user_id": subject,
+        "query": search_query,
+        "category": effective["category"],
+        "currency": effective["currency"],
+        "limit": payload.limit,
+        "context": context,
+        "use_wardrobe_context": True,
+        "exclude_owned_products": effective["exclude_owned_products"],
+    }
+    try:
+        response = await client.post(
+            base + "/v1/discover",
+            headers={
+                "Authorization": "Bearer " + token,
+                "X-End-User-Authorization": "Bearer " + user_token,
+                "Accept": "application/json",
+            },
+            json=body,
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "WARDROBE_RECOMMENDATIONS_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_RECOMMENDATIONS_UNAVAILABLE"}) from exc
     if response.status_code in {400, 401, 403, 404, 409, 422}:
         try:
             detail = response.json().get("detail", {})
