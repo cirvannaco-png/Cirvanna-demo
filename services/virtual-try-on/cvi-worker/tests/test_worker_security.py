@@ -280,6 +280,8 @@ def test_privacy_receipt_replay_is_durable_across_worker_restarts(tmp_path):
     ledger = tmp_path / "durable" / "replay-ledger.sqlite3"
     env = os.environ.copy()
     env["CVI_VTON_REPLAY_DB_PATH"] = str(ledger)
+    worker_path = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = worker_path + os.pathsep + env.get("PYTHONPATH", "")
     consume_script = (
         "import datetime; from app import main as worker; "
         "worker.consume_receipt_once('receipt-persistent-001', "
