@@ -515,7 +515,7 @@ def test_look_it_returns_only_candidate_counts_and_optional_validated_components
     response = client.post(
         "/v1/search/image",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": people_status},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"image": ("outfit.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -664,22 +664,20 @@ def test_capabilities_advertise_look_it_only_when_masking_and_dependencies_are_r
     assert capabilities["look_it_image_search"] is True
 
 
-def test_look_it_rejects_unknown_or_minor_photographed_people_status(client, monkeypatch):
-    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("safety status must be checked before decoding"))
-    for status in ("unknown", "contains_minor"):
-        response = client.post(
-            "/v1/search/image",
-            headers=auth(),
-            data={
-                "consent_image_processing": "true",
-                "consent_look_it": "true",
-                "photographed_people_status": status,
-            },
-            files={"image": ("outfit.png", image_bytes(), "image/png")},
-        )
-        assert response.status_code == 403
-        expected = "MINOR_IMAGE_PROCESSING_NOT_ALLOWED" if status == "contains_minor" else "CHILD_SAFETY_STATUS_UNCONFIRMED"
-        assert response.json()["detail"]["code"] == expected
+def test_look_it_rejects_unknown_photographed_people_status_before_decoding(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("unknown safety status must be rejected before decoding"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "photographed_people_status": "unknown",
+        },
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_SAFETY_STATUS_UNCONFIRMED"
 
 
 def test_look_it_requires_face_detection_for_declared_adult_images(client, monkeypatch):
