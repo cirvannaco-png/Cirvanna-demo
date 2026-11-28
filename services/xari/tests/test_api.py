@@ -142,7 +142,7 @@ def test_look_it_requires_internal_authentication(monkeypatch):
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "true",
-            "photographed_people_status": "adults_only",
+            "photographed_people_status": "no_people",
         },
         files={"image": ("outfit.png", b"image", "image/png")},
     )
@@ -159,7 +159,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
     async def search(**kwargs):
         assert kwargs["data"] == b"reference-image"
         assert kwargs["content_type"] == "image/png"
-        assert kwargs["photographed_people_status"] == "adults_only"
+        assert kwargs["photographed_people_status"] == "no_people"
         return {
             "status": "complete",
             "candidate_count": 3,
@@ -187,7 +187,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "true",
-            "photographed_people_status": "adults_only",
+            "photographed_people_status": "no_people",
             "category": "dress",
             "limit": "5",
         },
@@ -199,7 +199,7 @@ def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_de
         "subject_id": "customer-123",
         "consent_id": "consent-look-it-0001",
         "resource_id": "look-it-request-0001",
-        "declaration_scope": "photographed_people_adult_attestation",
+        "declaration_scope": "photographed_no_people_attestation",
     }
     assert body["candidate_count"] == 3
     assert body["display_authorized"] is False
@@ -228,7 +228,7 @@ def test_look_it_rejects_request_when_consent_is_incomplete(monkeypatch):
             "resource_id": "look-it-request-0001",
             "consent_image_processing": "true",
             "consent_look_it": "false",
-            "photographed_people_status": "adults_only",
+            "photographed_people_status": "no_people",
         },
         files={"image": ("outfit.png", b"reference-image", "image/png")},
     )
