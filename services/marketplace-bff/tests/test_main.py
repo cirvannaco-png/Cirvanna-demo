@@ -2758,7 +2758,7 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
-        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        data={"consent_image_processing": "true", "consent_look_it": "true", "photographed_people_status": "adults_only"},
         files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
     )
     assert response.status_code == 200, response.text
