@@ -697,6 +697,7 @@ async def look_it_image_search(
     consent_image_processing: Annotated[bool, Form()],
     consent_look_it: Annotated[bool, Form()],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
@@ -704,6 +705,12 @@ async def look_it_image_search(
     if not consent_image_processing or not consent_look_it:
         await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+    if photographed_people_status == "contains_minor":
+        await image.close()
+        raise HTTPException(403, detail={"code": "MINOR_IMAGE_PROCESSING_NOT_ALLOWED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -732,6 +739,12 @@ async def look_it_image_search(
         decoded.close()
         raise HTTPException(503, detail={"code": "LOOK_IT_PRIVACY_MASKING_FAILED"}) from exc
     decoded.close()  # The unmasked reference must not reach quality, embedding or decomposition.
+    if (
+        (photographed_people_status == "adults_only" and faces_masked < 1)
+        or (photographed_people_status == "no_people" and faces_masked > 0)
+    ):
+        privacy_safe_image.close()
+        raise HTTPException(503, detail={"code": "LOOK_IT_PRIVACY_DETECTION_UNCERTAIN"})
     try:
         quality = evaluate_image_quality(privacy_safe_image)
         if not quality["passed"]:
