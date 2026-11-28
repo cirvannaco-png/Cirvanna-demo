@@ -158,8 +158,10 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
             raise ValueError(f"{prefix}: {field} must be a non-empty string")
     if row["schema_version"] != "1.0":
         raise ValueError(f"{prefix}: schema_version must be 1.0")
-    if row["task_id"] not in {"image_to_catalog_text", "text_to_catalog_text"}:
-        raise ValueError(f"{prefix}: supported tasks are image_to_catalog_text and text_to_catalog_text")
+    if row["task_id"] not in {"image_to_catalog_text", "text_to_catalog_text", "image_to_catalog_image"}:
+        raise ValueError(
+            f"{prefix}: supported tasks are image_to_catalog_text, text_to_catalog_text and image_to_catalog_image"
+        )
     candidate_ids = row.get("candidate_ids")
     if not isinstance(candidate_ids, list) or not candidate_ids:
         raise ValueError(f"{prefix}: candidate_ids must be a non-empty array")
@@ -168,10 +170,19 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError(f"{prefix}: candidate_ids must be unique")
     candidate_texts = row.get("candidate_texts")
-    if not isinstance(candidate_texts, dict) or set(candidate_texts) != set(candidate_ids):
-        raise ValueError(f"{prefix}: candidate_texts must map every candidate_id exactly once")
-    if any(not isinstance(value, str) or not value.strip() for value in candidate_texts.values()):
-        raise ValueError(f"{prefix}: candidate_texts must contain non-empty strings")
+    candidate_image_paths = row.get("candidate_image_paths")
+    if row["task_id"] == "image_to_catalog_image":
+        if not isinstance(candidate_image_paths, dict) or set(candidate_image_paths) != set(candidate_ids):
+            raise ValueError(f"{prefix}: candidate_image_paths must map every candidate_id exactly once")
+        if any(not isinstance(value, str) or not value.strip() for value in candidate_image_paths.values()):
+            raise ValueError(f"{prefix}: candidate_image_paths must contain non-empty relative paths")
+        if candidate_texts is not None:
+            raise ValueError(f"{prefix}: image-to-image cases must not supply candidate_texts")
+    else:
+        if not isinstance(candidate_texts, dict) or set(candidate_texts) != set(candidate_ids):
+            raise ValueError(f"{prefix}: candidate_texts must map every candidate_id exactly once")
+        if any(not isinstance(value, str) or not value.strip() for value in candidate_texts.values()):
+            raise ValueError(f"{prefix}: candidate_texts must contain non-empty strings")
     qrels = row.get("qrels")
     if not isinstance(qrels, dict) or set(qrels) != set(candidate_ids):
         raise ValueError(f"{prefix}: qrels must contain an explicit grade for every candidate ID")
@@ -196,9 +207,9 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
     subgroups = row.get("subgroups", {})
     if not isinstance(subgroups, dict):
         raise ValueError(f"{prefix}: subgroups must be an object")
-    if row["task_id"] == "image_to_catalog_text":
+    if row["task_id"] in {"image_to_catalog_text", "image_to_catalog_image"}:
         if not isinstance(row.get("query_image_path"), str) or not row["query_image_path"].strip():
-            raise ValueError(f"{prefix}: query_image_path is required for image_to_catalog_text")
+            raise ValueError(f"{prefix}: query_image_path is required for image retrieval tasks")
     if row["task_id"] == "text_to_catalog_text":
         if not isinstance(row.get("query_text"), str) or not row["query_text"].strip():
             raise ValueError(f"{prefix}: query_text is required for text_to_catalog_text")
@@ -206,6 +217,7 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
         **row,
         "candidate_ids": candidate_ids,
         "candidate_texts": candidate_texts,
+        "candidate_image_paths": candidate_image_paths,
         "qrels": qrels,
         "excluded_product_ids": excluded,
         "human_exclusion_violation_ids": human_violations,
@@ -478,33 +490,65 @@ def run_model(
     adapter = EmbeddingAdapter.load(model_id, snapshot, device)
     model_load_seconds = time.perf_counter() - model_load_started
     try:
-        all_texts = sorted({
-            candidate_text_for_embedding(str(text))
-            for case in cases
-            for text in case["candidate_texts"].values()
-        })
         candidate_text_vectors: dict[str, list[float]] = {}
-        candidate_embedding_started = time.perf_counter()
-        for batch in chunks(all_texts, batch_size):
-            vectors = adapter.encode_texts(batch, batch_size=batch_size)
-            if len(vectors) != len(batch):
-                raise RuntimeError("text encoder returned an unexpected number of embeddings")
-            candidate_text_vectors.update(zip(batch, vectors))
-        candidate_embedding_seconds = time.perf_counter() - candidate_embedding_started
+        candidate_image_vectors: dict[str, list[float]] = {}
+        candidate_text_embedding_seconds = 0.0
+        candidate_image_embedding_seconds = 0.0
+        task_id = cases[0]["task_id"]
+        if task_id == "image_to_catalog_image":
+            relative_paths = sorted({
+                relative_path
+                for case in cases
+                for relative_path in case["candidate_image_paths"].values()
+            })
+            resolved_paths = {
+                relative_path: resolve_media_path(media_root, relative_path)
+                for relative_path in relative_paths
+            }
+            candidate_embedding_started = time.perf_counter()
+            vectors = adapter.encode_images(list(resolved_paths.values()), batch_size=batch_size)
+            if len(vectors) != len(resolved_paths):
+                raise RuntimeError("candidate image encoder returned an unexpected number of embeddings")
+            candidate_image_vectors.update(zip(resolved_paths.keys(), vectors))
+            candidate_image_embedding_seconds = time.perf_counter() - candidate_embedding_started
+        else:
+            all_texts = sorted({
+                candidate_text_for_embedding(str(text))
+                for case in cases
+                for text in case["candidate_texts"].values()
+            })
+            candidate_embedding_started = time.perf_counter()
+            for batch in chunks(all_texts, batch_size):
+                vectors = adapter.encode_texts(batch, batch_size=batch_size)
+                if len(vectors) != len(batch):
+                    raise RuntimeError("text encoder returned an unexpected number of embeddings")
+                candidate_text_vectors.update(zip(batch, vectors))
+            candidate_text_embedding_seconds = time.perf_counter() - candidate_embedding_started
 
         rankings: dict[str, list[str]] = {}
         score_maps: dict[str, dict[str, float]] = {}
         query_latency_ms: list[float] = []
         for case in cases:
             query_started = time.perf_counter()
-            candidate_vectors = {
-                candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
-                for candidate_id in case["candidate_ids"]
-            }
-            if case["task_id"] == "image_to_catalog_text":
+            if case["task_id"] == "image_to_catalog_image":
+                candidate_vectors = {
+                    candidate_id: candidate_image_vectors[case["candidate_image_paths"][candidate_id]]
+                    for candidate_id in case["candidate_ids"]
+                }
+                image_path = resolve_media_path(media_root, case["query_image_path"])
+                query_vector = adapter.encode_images([image_path], batch_size=1)[0]
+            elif case["task_id"] == "image_to_catalog_text":
+                candidate_vectors = {
+                    candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
+                    for candidate_id in case["candidate_ids"]
+                }
                 image_path = resolve_media_path(media_root, case["query_image_path"])
                 query_vector = adapter.encode_images([image_path], batch_size=1)[0]
             else:
+                candidate_vectors = {
+                    candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
+                    for candidate_id in case["candidate_ids"]
+                }
                 query_text = build_text_query(case["query_text"])
                 query_vector = adapter.encode_texts([query_text], batch_size=1)[0]
             ordered, scores = rank_candidates(query_vector, candidate_vectors)
@@ -522,13 +566,15 @@ def run_model(
                 path: item for path, item in artifact_manifest.items()
                 if path.endswith((".safetensors", ".bin", ".pt"))
             },
-            "embedding_dimension": len(next(iter(candidate_text_vectors.values()))),
+            "embedding_dimension": len(next(iter(candidate_image_vectors.values() if candidate_image_vectors else candidate_text_vectors.values()))),
+            "candidate_embedding_mode": "image" if task_id == "image_to_catalog_image" else "text",
             "device": device,
             "timings_seconds": {
                 "snapshot_download": round(snapshot_download_seconds, 3),
                 "artifact_hashing": round(artifact_hash_seconds, 3),
                 "model_load": round(model_load_seconds, 3),
-                "candidate_text_embedding": round(candidate_embedding_seconds, 3),
+                "candidate_text_embedding": round(candidate_text_embedding_seconds, 3),
+                "candidate_image_embedding": round(candidate_image_embedding_seconds, 3),
                 "total_run": round(total_run_seconds, 3),
             },
             "query_to_topk_latency_ms": {
@@ -555,7 +601,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Private JSONL query/candidate cases")
     parser.add_argument("--rights-manifest", required=True, help="Approved private data-rights manifest; inference is blocked without it")
-    parser.add_argument("--media-root", required=True, help="Root directory for relative query_image_path values")
+    parser.add_argument("--media-root", required=True, help="Root directory for query_image_path and candidate_image_paths")
     parser.add_argument("--output", required=True, help="Private output JSONL path")
     parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing rankings and manifest")
     parser.add_argument("--models", nargs="+", required=True, choices=sorted(MODEL_SPECS))
@@ -600,12 +646,23 @@ def main() -> int:
     media_root = Path(args.media_root).expanduser().resolve()
     image_digest_manifest = {}
     for case in cases:
-        if case["task_id"] == "image_to_catalog_text":
-            image_path = resolve_media_path(media_root, case["query_image_path"])
-            image_digest_manifest[case["query_id"]] = {
-                "sha256": sha256_file(image_path),
-                "size_bytes": image_path.stat().st_size,
+        if case["task_id"] in {"image_to_catalog_text", "image_to_catalog_image"}:
+            query_path = resolve_media_path(media_root, case["query_image_path"])
+            digest_entry: dict[str, Any] = {
+                "query": {
+                    "sha256": sha256_file(query_path),
+                    "size_bytes": query_path.stat().st_size,
+                }
             }
+            if case["task_id"] == "image_to_catalog_image":
+                digest_entry["candidates"] = {}
+                for candidate_id, relative_path in case["candidate_image_paths"].items():
+                    candidate_path = resolve_media_path(media_root, relative_path)
+                    digest_entry["candidates"][candidate_id] = {
+                        "sha256": sha256_file(candidate_path),
+                        "size_bytes": candidate_path.stat().st_size,
+                    }
+            image_digest_manifest[case["query_id"]] = digest_entry
     cache_dir = Path(args.cache_dir).expanduser().resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
     model_rankings: dict[str, dict[str, list[str]]] = {}
