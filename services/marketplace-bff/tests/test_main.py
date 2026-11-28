@@ -627,7 +627,7 @@ def test_wardrobe_items_are_bound_to_verified_commerce_subject(client, monkeypat
             "items": [{"owner_user_id": "signed-user-42", "item_id": "closet-1", "status": "active"}],
         }),
     ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.get("/api/wardrobe/items", headers={"Authorization": "Bearer signed-session"})
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
@@ -649,7 +649,7 @@ def test_wardrobe_bff_rejects_cross_subject_upstream_data(client, monkeypatch):
             "items": [{"owner_user_id": "another-user", "item_id": "foreign-item", "status": "active"}],
         }),
     ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
     response = client.get("/api/wardrobe/items", headers={"Authorization": "Bearer signed-session"})
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"
@@ -4643,3 +4643,22 @@ def test_cal_discovery_envelope_requires_authority_request_id_and_complete_count
             main._validate_cal_discovery_envelope(payload, error_code="INVALID")
         assert exc.value.status_code == 502
         assert exc.value.detail["code"] == "INVALID"
+
+
+def test_wardrobe_items_use_lifespan_pool_with_original_timeout(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+    ])
+    monkeypatch.setattr(main, "_get_pnelly_http_client", lambda: fake)
+
+    response = client.get("/api/wardrobe/items", headers={"Authorization": "Bearer signed-session"})
+
+    assert response.status_code == 200, response.text
+    assert fake.calls[0][2]["timeout"].connect == 2.0
+    assert fake.calls[0][2]["timeout"].read == 8.0
+    assert fake.calls[1][2]["timeout"].connect == 2.0
+    assert fake.calls[1][2]["timeout"].read == 8.0
